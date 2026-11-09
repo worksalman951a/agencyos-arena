@@ -502,9 +502,42 @@ describeIfDb('CRM Invoices integration (real PostgreSQL)', () => {
       await prisma.organization.delete({ where: { id: foreignOrg.id } });
     });
 
-    it('soft deletes invoice (sets deletedAt)', async () => {
+    it('rejects deletion of a paid invoice', async () => {
+      // The suite's main invoice was paid in full by the payment test above.
+      // Paid invoices are financial records and must not be deletable.
       expect(testInvoiceId).toBeDefined();
       const res = await fetch(`${SERVER_URL}/api/v1/crm/invoices/${testInvoiceId}`, {
+        method: 'DELETE',
+        headers: {
+          Cookie: `better-auth.session_token=${testSessionToken}`,
+          Accept: 'application/json',
+        },
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('soft deletes a draft invoice (sets deletedAt)', async () => {
+      const createRes = await fetch(`${SERVER_URL}/api/v1/crm/invoices`, {
+        method: 'POST',
+        headers: {
+          Cookie: `better-auth.session_token=${testSessionToken}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          title: 'Deletable Draft Invoice',
+          status: 'draft',
+          currency: 'USD',
+          dueDate: null,
+          lineItems: [
+            { description: 'Consulting', quantity: '1', unitPrice: '100.00', taxRate: '0' },
+          ],
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const created = await createRes.json();
+
+      const res = await fetch(`${SERVER_URL}/api/v1/crm/invoices/${created.id}`, {
         method: 'DELETE',
         headers: {
           Cookie: `better-auth.session_token=${testSessionToken}`,
@@ -522,7 +555,7 @@ describeIfDb('CRM Invoices integration (real PostgreSQL)', () => {
         },
       });
       const listBody = await listRes.json();
-      const deletedInv = listBody.invoices.find((i: { id: string }) => i.id === testInvoiceId);
+      const deletedInv = listBody.invoices.find((i: { id: string }) => i.id === created.id);
       expect(deletedInv).toBeUndefined();
     });
   });
