@@ -3,32 +3,11 @@
  * Lists approvals for a project and provides create/approve actions.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-
-async function listApprovals(projectId: string) {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const res = await fetch(`/api/v1/projects/approvals?projectId=${encodeURIComponent(projectId)}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    return [];
-  }
-
-  return res.json();
-}
+import { listProjectApprovals } from '@/lib/services/projects/project-approval-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
+import { NewApprovalForm } from './NewApprovalForm';
 
 export default async function ProjectApprovalsPage({
   params,
@@ -36,9 +15,19 @@ export default async function ProjectApprovalsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const approvals = await listApprovals(id);
+  const result = await loadPageData(() => listProjectApprovals(id));
 
-  const cookieStore = await cookies();
+  if (!result.ok) {
+    return (
+      <PageStateNotice
+        reason={result.reason}
+        backHref={`/projects/${id}`}
+        backLabel="Back to project"
+      />
+    );
+  }
+
+  const approvals = result.data;
 
   return (
     <div className="space-y-6 p-6">
@@ -59,59 +48,7 @@ export default async function ProjectApprovalsPage({
 
       <div className="rounded-md border bg-background p-6 max-w-2xl">
         <h2 className="text-lg font-semibold mb-4">Record Approval</h2>
-        <form className="space-y-4" action="">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Contact ID</label>
-              <input
-                type="text"
-                name="contactId"
-                placeholder="Client contact CUID (optional)"
-                className="border border-input rounded-md px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Status</label>
-              <select
-                name="status"
-                className="border border-input rounded-md px-3 py-2 text-sm bg-background"
-              >
-                <option value="pending">Pending</option>
-                <option value="approved">Approved</option>
-                <option value="changes_requested">Changes Requested</option>
-              </select>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Feedback</label>
-            <textarea
-              name="feedback"
-              rows={2}
-              placeholder="Client feedback or notes..."
-              className="border border-input rounded-md px-3 py-2 text-sm"
-            />
-          </div>
-          <button
-            type="submit"
-            className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
-            onClick={(e) => {
-              e.preventDefault();
-              const formData = new FormData(e.target as HTMLFormElement);
-              fetch(`/api/v1/projects/approvals`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', cookie: cookieStore.toString() },
-                body: JSON.stringify({
-                  projectId: id,
-                  contactId: (formData.get('contactId') as string) || undefined,
-                  status: formData.get('status'),
-                  feedback: (formData.get('feedback') as string) || undefined,
-                }),
-              }).then(() => window.location.reload());
-            }}
-          >
-            Record Approval
-          </button>
-        </form>
+        <NewApprovalForm projectId={id} />
       </div>
 
       <div className="overflow-x-auto">

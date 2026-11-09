@@ -3,35 +3,19 @@
  * Manage feature toggles for gradual rollout and testing.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-
-async function listFeatureFlags() {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const res = await fetch('/api/v1/admin/feature-flags', {
-    headers: { cookie: cookieStore.toString() },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    return [];
-  }
-
-  return res.json();
-}
+import { listFeatureFlags } from '@/lib/services/admin/feature-flag-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 
 export default async function FeatureFlagsPage() {
-  const flags = await listFeatureFlags();
+  const result = await loadPageData(() => listFeatureFlags());
+
+  if (!result.ok) {
+    return <PageStateNotice reason={result.reason} />;
+  }
+
+  const flags = result.data;
 
   return (
     <div className="space-y-6 p-6">

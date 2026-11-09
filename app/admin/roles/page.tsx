@@ -3,35 +3,19 @@
  * Lists organization roles with permission assignments.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-
-async function listRoles() {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const res = await fetch('/api/v1/admin/roles', {
-    headers: { cookie: cookieStore.toString() },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    return [];
-  }
-
-  return res.json();
-}
+import { listRoles } from '@/lib/services/admin/role-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 
 export default async function RolesPage() {
-  const roles = await listRoles();
+  const result = await loadPageData(() => listRoles());
+
+  if (!result.ok) {
+    return <PageStateNotice reason={result.reason} />;
+  }
+
+  const roles = result.data;
 
   return (
     <div className="space-y-6 p-6">

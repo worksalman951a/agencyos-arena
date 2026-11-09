@@ -3,35 +3,20 @@
  * Lists in-app notifications for the current user.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-
-async function listNotifications() {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const res = await fetch('/api/v1/automation/notifications', {
-    headers: { cookie: cookieStore.toString() },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    return [];
-  }
-
-  return res.json();
-}
+import { listNotifications } from '@/lib/services/automation/notification-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
+import { MarkNotificationReadButton } from './MarkNotificationReadButton';
 
 export default async function NotificationsPage() {
-  const notifications = await listNotifications();
+  const result = await loadPageData(() => listNotifications());
+
+  if (!result.ok) {
+    return <PageStateNotice reason={result.reason} />;
+  }
+
+  const notifications = result.data;
 
   return (
     <div className="space-y-6 p-6">
@@ -109,20 +94,11 @@ export default async function NotificationsPage() {
                     {new Date(n.createdAt).toLocaleDateString()}
                   </td>
                   <td className="py-4 text-right">
-                    {!n.read && (
-                      <button
-                        onClick={() => {
-                          fetch(`/api/v1/automation/notifications/${n.id}/read`, {
-                            method: 'POST',
-                            headers: { cookie: cookieStore.toString() },
-                          }).then(() => window.location.reload());
-                        }}
-                        className="text-sm text-accent hover:underline"
-                      >
-                        Mark Read
-                      </button>
+                    {!n.read ? (
+                      <MarkNotificationReadButton notificationId={n.id} />
+                    ) : (
+                      <span className="text-sm text-muted-foreground">—</span>
                     )}
-                    {n.read && <span className="text-sm text-muted-foreground">—</span>}
                   </td>
                 </tr>
               ))

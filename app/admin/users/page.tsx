@@ -3,35 +3,19 @@
  * Lists organization users with role and status management.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-
-async function listUsers() {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const res = await fetch('/api/v1/admin/users', {
-    headers: { cookie: cookieStore.toString() },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    return [];
-  }
-
-  return res.json();
-}
+import { listUsers } from '@/lib/services/admin/user-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 
 export default async function UsersPage() {
-  const users = await listUsers();
+  const result = await loadPageData(() => listUsers());
+
+  if (!result.ok) {
+    return <PageStateNotice reason={result.reason} />;
+  }
+
+  const users = result.data;
 
   return (
     <div className="space-y-6 p-6">

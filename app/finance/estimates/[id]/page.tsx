@@ -3,40 +3,26 @@
  * Displays a single estimate with convert-to-invoice action.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-
-async function getEstimate(id: string) {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const res = await fetch(`/api/v1/finance/estimates/${id}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    return null;
-  }
-
-  return res.json();
-}
+import { getEstimate } from '@/lib/services/crm/estimate-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 
 export default async function EstimateDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const estimate = await getEstimate(id);
+  const result = await loadPageData(() => getEstimate(id));
 
-  if (!estimate) {
-    redirect('/finance/estimates');
+  if (!result.ok) {
+    return (
+      <PageStateNotice
+        reason={result.reason}
+        backHref="/finance/estimates"
+        backLabel="Back to estimates"
+      />
+    );
   }
+
+  const estimate = result.data;
 
   return (
     <div className="space-y-6 p-6">

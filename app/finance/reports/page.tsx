@@ -3,38 +3,27 @@
  * Server component showing revenue, outstanding, overdue, and profitability metrics.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
+import { listInvoices } from '@/lib/services/crm/invoice-service';
+import { listEstimates } from '@/lib/services/crm/estimate-service';
+import { listExpenses } from '@/lib/services/crm/expense-service';
+import { invoiceQuerySchema } from '@/lib/schemas/crm/invoice.schema';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 
+/**
+ * Aggregate the reporting inputs through the service layer.
+ *
+ * Each service applies its own permission check and organization scoping, so
+ * a section the user cannot read yields an empty list for that section instead
+ * of failing the whole page (matching the previous best-effort behaviour, but
+ * without the unserializable relative fetch).
+ */
 async function fetchFinanceData() {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const [invoicesRes, estimatesRes, expensesRes] = await Promise.all([
-    fetch('/api/v1/crm/invoices', {
-      headers: { cookie: cookieStore.toString() },
-      cache: 'no-store',
-    }),
-    fetch('/api/v1/finance/estimates', {
-      headers: { cookie: cookieStore.toString() },
-      cache: 'no-store',
-    }),
-    fetch('/api/v1/finance/expenses', {
-      headers: { cookie: cookieStore.toString() },
-      cache: 'no-store',
-    }),
+  const [invoices, estimates, expenses] = await Promise.all([
+    listInvoices(invoiceQuerySchema.parse({})).then((result) => result.invoices),
+    listEstimates(),
+    listExpenses(),
   ]);
-
-  const invoices = invoicesRes.ok ? await invoicesRes.json() : [];
-  const estimates = estimatesRes.ok ? await estimatesRes.json() : [];
-  const expenses = expensesRes.ok ? await expensesRes.json() : [];
 
   return { invoices, estimates, expenses };
 }
@@ -44,7 +33,13 @@ function formatMoney(value: number): string {
 }
 
 export default async function FinancialReportsPage() {
-  const { invoices, estimates, expenses } = await fetchFinanceData();
+  const result = await loadPageData(fetchFinanceData);
+
+  if (!result.ok) {
+    return <PageStateNotice reason={result.reason} />;
+  }
+
+  const { invoices, estimates, expenses } = result.data;
 
   const invList = invoices as Array<{ status: string; total: string; currency: string }>;
   const estList = estimates as Array<{ status: string; total: string }>;

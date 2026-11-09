@@ -3,35 +3,19 @@
  * Lists change orders across the organization's projects.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-
-async function listChangeOrders() {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const res = await fetch('/api/v1/projects/change-orders', {
-    headers: { cookie: cookieStore.toString() },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    return [];
-  }
-
-  return res.json();
-}
+import { listChangeOrders } from '@/lib/services/projects/change-order-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 
 export default async function ChangeOrdersPage() {
-  const changeOrders = await listChangeOrders();
+  const result = await loadPageData(() => listChangeOrders());
+
+  if (!result.ok) {
+    return <PageStateNotice reason={result.reason} />;
+  }
+
+  const changeOrders = result.data;
 
   return (
     <div className="space-y-6 p-6">

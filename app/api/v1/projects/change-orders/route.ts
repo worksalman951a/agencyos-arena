@@ -18,11 +18,8 @@ function errorResponse(message: string, status: number, issues?: unknown[]) {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const projectId = searchParams.get('projectId');
-
-    if (!projectId) {
-      return errorResponse('projectId is required', 400);
-    }
+    // Optional: filter by one project, or list the organization's change orders.
+    const projectId = searchParams.get('projectId') || undefined;
 
     const data = await listChangeOrders(projectId);
     return NextResponse.json(data);
