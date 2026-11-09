@@ -159,16 +159,23 @@ describeIfDb('Authentication integration (real PostgreSQL)', () => {
   });
 
   it('should enforce role-based permissions', async () => {
+    // Permission codes are globally unique and shared with the bootstrap flow,
+    // so this suite uses run-scoped codes. Creating or deleting the shared
+    // codes here would collide with parallel suites and with bootstrap.
+    const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const readCode = `integration.invoice.read.${runId}`;
+    const createCode = `integration.invoice.create.${runId}`;
+
     const org = await prisma.organization.create({
-      data: { name: 'Perm Test Org', slug: 'perm-test-org' },
+      data: { name: 'Perm Test Org', slug: `perm-test-org-${runId}` },
     });
 
-    // Create permissions
+    // Create run-scoped permissions
     const permRead = await prisma.permission.create({
-      data: { code: 'invoice.read', description: 'Read invoices' },
+      data: { code: readCode, description: 'Read invoices' },
     });
     const permWrite = await prisma.permission.create({
-      data: { code: 'invoice.create', description: 'Create invoices' },
+      data: { code: createCode, description: 'Create invoices' },
     });
 
     // Create admin role with both permissions
@@ -198,13 +205,13 @@ describeIfDb('Authentication integration (real PostgreSQL)', () => {
     // Create users with different roles
     const adminUser = await prisma.user.create({
       data: {
-        email: 'admin-perm@test-agencyos.invalid',
+        email: `admin-perm-${runId}@test-agencyos.invalid`,
         organizationId: org.id,
       },
     });
     const employeeUser = await prisma.user.create({
       data: {
-        email: 'employee-perm@test-agencyos.invalid',
+        email: `employee-perm-${runId}@test-agencyos.invalid`,
         organizationId: org.id,
       },
     });
@@ -222,8 +229,8 @@ describeIfDb('Authentication integration (real PostgreSQL)', () => {
       include: { permission: true },
     });
     const adminCodes = adminPerms.map((rp: { permission: { code: string } }) => rp.permission.code);
-    expect(adminCodes).toContain('invoice.read');
-    expect(adminCodes).toContain('invoice.create');
+    expect(adminCodes).toContain(readCode);
+    expect(adminCodes).toContain(createCode);
 
     // Verify employee has only read permission
     const employeePerms = await prisma.rolePermission.findMany({
@@ -233,16 +240,14 @@ describeIfDb('Authentication integration (real PostgreSQL)', () => {
     const employeeCodes = employeePerms.map(
       (rp: { permission: { code: string } }) => rp.permission.code
     );
-    expect(employeeCodes).toContain('invoice.read');
-    expect(employeeCodes).not.toContain('invoice.create');
+    expect(employeeCodes).toContain(readCode);
+    expect(employeeCodes).not.toContain(createCode);
 
     // Cleanup
     await prisma.userRole.deleteMany({ where: { organizationId: org.id } });
     await prisma.user.deleteMany({ where: { organizationId: org.id } });
     await prisma.role.deleteMany({ where: { organizationId: org.id } });
-    await prisma.permission.deleteMany({
-      where: { code: { in: ['invoice.read', 'invoice.create'] } },
-    });
+    await prisma.permission.deleteMany({ where: { code: { in: [readCode, createCode] } } });
     await prisma.organization.delete({ where: { id: org.id } });
   });
 

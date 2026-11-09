@@ -277,7 +277,7 @@ function serializeInvoice(invoice: InvoiceDbRecord): InvoiceResponse {
           lastName: invoice.client.lastName,
         }
       : null,
-    items: invoice.items.map((item) => ({
+    items: (invoice.items ?? []).map((item) => ({
       id: item.id,
       invoiceId: item.invoiceId,
       description: item.description,
@@ -287,7 +287,7 @@ function serializeInvoice(invoice: InvoiceDbRecord): InvoiceResponse {
       amount: item.amount.toString(),
       createdAt: item.createdAt,
     })),
-    payments: invoice.payments.map((p) => ({
+    payments: (invoice.payments ?? []).map((p) => ({
       id: p.id,
       invoiceId: p.invoiceId,
       amount: p.amount.toString(),
@@ -435,6 +435,10 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
     },
     include: {
       items: { orderBy: { createdAt: 'asc' } },
+      payments: { orderBy: { paidAt: 'desc' } },
+      client: { select: { id: true, firstName: true, lastName: true } },
+      creator: { select: { id: true, name: true, email: true } },
+      updater: { select: { id: true, name: true, email: true } },
     },
   });
 
@@ -563,6 +567,10 @@ export async function updateInvoice(
     },
     include: {
       items: { orderBy: { createdAt: 'asc' } },
+      payments: { orderBy: { paidAt: 'desc' } },
+      client: { select: { id: true, firstName: true, lastName: true } },
+      creator: { select: { id: true, name: true, email: true } },
+      updater: { select: { id: true, name: true, email: true } },
     },
   });
 

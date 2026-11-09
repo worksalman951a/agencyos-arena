@@ -10,7 +10,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:unit": "vitest run --exclude \"**/*.integration.test.ts\"",
-    "test:integration": "vitest run integration",
+    "test:integration": "vitest run integration --no-file-parallelism",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "db:generate": "prisma generate",

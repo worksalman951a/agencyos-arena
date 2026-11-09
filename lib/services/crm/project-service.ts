@@ -183,6 +183,17 @@ type ProjectDbRecord = {
   _count: { milestones: number };
 };
 
+/**
+ * Relations required by serializeProject. Every read/write path that returns a
+ * serialized project must fetch these, otherwise the serializer receives
+ * undefined relations and the request fails with a 500.
+ */
+const PROJECT_RESPONSE_INCLUDE = {
+  client: { select: { id: true, firstName: true, lastName: true } },
+  tasks: { orderBy: { createdAt: 'asc' } },
+  _count: { select: { milestones: true } },
+} as const;
+
 function serializeProject(project: ProjectDbRecord): ProjectResponse {
   return {
     id: project.id,
@@ -206,7 +217,7 @@ function serializeProject(project: ProjectDbRecord): ProjectResponse {
           lastName: project.client.lastName,
         }
       : null,
-    tasks: project.tasks.map((t) => ({
+    tasks: (project.tasks ?? []).map((t) => ({
       id: t.id,
       projectId: t.projectId,
       assigneeId: t.assigneeId,
@@ -219,7 +230,7 @@ function serializeProject(project: ProjectDbRecord): ProjectResponse {
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
     })),
-    milestoneCount: project._count.milestones,
+    milestoneCount: project._count?.milestones ?? 0,
   };
 }
 
@@ -305,6 +316,7 @@ export async function createProject(input: ProjectCreateInput) {
       createdBy: userId,
       updatedBy: userId,
     },
+    include: PROJECT_RESPONSE_INCLUDE,
   });
 
   await createAuditLog({
@@ -386,6 +398,7 @@ export async function updateProject(id: string, input: ProjectUpdateInput) {
       description: input.description ?? existing.description,
       updatedBy: userId,
     },
+    include: PROJECT_RESPONSE_INCLUDE,
   });
 
   await createAuditLog({
