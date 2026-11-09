@@ -40,6 +40,10 @@ jobs:
           CHECKPOINT_DISABLE: "1"
           PRISMA_HIDE_UPDATE_MESSAGE: "true"
       - run: npx tsc --noEmit
+      # Prisma client is typed `any` in lib/db.ts, so tsc cannot catch writes to
+      # columns that do not exist. This guard statically compares every Prisma
+      # write payload against prisma/schema.prisma.
+      - run: npm run check:schema
 
   test:
     runs-on: ubuntu-latest
