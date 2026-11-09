@@ -32,6 +32,13 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: npm run lint
+      # Generate the Prisma client before typechecking: without it @prisma/client
+      # resolves to a missing module and skipLibCheck silently makes every
+      # Prisma call `any`, which hides schema/code drift from tsc.
+      - run: node_modules/.bin/prisma generate
+        env:
+          CHECKPOINT_DISABLE: "1"
+          PRISMA_HIDE_UPDATE_MESSAGE: "true"
       - run: npx tsc --noEmit
 
   test:
