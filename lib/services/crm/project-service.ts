@@ -449,8 +449,8 @@ export async function addProjectTask(projectId: string, input: ProjectTaskInput)
       priority: input.priority,
       dueDate: input.dueDate ? new Date(input.dueDate) : null,
       estimatedHours: input.estimatedHours ? parseDecimal(input.estimatedHours) : null,
-      createdBy: userId,
-      updatedBy: userId,
+      // The Task model has no createdBy/updatedBy columns; authorship is
+      // recorded in the audit log entry below.
     },
   });
 
