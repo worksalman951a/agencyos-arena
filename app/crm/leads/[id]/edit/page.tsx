@@ -9,7 +9,7 @@ import { redirect } from 'next/navigation';
 import { getLead } from '@/lib/services/crm/lead-service';
 import { EditLeadForm } from './EditLeadForm';
 
-export default async function LeadEditPage({ params }: { params: { id: string } }) {
+export default async function LeadEditPage({ params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },

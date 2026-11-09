@@ -10,7 +10,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getLead } from '@/lib/services/crm/lead-service';
 
-export default async function LeadDetailPage({ params }: { params: { id: string } }) {
+export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },

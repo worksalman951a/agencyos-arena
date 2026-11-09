@@ -10,10 +10,12 @@ import Link from 'next/link';
 import { listOpportunities } from '@/lib/services/crm/opportunity-service';
 
 export default async function OpportunitiesPage({
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
-  searchParams: { [key: string]: string | string[] | undefined };
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  // Next.js 16: searchParams is a Promise; filters/pagination must be read after awaiting it.
+  const searchParams = await searchParamsPromise;
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },

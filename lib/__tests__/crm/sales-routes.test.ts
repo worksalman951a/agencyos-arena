@@ -43,15 +43,23 @@ describe('Sales route integration (redirects to Phase 2.2 builder)', () => {
     expect(src).not.toContain('Card');
   });
 
-  it('Proposal Edit page redirects to builder with document ID', () => {
+  it('Proposal Edit page awaits params and redirects to builder with document ID', () => {
     const src = readRel('app/sales/proposals/[id]/edit/page.tsx');
-    expect(src).toContain('redirect(`/sales/proposals/builder/${params.id}`)');
+    // Next.js 16: params is a Promise, so the id must be awaited before use.
+    expect(src).toContain('const { id } = await params;');
+    expect(src).toContain('redirect(`/sales/proposals/builder/${id}`)');
+    expect(src).toContain('params: Promise<{ id: string }>');
+    // Regression guard: synchronous params access produced ".../undefined".
+    expect(src).not.toContain('params.id');
     expect(src).not.toContain('EditProposalForm');
   });
 
-  it('Quotation Edit page redirects to builder with document ID', () => {
+  it('Quotation Edit page awaits params and redirects to builder with document ID', () => {
     const src = readRel('app/sales/quotations/[id]/edit/page.tsx');
-    expect(src).toContain('redirect(`/sales/quotations/builder/${params.id}`)');
+    expect(src).toContain('const { id } = await params;');
+    expect(src).toContain('redirect(`/sales/quotations/builder/${id}`)');
+    expect(src).toContain('params: Promise<{ id: string }>');
+    expect(src).not.toContain('params.id');
     expect(src).not.toContain('EditQuotationForm');
   });
 });
@@ -101,19 +109,37 @@ describe('Sidebar navigation includes Proposals and Quotations', () => {
   });
 });
 
-describe('Builder pages accept document ID for edit mode', () => {
-  it('Proposal builder page accepts params.id and passes to BuilderApp', () => {
+describe('Builder pages create mode vs edit mode', () => {
+  // /sales/proposals/builder and /sales/quotations/builder have no dynamic
+  // segment, so there is no route id to read. Editing is served by
+  // builder/[id]/page.tsx. Reading params synchronously here was dead code
+  // that Next.js 16 evaluated against a Promise.
+  it('Proposal builder create page renders BuilderApp without reading a route id', () => {
     const src = readRel('app/sales/proposals/builder/page.tsx');
-    expect(src).toContain('params.id');
+    expect(src).not.toContain('params.id');
     expect(src).toContain('isEdit');
     expect(src).toContain('ProposalBuilderApp');
   });
 
-  it('Quotation builder page accepts params.id and passes to BuilderApp', () => {
+  it('Quotation builder create page renders BuilderApp without reading a route id', () => {
     const src = readRel('app/sales/quotations/builder/page.tsx');
-    expect(src).toContain('params.id');
+    expect(src).not.toContain('params.id');
     expect(src).toContain('isEdit');
     expect(src).toContain('QuotationBuilderApp');
+  });
+
+  it('Proposal builder edit route awaits params and passes the id to BuilderApp', () => {
+    const src = readRel('app/sales/proposals/builder/[id]/page.tsx');
+    expect(src).toContain('const { id } = await params;');
+    expect(src).toContain('proposalId={id}');
+    expect(src).toContain('isEdit={true}');
+  });
+
+  it('Quotation builder edit route awaits params and passes the id to BuilderApp', () => {
+    const src = readRel('app/sales/quotations/builder/[id]/page.tsx');
+    expect(src).toContain('const { id } = await params;');
+    expect(src).toContain('quotationId={id}');
+    expect(src).toContain('isEdit={true}');
   });
 });
 

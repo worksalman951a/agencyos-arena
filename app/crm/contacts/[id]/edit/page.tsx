@@ -9,11 +9,7 @@ import { redirect } from 'next/navigation';
 import { getContact } from '@/lib/services/crm/contact-service';
 import { EditContactForm } from './EditContactForm';
 
-export default async function ContactEditPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+export default async function ContactEditPage({ params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },

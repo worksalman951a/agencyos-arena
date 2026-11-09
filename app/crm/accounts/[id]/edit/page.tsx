@@ -9,11 +9,7 @@ import { redirect } from 'next/navigation';
 import { getAccount } from '@/lib/services/crm/account-service';
 import { EditAccountForm } from './EditAccountForm';
 
-export default async function AccountEditPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+export default async function AccountEditPage({ params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },

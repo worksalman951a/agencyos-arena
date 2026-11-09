@@ -9,7 +9,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getQuotation } from '@/lib/services/crm/quotation-service';
 
-export default async function QuotationDetailPage({ params }: { params: { id: string } }) {
+export default async function QuotationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },
