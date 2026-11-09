@@ -111,18 +111,22 @@ async function getAuthenticatedUser() {
   return result.user as { id: string; email: string | null };
 }
 
-/** Ensure CRM permissions exist in the database using the transaction client */
+/**
+ * Ensure CRM permissions exist in the database using the transaction client.
+ *
+ * Permission codes are global (unique across organizations), so two users
+ * bootstrapping at the same time would race on a per-row upsert and one would
+ * fail with a unique-constraint error. A single `createMany` with
+ * `skipDuplicates` inserts all missing codes atomically and is race-safe.
+ */
 async function ensureCrmPermissions(tx: typeof prisma) {
-  for (const code of CRM_PERMISSION_CODES) {
-    await tx.permission.upsert({
-      where: { code },
-      update: {},
-      create: {
-        code,
-        description: `CRM permission: ${code}`,
-      },
-    });
-  }
+  await tx.permission.createMany({
+    data: CRM_PERMISSION_CODES.map((code) => ({
+      code,
+      description: `CRM permission: ${code}`,
+    })),
+    skipDuplicates: true,
+  });
 }
 
 /** POST /api/auth/bootstrap-organization */

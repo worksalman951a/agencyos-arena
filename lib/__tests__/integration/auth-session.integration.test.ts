@@ -15,11 +15,11 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
+import { SERVER_URL } from './test-config';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const canRunTests = !!DATABASE_URL;
 
-const SERVER_URL = 'http://localhost:3000';
 let canRunHttpTests = false;
 
 const describeIfDb = canRunTests ? describe : describe.skip;

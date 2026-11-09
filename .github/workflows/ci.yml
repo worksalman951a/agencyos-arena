@@ -5,6 +5,7 @@ on:
     branches: [main, arena/**, feature/**]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   lint-and-typecheck:
@@ -31,7 +32,18 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: npm run lint
+      # Generate the Prisma client before typechecking: without it @prisma/client
+      # resolves to a missing module and skipLibCheck silently makes every
+      # Prisma call `any`, which hides schema/code drift from tsc.
+      - run: node_modules/.bin/prisma generate
+        env:
+          CHECKPOINT_DISABLE: "1"
+          PRISMA_HIDE_UPDATE_MESSAGE: "true"
       - run: npx tsc --noEmit
+      # Prisma client is typed `any` in lib/db.ts, so tsc cannot catch writes to
+      # columns that do not exist. This guard statically compares every Prisma
+      # write payload against prisma/schema.prisma.
+      - run: npm run check:schema
 
   test:
     runs-on: ubuntu-latest
@@ -111,21 +123,30 @@ jobs:
             kill $SERVER_PID 2>/dev/null || true
             exit 1
           fi
-          set -o pipefail && npm test 2>&1 | tee test-output.log
-          TEST_EXIT=$?
+          set -o pipefail && npm run test:unit 2>&1 | tee unit-test-output.log
+          UNIT_EXIT=$?
+          set -o pipefail && npm run test:integration 2>&1 | tee integration-test-output.log
+          INTEGRATION_EXIT=$?
           kill $SERVER_PID 2>/dev/null || true
-          exit $TEST_EXIT
+          if [ "$UNIT_EXIT" -ne 0 ] || [ "$INTEGRATION_EXIT" -ne 0 ]; then
+            echo "ERROR: tests failed (unit=$UNIT_EXIT integration=$INTEGRATION_EXIT)" >&2
+            exit 1
+          fi
         env:
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET || 'ci_auth_secret_arena_2026' }}
           BETTER_AUTH_URL: "http://localhost:3001"
+          TEST_SERVER_URL: "http://localhost:3001"
           NODE_ENV: "test"
           PORT: "3001"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: test-output-log
-          path: test-output.log
+          name: test-output-logs
+          path: |
+            unit-test-output.log
+            integration-test-output.log
+          if-no-files-found: ignore
 
   build:
     runs-on: ubuntu-latest

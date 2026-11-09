@@ -2,7 +2,7 @@
 # No cloud resources are provisioned. All services run locally.
 #
 # Ports are configurable via environment variables (see .env.example).
-# CI continues to use localhost:3000/5432; this compose file is for A Agent local preview only.
+# CI and local development both serve the app on port 3001. Port 3000 is reserved for a different project.
 #
 # To start:   docker compose -p agencyos-a up
 # To stop:    docker compose -p agencyos-a down

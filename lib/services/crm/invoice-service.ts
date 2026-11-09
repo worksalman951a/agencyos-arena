@@ -149,6 +149,21 @@ function formatMoney(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
+/**
+ * Format a Prisma Decimal (or numeric string) as a fixed 2-decimal money string.
+ *
+ * Decimal.toString() drops trailing zeros (1700.00 -> "1700"), which made API
+ * responses inconsistent between read and write paths. Money values are always
+ * serialized with two decimals.
+ */
+function formatDecimalMoney(
+  value: string | number | { toString(): string } | null | undefined
+): string {
+  if (value === null || value === undefined) return '0.00';
+  const num = Number(value.toString());
+  return Number.isFinite(num) ? num.toFixed(2) : '0.00';
+}
+
 function calculateInvoiceTotals(items: InvoiceLineItemInput[]) {
   let subtotalCents = 0;
   let taxCents = 0;
@@ -253,9 +268,9 @@ function serializeInvoice(invoice: InvoiceDbRecord): InvoiceResponse {
     clientId: invoice.clientId,
     title: invoice.title,
     status: invoice.status,
-    subtotal: invoice.subtotal.toString(),
-    tax: invoice.tax.toString(),
-    total: invoice.total.toString(),
+    subtotal: formatDecimalMoney(invoice.subtotal),
+    tax: formatDecimalMoney(invoice.tax),
+    total: formatDecimalMoney(invoice.total),
     currency: invoice.currency,
     dueDate: invoice.dueDate,
     notes: invoice.notes,
@@ -277,20 +292,20 @@ function serializeInvoice(invoice: InvoiceDbRecord): InvoiceResponse {
           lastName: invoice.client.lastName,
         }
       : null,
-    items: invoice.items.map((item) => ({
+    items: (invoice.items ?? []).map((item) => ({
       id: item.id,
       invoiceId: item.invoiceId,
       description: item.description,
       quantity: item.quantity.toString(),
-      unitPrice: item.unitPrice.toString(),
+      unitPrice: formatDecimalMoney(item.unitPrice),
       taxRate: item.taxRate.toString(),
-      amount: item.amount.toString(),
+      amount: formatDecimalMoney(item.amount),
       createdAt: item.createdAt,
     })),
-    payments: invoice.payments.map((p) => ({
+    payments: (invoice.payments ?? []).map((p) => ({
       id: p.id,
       invoiceId: p.invoiceId,
-      amount: p.amount.toString(),
+      amount: formatDecimalMoney(p.amount),
       method: p.method,
       reference: p.reference,
       paidAt: p.paidAt,
@@ -435,6 +450,10 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
     },
     include: {
       items: { orderBy: { createdAt: 'asc' } },
+      payments: { orderBy: { paidAt: 'desc' } },
+      client: { select: { id: true, firstName: true, lastName: true } },
+      creator: { select: { id: true, name: true, email: true } },
+      updater: { select: { id: true, name: true, email: true } },
     },
   });
 
@@ -449,7 +468,7 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
       number: invoice.number,
       title: invoice.title,
       status: invoice.status,
-      total: invoice.total.toString(),
+      total: formatDecimalMoney(invoice.total),
       currency: invoice.currency,
     },
     organizationId,
@@ -563,6 +582,10 @@ export async function updateInvoice(
     },
     include: {
       items: { orderBy: { createdAt: 'asc' } },
+      payments: { orderBy: { paidAt: 'desc' } },
+      client: { select: { id: true, firstName: true, lastName: true } },
+      creator: { select: { id: true, name: true, email: true } },
+      updater: { select: { id: true, name: true, email: true } },
     },
   });
 
@@ -582,7 +605,7 @@ export async function updateInvoice(
       id: invoice.id,
       title: invoice.title,
       status: invoice.status,
-      total: invoice.total.toString(),
+      total: formatDecimalMoney(invoice.total),
     },
     organizationId,
   });
@@ -662,7 +685,7 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
     payment: {
       id: payment.id,
       invoiceId: payment.invoiceId,
-      amount: payment.amount.toString(),
+      amount: formatDecimalMoney(payment.amount),
       method: payment.method,
       reference: payment.reference,
       paidAt: payment.paidAt,

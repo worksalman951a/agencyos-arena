@@ -53,7 +53,7 @@ docker compose -p agencyos-a up
 # The app runs at http://localhost:3001
 # PostgreSQL is available at localhost:5433 (mapped to container port 5432)
 # Ports are configurable via POSTGRES_HOST_PORT, POSTGRES_INTERNAL_PORT, and APP_PORT env vars.
-# CI continues to use localhost:3000/5432; this compose file is for A Agent local preview only.
+# CI and local development both serve the app on port 3001. Port 3000 is reserved for a different project.
 ```
 
 ### Database

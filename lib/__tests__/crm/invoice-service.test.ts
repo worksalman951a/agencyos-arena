@@ -253,6 +253,70 @@ describe('createInvoice', () => {
     expect(result.id).toBe('inv-new');
   });
 
+  it('returns a complete response when the created row omits optional relations', async () => {
+    // Regression: createInvoice used to serialize relations it never included
+    // (payments/client/creator/updater), so POST returned 500 with a TypeError
+    // whenever a real invoice was created. The serializer must not assume that
+    // optional relations were fetched.
+    const withoutRelations: Record<string, unknown> = { ...baseInvoice, id: 'inv-bare' };
+    delete withoutRelations.payments;
+    delete withoutRelations.client;
+    delete withoutRelations.creator;
+    delete withoutRelations.updater;
+    delete withoutRelations.items;
+
+    mockInvoiceCreate.mockResolvedValue(withoutRelations);
+    mockContactFindFirst.mockResolvedValue({ id: 'contact-1', organizationId: 'org-1' });
+
+    const result = await createInvoice(
+      {
+        clientId: 'contact-1',
+        title: 'Bare Invoice',
+        status: 'draft',
+        currency: 'USD',
+        dueDate: null,
+        notes: null,
+      },
+      lineItems
+    );
+
+    expect(result.id).toBe('inv-bare');
+    expect(result.items).toEqual([]);
+    expect(result.payments).toEqual([]);
+    expect(result.client).toBeNull();
+    expect(result.creator).toBeNull();
+    expect(result.updater).toBeNull();
+  });
+
+  it('requests the relations the response serializer needs', async () => {
+    mockInvoiceCreate.mockResolvedValue({ ...baseInvoice, id: 'inv-inc' });
+    mockContactFindFirst.mockResolvedValue({ id: 'contact-1', organizationId: 'org-1' });
+
+    await createInvoice(
+      {
+        clientId: 'contact-1',
+        title: 'Include Check',
+        status: 'draft',
+        currency: 'USD',
+        dueDate: null,
+        notes: null,
+      },
+      lineItems
+    );
+
+    expect(mockInvoiceCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          items: expect.anything(),
+          payments: expect.anything(),
+          client: expect.anything(),
+          creator: expect.anything(),
+          updater: expect.anything(),
+        }),
+      })
+    );
+  });
+
   it('requires create permission', async () => {
     mockRequirePermission.mockRejectedValueOnce(
       Object.assign(new Error('Forbidden'), { statusCode: 403 })
