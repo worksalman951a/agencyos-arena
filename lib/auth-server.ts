@@ -10,7 +10,8 @@
  *
  * Origin configuration:
  * - baseURL is resolved from BETTER_AUTH_URL, then NEXT_PUBLIC_APP_URL,
- *   then falls back to http://localhost:3000 for local development.
+ *   then falls back to http://localhost:3001 for local development.
+ *   Port 3000 is reserved for a separate local project and is never used.
  * - trustedOrigins always includes baseURL plus any additional origins
  *   listed in the comma-separated TRUSTED_ORIGINS env var.
  *   Use TRUSTED_ORIGINS for GitHub Codespaces forwarded HTTPS domains.
@@ -27,12 +28,11 @@ import { prisma } from '@/lib/db';
  * Precedence:
  * 1. BETTER_AUTH_URL (explicit auth base URL)
  * 2. NEXT_PUBLIC_APP_URL (public app URL)
- * 3. http://localhost:3000 (local development fallback)
+ * 3. http://localhost:3001 (local development fallback; port 3000 is reserved
+ *    for a separate local project)
  */
 const baseURL =
-  process.env.BETTER_AUTH_URL ??
-  process.env.NEXT_PUBLIC_APP_URL ??
-  'http://localhost:3000';
+  process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001';
 
 /**
  * Additional trusted origins beyond baseURL, parsed from a comma-separated
@@ -42,7 +42,9 @@ const baseURL =
  * Example: TRUSTED_ORIGINS="https://codespace-1-3001.app.github.dev,https://codespace-2-3001.app.github.dev"
  */
 const trustedOriginsFromEnv = process.env.TRUSTED_ORIGINS
-  ? process.env.TRUSTED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+  ? process.env.TRUSTED_ORIGINS.split(',')
+      .map((o) => o.trim())
+      .filter(Boolean)
   : [];
 
 /**

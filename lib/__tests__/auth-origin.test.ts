@@ -34,12 +34,7 @@ vi.mock('better-auth', () => ({ betterAuth: betterAuthMock }));
 vi.mock('better-auth/adapters/prisma', () => ({ prismaAdapter: prismaAdapterMock }));
 vi.mock('@/lib/db', () => ({ prisma: {} }));
 
-const envKeys = [
-  'BETTER_AUTH_URL',
-  'NEXT_PUBLIC_APP_URL',
-  'TRUSTED_ORIGINS',
-  'NODE_ENV',
-];
+const envKeys = ['BETTER_AUTH_URL', 'NEXT_PUBLIC_APP_URL', 'TRUSTED_ORIGINS', 'NODE_ENV'];
 
 /** Set env vars and reset module registry so auth-server re-evaluates.
  * Explicitly stubs all four env keys so unspecified ones are deleted,
@@ -75,15 +70,15 @@ describe('Auth origin configuration', () => {
     vi.unstubAllEnvs();
   });
 
-  it('defaults to localhost:3000 baseURL when no env vars are set', async () => {
+  it('defaults to localhost:3001 baseURL when no env vars are set', async () => {
     applyEnv({});
     vi.stubEnv('NODE_ENV', 'development');
 
     await import('@/lib/auth-server');
 
     const config = getConfig() as AuthConfig;
-    expect(config.baseURL).toBe('http://localhost:3000');
-    expect(config.trustedOrigins).toEqual(['http://localhost:3000']);
+    expect(config.baseURL).toBe('http://localhost:3001');
+    expect(config.trustedOrigins).toEqual(['http://localhost:3001']);
     expect(config.advanced.defaultCookieAttributes.secure).toBe(false);
   });
 
@@ -113,9 +108,7 @@ describe('Auth origin configuration', () => {
 
     const config = getConfig() as AuthConfig;
     expect(config.baseURL).toBe('https://example-codespace-3001.app.github.dev');
-    expect(config.trustedOrigins).toEqual([
-      'https://example-codespace-3001.app.github.dev',
-    ]);
+    expect(config.trustedOrigins).toEqual(['https://example-codespace-3001.app.github.dev']);
   });
 
   it('adds TRUSTED_ORIGINS entries alongside baseURL', async () => {
