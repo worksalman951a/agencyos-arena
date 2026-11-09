@@ -14,8 +14,24 @@
 import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { AlertTriangle } from 'lucide-react';
 import { useToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
+interface ContactAuditUser {
+  id: string;
+  name: string;
+}
 
 interface ContactRecord {
   id: string;
@@ -30,9 +46,38 @@ interface ContactRecord {
   isMasked: boolean;
   createdBy: string | null;
   updatedBy: string | null;
+  createdByUser: ContactAuditUser | null;
+  updatedByUser: ContactAuditUser | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
+}
+
+/**
+ * Render an audit identity (Created By / Updated By).
+ *
+ * The API resolves the referenced user to a display name when the user belongs
+ * to the same organization. When it cannot (user removed, or identity withheld
+ * by organization isolation) we say so instead of printing a raw database id.
+ */
+function AuditUserLabel({
+  user,
+  fallbackId,
+}: {
+  user: ContactAuditUser | null;
+  fallbackId: string | null;
+}) {
+  if (user?.name) {
+    return <span title={fallbackId ?? undefined}>{user.name}</span>;
+  }
+  if (!fallbackId) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="text-muted-foreground" title={fallbackId}>
+      User unavailable
+    </span>
+  );
 }
 
 type ContactLoadState =
@@ -60,6 +105,8 @@ export default function ContactDetailPage() {
 
   const [state, setState] = React.useState<ContactLoadState>({ status: 'loading' });
   const [deleting, setDeleting] = React.useState(false);
+  // Accessible confirmation dialog state (replaces window.confirm()).
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
   const [reloadToken, setReloadToken] = React.useState(0);
 
   React.useEffect(() => {
@@ -113,11 +160,14 @@ export default function ContactDetailPage() {
     };
   }, [id, router, reloadToken]);
 
-  async function handleDelete() {
+  /**
+   * Soft-delete the contact. Called from the AlertDialog's confirm action; the
+   * event is prevented so the dialog stays open (and shows a busy state) until
+   * the request settles.
+   */
+  async function handleConfirmDelete(event?: React.MouseEvent) {
+    event?.preventDefault();
     if (!id) return;
-    if (!window.confirm('Are you sure you want to delete this contact?')) {
-      return;
-    }
     setDeleting(true);
     try {
       const res = await fetch(`/api/v1/crm/contacts/${encodeURIComponent(id)}`, {
@@ -135,6 +185,7 @@ export default function ContactDetailPage() {
         return;
       }
       toast({ title: 'Deleted', description: 'Contact has been deleted' });
+      setConfirmDeleteOpen(false);
       router.push('/crm/contacts');
       router.refresh();
     } catch {
@@ -201,41 +252,81 @@ export default function ContactDetailPage() {
     );
   }
 
+  const isDeleted = Boolean(contact.deletedAt);
+  const displayName = [contact.firstName, contact.lastName].filter(Boolean).join(' ');
+
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">
-            {contact.firstName} {contact.lastName}
-          </h1>
+          <h1 className="text-2xl font-bold">{displayName || 'Contact'}</h1>
           <p className="text-muted-foreground">
             {contact.email ?? 'No email'} &bull; {contact.phone ?? 'No phone'}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Link
-            href="/crm/contacts/new"
-            className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
-          >
-            New Contact
-          </Link>
-          <Link
-            href={`/crm/contacts/${contact.id}/edit`}
-            className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
-          >
-            Edit
-          </Link>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
-            {deleting ? 'Deleting…' : 'Delete'}
+        <div className="flex flex-wrap gap-2">
+          {!isDeleted && (
+            <Button asChild variant="outline">
+              <Link href={`/crm/contacts/${contact.id}/edit`}>Edit</Link>
+            </Button>
+          )}
+          {!isDeleted && (
+            <Button
+              variant="destructive"
+              onClick={() => setConfirmDeleteOpen(true)}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          )}
+          <Button asChild variant="ghost">
+            <Link href="/crm/contacts">Back to Contacts</Link>
           </Button>
-          <Link
-            href="/crm/contacts"
-            className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
-          >
-            Back to Contacts
-          </Link>
         </div>
       </div>
+
+      {isDeleted && (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4"
+        >
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-semibold text-destructive">This contact has been deleted</p>
+            <p className="text-sm text-muted-foreground">
+              It was deleted on{' '}
+              {new Date(contact.deletedAt as Date).toLocaleString(undefined, {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              })}{' '}
+              and no longer appears in the contacts list. The record is shown for reference only and
+              cannot be edited or deleted again.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this contact?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {displayName || 'This contact'} will be marked as deleted and removed from the
+              contacts list. The record and its audit history are retained.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? 'Deleting…' : 'Delete contact'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="col-span-1 bg-card p-6 rounded-lg border border-border">
@@ -310,11 +401,15 @@ export default function ContactDetailPage() {
           <dl className="space-y-4">
             <div>
               <dt className="text-xs text-muted-foreground">Created By</dt>
-              <dd className="font-medium">{contact.createdBy ?? '—'}</dd>
+              <dd className="font-medium">
+                <AuditUserLabel user={contact.createdByUser} fallbackId={contact.createdBy} />
+              </dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Updated By</dt>
-              <dd className="font-medium">{contact.updatedBy ?? '—'}</dd>
+              <dd className="font-medium">
+                <AuditUserLabel user={contact.updatedByUser} fallbackId={contact.updatedBy} />
+              </dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Created At</dt>

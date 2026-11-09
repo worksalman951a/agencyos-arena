@@ -432,3 +432,122 @@ describe('Contact service - deleteContact', () => {
     });
   });
 });
+
+describe('Contact service - audit identity resolution', () => {
+  const baseContact = {
+    id: contactId,
+    organizationId: orgId,
+    accountId: null,
+    firstName: 'John',
+    lastName: 'Doe',
+    email: 'john@example.com',
+    phone: null,
+    maskedEmail: null,
+    maskedPhone: null,
+    isMasked: false,
+    status: 'active',
+    source: null,
+    deletedAt: null,
+    createdBy: userId,
+    updatedBy: userId,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    account: null,
+    accountContacts: [],
+  };
+
+  it('resolves creator and updater names instead of raw ids', async () => {
+    mockContactFindFirst.mockResolvedValue({
+      ...baseContact,
+      creator: {
+        id: userId,
+        name: 'Ada Lovelace',
+        email: 'ada@example.com',
+        organizationId: orgId,
+      },
+      updater: {
+        id: 'user_2',
+        name: 'Grace Hopper',
+        email: 'grace@example.com',
+        organizationId: orgId,
+      },
+    });
+
+    const result = await getContact(contactId);
+
+    expect(result.createdByUser).toEqual({ id: userId, name: 'Ada Lovelace' });
+    expect(result.updatedByUser).toEqual({ id: 'user_2', name: 'Grace Hopper' });
+  });
+
+  it('falls back to email when the user has no display name', async () => {
+    mockContactFindFirst.mockResolvedValue({
+      ...baseContact,
+      creator: { id: userId, name: null, email: 'noname@example.com', organizationId: orgId },
+      updater: null,
+    });
+
+    const result = await getContact(contactId);
+
+    expect(result.createdByUser).toEqual({ id: userId, name: 'noname@example.com' });
+    expect(result.updatedByUser).toBeNull();
+  });
+
+  it('withholds identity when the referenced user belongs to another organization', async () => {
+    mockContactFindFirst.mockResolvedValue({
+      ...baseContact,
+      creator: {
+        id: 'user_foreign',
+        name: 'Someone Else',
+        email: 'else@example.org',
+        organizationId: 'org_other',
+      },
+      updater: {
+        id: 'user_foreign_2',
+        name: 'Another Person',
+        email: 'another@example.org',
+        organizationId: 'org_other',
+      },
+    });
+
+    const result = await getContact(contactId);
+
+    // Organization isolation: no cross-org identity leakage.
+    expect(result.createdByUser).toBeNull();
+    expect(result.updatedByUser).toBeNull();
+    expect(JSON.stringify(result)).not.toContain('Someone Else');
+    expect(JSON.stringify(result)).not.toContain('else@example.org');
+  });
+
+  it('returns null identities when the relations were not loaded (list view)', async () => {
+    mockContactFindFirst.mockResolvedValue({ ...baseContact });
+
+    const result = await getContact(contactId);
+
+    expect(result.createdByUser).toBeNull();
+    expect(result.updatedByUser).toBeNull();
+    // Raw ids stay in the response so clients can still correlate records.
+    expect(result.createdBy).toBe(userId);
+  });
+
+  it('selects organizationId with the audit relations so isolation can be enforced', async () => {
+    mockContactFindFirst.mockResolvedValue({ ...baseContact });
+
+    await getContact(contactId);
+
+    const call = mockContactFindFirst.mock.calls.at(-1)?.[0] as {
+      include: Record<string, { select: Record<string, boolean> }>;
+    };
+    expect(call.include.creator.select).toEqual({
+      id: true,
+      name: true,
+      email: true,
+      organizationId: true,
+    });
+    expect(call.include.updater.select).toEqual({
+      id: true,
+      name: true,
+      email: true,
+      organizationId: true,
+    });
+  });
+});

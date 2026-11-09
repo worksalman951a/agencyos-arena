@@ -226,6 +226,73 @@ describeIfDb('CRM Contacts integration (real PostgreSQL)', () => {
         data: { deletedAt: null },
       });
     });
+
+    it('excludes soft-deleted contacts when includeDeleted=false is passed explicitly', async () => {
+      // Regression: `z.coerce.boolean()` turned the string "false" into true,
+      // so this request used to return deleted contacts (the bug reported from
+      // the contacts list, which sends includeDeleted=false).
+      await prisma.contact.update({
+        where: { id: testContactId },
+        data: { deletedAt: new Date() },
+      });
+
+      try {
+        const res = await fetch(
+          `${SERVER_URL}/api/v1/crm/contacts?page=1&pageSize=20&search=&sortBy=createdAt&sortOrder=desc&includeDeleted=false`,
+          {
+            headers: {
+              Cookie: `better-auth.session_token=${testSessionToken}`,
+              Accept: 'application/json',
+            },
+          }
+        );
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.contacts.find((c: { id: string }) => c.id === testContactId)).toBeUndefined();
+      } finally {
+        await prisma.contact.update({
+          where: { id: testContactId },
+          data: { deletedAt: null },
+        });
+      }
+    });
+
+    it('includes soft-deleted contacts when includeDeleted=true', async () => {
+      const deletedAt = new Date();
+      await prisma.contact.update({
+        where: { id: testContactId },
+        data: { deletedAt },
+      });
+
+      try {
+        const res = await fetch(`${SERVER_URL}/api/v1/crm/contacts?includeDeleted=true`, {
+          headers: {
+            Cookie: `better-auth.session_token=${testSessionToken}`,
+            Accept: 'application/json',
+          },
+        });
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        const found = body.contacts.find((c: { id: string }) => c.id === testContactId);
+        expect(found).toBeDefined();
+        expect(found.deletedAt).not.toBeNull();
+      } finally {
+        await prisma.contact.update({
+          where: { id: testContactId },
+          data: { deletedAt: null },
+        });
+      }
+    });
+
+    it('rejects an invalid includeDeleted token', async () => {
+      const res = await fetch(`${SERVER_URL}/api/v1/crm/contacts?includeDeleted=maybe`, {
+        headers: {
+          Cookie: `better-auth.session_token=${testSessionToken}`,
+          Accept: 'application/json',
+        },
+      });
+      expect(res.status).toBe(400);
+    });
   });
 
   describe('POST /api/v1/crm/contacts - Create contact', () => {

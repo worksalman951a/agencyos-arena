@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
 
 /**
  * Zod validation schemas for Proposal CRUD operations.
@@ -43,7 +44,7 @@ export const proposalQuerySchema = z.object({
   status: z.string().optional(),
   sortBy: z.enum(['title', 'status', 'total', 'createdAt', 'updatedAt']).default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
-  includeDeleted: z.coerce.boolean().default(false),
+  includeDeleted: includeDeletedQueryParam,
 });
 
 export type ProposalCreateInput = z.infer<typeof proposalCreateSchema>;

@@ -11,6 +11,16 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface Contact {
   id: string;
@@ -46,6 +56,8 @@ export default function ContactsPage() {
   const [page, setPage] = React.useState(1);
   const [isLoading, setIsLoading] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  // Contact awaiting delete confirmation (accessible dialog, no window.confirm).
+  const [pendingDelete, setPendingDelete] = React.useState<Contact | null>(null);
 
   const pageNum = Math.max(1, parseInt(String(searchParams.get('page') ?? '1'), 10));
   const pageSizeNum = Math.min(
@@ -53,6 +65,9 @@ export default function ContactsPage() {
     Math.max(1, parseInt(String(searchParams.get('pageSize') ?? '20'), 10))
   );
   const searchVal = String(searchParams.get('search') ?? '');
+  // Explicit opt-in to soft-deleted records. Defaults to false so ordinary
+  // lists never show deleted contacts.
+  const includeDeleted = searchParams.get('includeDeleted') === 'true';
 
   React.useEffect(() => {
     let mounted = true;
@@ -60,7 +75,7 @@ export default function ContactsPage() {
       setIsLoading(true);
       try {
         const res = await fetch(
-          `/api/v1/crm/contacts?page=${pageNum}&pageSize=${pageSizeNum}&search=${encodeURIComponent(searchVal)}&sortBy=createdAt&sortOrder=desc&includeDeleted=false`,
+          `/api/v1/crm/contacts?page=${pageNum}&pageSize=${pageSizeNum}&search=${encodeURIComponent(searchVal)}&sortBy=createdAt&sortOrder=desc&includeDeleted=${includeDeleted}`,
           {
             method: 'GET',
             credentials: 'include',
@@ -88,12 +103,9 @@ export default function ContactsPage() {
     return () => {
       mounted = false;
     };
-  }, [pageNum, pageSizeNum, searchVal]);
+  }, [pageNum, pageSizeNum, searchVal, includeDeleted]);
 
   async function handleDelete(id: string) {
-    if (!window.confirm('Are you sure you want to delete this contact?')) {
-      return;
-    }
     setDeletingId(id);
     try {
       const res = await fetch(`/api/v1/crm/contacts/${id}`, {
@@ -115,6 +127,7 @@ export default function ContactsPage() {
       toast({ title: 'Deleted', description: 'Contact has been deleted' });
       setContacts((prev) => prev.filter((c) => c.id !== id));
       setTotal((prev) => prev - 1);
+      setPendingDelete(null);
     } catch {
       toast({
         title: 'Delete failed',
@@ -138,21 +151,38 @@ export default function ContactsPage() {
         </Link>
       </div>
 
-      <form className="flex gap-2 max-w-sm">
-        <input
-          type="text"
-          name="search"
-          defaultValue={searchVal}
-          placeholder="Search contacts..."
-          className="flex-1 border border-input rounded-md px-3 py-2 text-sm"
-        />
-        <button
-          type="submit"
-          className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
-        >
-          Search
-        </button>
-      </form>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <form className="flex gap-2 max-w-sm">
+          <input
+            type="text"
+            name="search"
+            defaultValue={searchVal}
+            placeholder="Search contacts..."
+            className="flex-1 border border-input rounded-md px-3 py-2 text-sm"
+          />
+          {includeDeleted && <input type="hidden" name="includeDeleted" value="true" />}
+          <button
+            type="submit"
+            className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+          >
+            Search
+          </button>
+        </form>
+        <Button asChild variant={includeDeleted ? 'secondary' : 'outline'} size="sm">
+          <Link
+            href={includeDeleted ? '/crm/contacts' : '/crm/contacts?includeDeleted=true'}
+            aria-pressed={includeDeleted}
+          >
+            {includeDeleted ? 'Hide deleted' : 'Show deleted'}
+          </Link>
+        </Button>
+      </div>
+
+      {includeDeleted && (
+        <p className="text-sm text-muted-foreground">
+          Deleted contacts are included. They are kept for reference and are not restored from here.
+        </p>
+      )}
 
       {isLoading && (
         <div className="flex items-center justify-center py-8 text-muted-foreground">
@@ -206,7 +236,14 @@ export default function ContactsPage() {
                         <span className="text-muted-foreground text-sm">—</span>
                       )}
                     </td>
-                    <td className="py-4">{contact.status}</td>
+                    <td className="py-4">
+                      <span>{contact.status}</span>
+                      {contact.deletedAt && (
+                        <span className="ml-2 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">
+                          Deleted
+                        </span>
+                      )}
+                    </td>
                     <td className="py-4 text-sm text-muted-foreground">
                       {new Date(contact.createdAt).toLocaleDateString()}
                     </td>
@@ -226,15 +263,19 @@ export default function ContactsPage() {
                         >
                           Edit
                         </Link>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => handleDelete(contact.id)}
-                          disabled={deletingId === contact.id}
-                          title="Delete"
-                        >
-                          {deletingId === contact.id ? 'Deleting…' : 'Delete'}
-                        </Button>
+                        {contact.deletedAt ? (
+                          <span className="text-xs text-muted-foreground">Deleted</span>
+                        ) : (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setPendingDelete(contact)}
+                            disabled={deletingId === contact.id}
+                            title="Delete"
+                          >
+                            {deletingId === contact.id ? 'Deleting…' : 'Delete'}
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -250,6 +291,38 @@ export default function ContactsPage() {
           Page {page} of {totalPages} ({total} total)
         </div>
       )}
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && !deletingId) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this contact?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {[pendingDelete?.firstName, pendingDelete?.lastName].filter(Boolean).join(' ') ||
+                'This contact'}{' '}
+              will be marked as deleted and removed from the contacts list. The record and its audit
+              history are retained.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(deletingId)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={Boolean(deletingId)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                if (pendingDelete) void handleDelete(pendingDelete.id);
+              }}
+            >
+              {deletingId ? 'Deleting…' : 'Delete contact'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -49,6 +49,8 @@ const mockContact = {
   isMasked: false,
   createdBy: null,
   updatedBy: null,
+  createdByUser: null,
+  updatedByUser: null,
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
   deletedAt: null,
@@ -283,8 +285,10 @@ describe('Contact Detail page - loading-state loop regression', () => {
     expect(screen.queryByText(/Loading contact…/)).not.toBeInTheDocument();
   });
 
-  it('deletes the contact and navigates back to the contacts list', async () => {
-    const mockConfirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  it('asks for confirmation in an accessible dialog before deleting', async () => {
+    // window.confirm must never be used again: it is blocking, unstyled and
+    // untestable. The confirmation lives in the design-system AlertDialog.
+    const confirmSpy = vi.spyOn(window, 'confirm');
 
     mockFetch.mockImplementation((url: string | URL, options?: RequestInit) => {
       const u = typeof url === 'string' ? url : String(url);
@@ -303,21 +307,175 @@ describe('Contact Detail page - loading-state loop regression', () => {
       expect(screen.getByText('Jane Smith')).toBeInTheDocument();
     });
 
-    expect(contactApiCalls().length).toBe(1);
+    // Opening the dialog must not delete anything yet.
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
-    fireEvent.click(screen.getByRole('button', { name: /Delete/ }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toBeInTheDocument();
+    expect(
+      screen.getByText(/will be marked as deleted and removed from the contacts list/i)
+    ).toBeInTheDocument();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(contactApiCalls().some(([, options]) => options?.method === 'DELETE')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete contact' }));
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith('/crm/contacts');
     });
 
-    expect(mockConfirm).toHaveBeenCalledWith('Are you sure you want to delete this contact?');
     expect(
       contactApiCalls().some(
         ([url, options]) => options?.method === 'DELETE' && url.includes('contact_1')
       )
     ).toBe(true);
 
-    mockConfirm.mockRestore();
+    confirmSpy.mockRestore();
+  });
+
+  it('cancelling the dialog leaves the contact untouched', async () => {
+    render(<ContactDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Jane Smith')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    });
+
+    expect(contactApiCalls().some(([, options]) => options?.method === 'DELETE')).toBe(false);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+});
+
+describe('Contact Detail page - actions', () => {
+  it('does not offer a redundant "New Contact" action on a contact', async () => {
+    render(<ContactDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Jane Smith')).toBeInTheDocument();
+    });
+
+    // Creating a contact belongs to the Contacts list page.
+    expect(screen.queryByRole('link', { name: /new contact/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps Edit and Back to Contacts', async () => {
+    render(<ContactDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Jane Smith')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('link', { name: 'Edit' })).toHaveAttribute(
+      'href',
+      '/crm/contacts/contact_1/edit'
+    );
+    expect(screen.getByRole('link', { name: /Back to Contacts/i })).toHaveAttribute(
+      'href',
+      '/crm/contacts'
+    );
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+});
+
+describe('Contact Detail page - audit identities', () => {
+  it('shows resolved creator and updater names instead of raw user ids', async () => {
+    mockFetch.mockImplementation((url: string | URL) => {
+      const u = typeof url === 'string' ? url : String(url);
+      if (u.includes('/api/v1/crm/contacts/')) {
+        return jsonResponse({
+          ...mockContact,
+          createdBy: 'user_creator_1',
+          updatedBy: 'user_updater_2',
+          createdByUser: { id: 'user_creator_1', name: 'Ada Lovelace' },
+          updatedByUser: { id: 'user_updater_2', name: 'Grace Hopper' },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(<ContactDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Grace Hopper')).toBeInTheDocument();
+    // Raw database ids must not be the displayed value.
+    expect(screen.queryByText('user_creator_1')).not.toBeInTheDocument();
+    expect(screen.queryByText('user_updater_2')).not.toBeInTheDocument();
+  });
+
+  it('says the user is unavailable when identity cannot be resolved', async () => {
+    mockFetch.mockImplementation((url: string | URL) => {
+      const u = typeof url === 'string' ? url : String(url);
+      if (u.includes('/api/v1/crm/contacts/')) {
+        return jsonResponse({
+          ...mockContact,
+          createdBy: 'user_creator_1',
+          updatedBy: null,
+          createdByUser: null,
+          updatedByUser: null,
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(<ContactDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('User unavailable')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('user_creator_1')).not.toBeInTheDocument();
+    // No creator/updater at all renders an em dash, not an empty cell.
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+});
+
+describe('Contact Detail page - soft-deleted contact', () => {
+  const deletedContact = {
+    ...mockContact,
+    deletedAt: '2026-02-03T10:30:00Z',
+  };
+
+  beforeEach(() => {
+    mockFetch.mockImplementation((url: string | URL) => {
+      const u = typeof url === 'string' ? url : String(url);
+      if (u.includes('/api/v1/crm/contacts/')) {
+        return jsonResponse(deletedContact);
+      }
+      return jsonResponse({});
+    });
+  });
+
+  it('shows a clear deleted-state banner instead of presenting it as active', async () => {
+    render(<ContactDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('This contact has been deleted')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.getByText(/no longer appears in the contacts list/i)).toBeInTheDocument();
+  });
+
+  it('does not offer Edit or Delete for a deleted contact', async () => {
+    render(<ContactDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('This contact has been deleted')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    // Navigation back to the list must remain available.
+    expect(screen.getByRole('link', { name: /Back to Contacts/i })).toBeInTheDocument();
   });
 });
