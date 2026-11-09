@@ -9,11 +9,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getAccount } from '@/lib/services/crm/account-service';
 
-export default async function AccountDetailPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+export default async function AccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },
@@ -59,9 +55,7 @@ export default async function AccountDetailPage({
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="col-span-1 bg-card p-6 rounded-lg border border-border">
-          <h2 className="text-sm font-semibold text-muted-foreground mb-4">
-            Account Details
-          </h2>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-4">Account Details</h2>
           <dl className="space-y-4">
             <div>
               <dt className="text-xs text-muted-foreground">Name</dt>
@@ -109,21 +103,15 @@ export default async function AccountDetailPage({
         </div>
 
         <div className="col-span-2 bg-card p-6 rounded-lg border border-border">
-          <h2 className="text-sm font-semibold text-muted-foreground mb-4">
-            Audit Information
-          </h2>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-4">Audit Information</h2>
           <dl className="space-y-4">
             <div>
               <dt className="text-xs text-muted-foreground">Created At</dt>
-              <dd className="font-medium">
-                {new Date(account.createdAt).toLocaleDateString()}
-              </dd>
+              <dd className="font-medium">{new Date(account.createdAt).toLocaleDateString()}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Updated At</dt>
-              <dd className="font-medium">
-                {new Date(account.updatedAt).toLocaleDateString()}
-              </dd>
+              <dd className="font-medium">{new Date(account.updatedAt).toLocaleDateString()}</dd>
             </div>
           </dl>
         </div>

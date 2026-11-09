@@ -9,7 +9,7 @@ import { redirect } from 'next/navigation';
 import { getOpportunity } from '@/lib/services/crm/opportunity-service';
 import { EditOpportunityForm } from './EditOpportunityForm';
 
-export default async function OpportunityEditPage({ params }: { params: { id: string } }) {
+export default async function OpportunityEditPage({ params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },

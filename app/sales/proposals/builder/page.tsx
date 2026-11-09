@@ -26,11 +26,7 @@ interface OpportunityOption {
   title: string;
 }
 
-interface BuilderPageProps {
-  params: { id?: string };
-}
-
-export default async function ProposalBuilderPage({ params }: BuilderPageProps) {
+export default async function ProposalBuilderPage() {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },
@@ -40,7 +36,9 @@ export default async function ProposalBuilderPage({ params }: BuilderPageProps) 
     redirect('/login');
   }
 
-  const id = (params.id as string) ?? '';
+  // Create-mode builder: this route has no dynamic segment, so there is no
+  // route id to read. Editing lives at /sales/proposals/builder/[id].
+  const id = '';
   const isEdit = Boolean(id);
 
   // Load contacts and opportunities for client selection
@@ -76,8 +74,7 @@ export default async function ProposalBuilderPage({ params }: BuilderPageProps) 
   const rawOpportunities = Array.isArray(
     (opportunitiesResult as { opportunities: unknown[] }).opportunities
   )
-    ? ((opportunitiesResult as { opportunities: unknown[] })
-        .opportunities as unknown[])
+    ? ((opportunitiesResult as { opportunities: unknown[] }).opportunities as unknown[])
     : [];
 
   const contacts: ContactOption[] = rawContacts.map((c) => {

@@ -9,7 +9,11 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getPipelineStage } from '@/lib/services/crm/pipeline-stage-service';
 
-export default async function PipelineStageDetailPage({ params }: { params: { id: string } }) {
+export default async function PipelineStageDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },

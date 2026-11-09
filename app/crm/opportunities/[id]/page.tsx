@@ -9,7 +9,11 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getOpportunity } from '@/lib/services/crm/opportunity-service';
 
-export default async function OpportunityDetailPage({ params }: { params: { id: string } }) {
+export default async function OpportunityDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },

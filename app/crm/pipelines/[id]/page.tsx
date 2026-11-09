@@ -12,11 +12,13 @@ import { listPipelineStages } from '@/lib/services/crm/pipeline-stage-service';
 
 export default async function PipelineDetailPage({
   params,
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
-  params: { id: string };
-  searchParams: { [key: string]: string | string[] | undefined };
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  // Next.js 16: searchParams is a Promise; filters/pagination must be read after awaiting it.
+  const searchParams = await searchParamsPromise;
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },
