@@ -1,22 +1,54 @@
 /**
  * AgencyOS CRM Contact Detail page.
  * Client component that shows contact details with Edit and Delete actions.
+ *
+ * Next.js 16: `params` is a Promise for client pages too, so it must not be
+ * read synchronously (`params.id`) — doing so throws
+ * "A param property was accessed directly with params.id" in development and
+ * leaves the id undefined at runtime. Route params are read with useParams(),
+ * which returns the resolved values.
  */
 
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 
-interface ContactDetailPageProps {
-  params: { id: string };
+interface ContactRecord {
+  id: string;
+  organizationId: string;
+  accountId: string | null;
+  firstName: string | null;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  status: string;
+  source: string | null;
+  isMasked: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  deletedAt: Date | null;
 }
 
-export default function ContactDetailPage({ params }: ContactDetailPageProps) {
+type ContactLoadState =
+  | { status: 'loading' }
+  | { status: 'ready'; contact: ContactRecord }
+  | { status: 'not-found' }
+  | { status: 'error' };
+
+export default function ContactDetailPage() {
   const router = useRouter();
+  const params = useParams<{ id: string }>();
+  // Defensive: a dynamic segment is normally a string, but never interpolate a
+  // non-string (or an unresolved value) into the API URL.
+  const rawId: unknown = params?.id;
+  const id = typeof rawId === 'string' ? rawId : '';
+
   const { toast } = useToast();
   const toastRef = React.useRef(toast);
   // Keep the ref in sync with the latest toast function so the data-fetching
@@ -25,68 +57,70 @@ export default function ContactDetailPage({ params }: ContactDetailPageProps) {
   React.useEffect(() => {
     toastRef.current = toast;
   }, [toast]);
-  const { id } = params;
-  const [contact, setContact] = React.useState<{
-    id: string;
-    organizationId: string;
-    accountId: string | null;
-    firstName: string | null;
-    lastName: string;
-    email: string | null;
-    phone: string | null;
-    status: string;
-    source: string | null;
-    isMasked: boolean;
-    createdBy: string | null;
-    updatedBy: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-    deletedAt: Date | null;
-  } | null>(null);
-  const [isLoading, setIsLoading] = React.useState(true);
+
+  const [state, setState] = React.useState<ContactLoadState>({ status: 'loading' });
   const [deleting, setDeleting] = React.useState(false);
+  const [reloadToken, setReloadToken] = React.useState(0);
 
   React.useEffect(() => {
     let mounted = true;
+
+    // No route param yet (or an unusable one): do not fetch `/contacts/undefined`.
+    // The not-found view is derived during render, so no state is set here.
+    if (!id) {
+      return () => {
+        mounted = false;
+      };
+    }
+
     (async () => {
-      setIsLoading(true);
       try {
-        const res = await fetch(`/api/v1/crm/contacts/${id}`, {
+        const res = await fetch(`/api/v1/crm/contacts/${encodeURIComponent(id)}`, {
           method: 'GET',
           credentials: 'include',
           headers: { Accept: 'application/json' },
         });
         if (!mounted) return;
+
+        if (res.status === 401) {
+          router.push('/login');
+          return;
+        }
+        if (res.status === 404) {
+          // Genuinely missing, soft-deleted, or belongs to another organization
+          // (the API is non-disclosing, so all three are 404 by design).
+          setState({ status: 'not-found' });
+          return;
+        }
         if (!res.ok) {
-          if (res.status === 401) {
-            router.push('/login');
-            return;
-          }
+          setState({ status: 'error' });
           toastRef.current({ title: 'Error', description: 'Failed to load contact' });
           return;
         }
-        const data = await res.json();
+
+        const data = (await res.json()) as ContactRecord;
         if (!mounted) return;
-        setContact(data);
+        setState({ status: 'ready', contact: data });
       } catch {
         if (!mounted) return;
+        setState({ status: 'error' });
         toastRef.current({ title: 'Error', description: 'Failed to load contact' });
-      } finally {
-        if (mounted) setIsLoading(false);
       }
     })();
+
     return () => {
       mounted = false;
     };
-  }, [id, router]);
+  }, [id, router, reloadToken]);
 
   async function handleDelete() {
+    if (!id) return;
     if (!window.confirm('Are you sure you want to delete this contact?')) {
       return;
     }
     setDeleting(true);
     try {
-      const res = await fetch(`/api/v1/crm/contacts/${id}`, {
+      const res = await fetch(`/api/v1/crm/contacts/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         credentials: 'include',
         headers: { Accept: 'application/json' },
@@ -114,7 +148,11 @@ export default function ContactDetailPage({ params }: ContactDetailPageProps) {
     }
   }
 
-  if (isLoading) {
+  // An unusable route param can never resolve to a contact; derive that during
+  // render rather than setting state inside the effect.
+  const viewState: ContactLoadState = id ? state : { status: 'not-found' };
+
+  if (viewState.status === 'loading') {
     return (
       <div className="p-6">
         <div className="flex items-center justify-center py-8 text-muted-foreground">
@@ -124,11 +162,40 @@ export default function ContactDetailPage({ params }: ContactDetailPageProps) {
     );
   }
 
+  if (viewState.status === 'error') {
+    return (
+      <div className="p-6">
+        <div className="flex flex-col items-center justify-center gap-3 py-8">
+          <p className="text-muted-foreground">Unable to load contact.</p>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setReloadToken((token) => token + 1)}>
+              Try again
+            </Button>
+            <Link
+              href="/crm/contacts"
+              className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+            >
+              Back to Contacts
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const contact = viewState.status === 'ready' ? viewState.contact : null;
+
   if (!contact) {
     return (
       <div className="p-6">
-        <div className="flex items-center justify-center py-8 text-muted-foreground">
-          Contact not found.
+        <div className="flex flex-col items-center justify-center gap-3 py-8">
+          <p className="text-muted-foreground">Contact not found.</p>
+          <Link
+            href="/crm/contacts"
+            className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+          >
+            Back to Contacts
+          </Link>
         </div>
       </div>
     );
