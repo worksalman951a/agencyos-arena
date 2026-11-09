@@ -13,7 +13,7 @@
  * - Stage deletion safeguards
  *
  * Requires DATABASE_URL and BETTER_AUTH_SECRET environment variables.
- * Requires a running Next.js dev server at http://localhost:3000 for HTTP tests.
+ * Requires a running Next.js server (TEST_SERVER_URL / BETTER_AUTH_URL, default http://localhost:3001).
  * Skips gracefully if no database is available.
  * Fails if the HTTP server is unavailable when the database is available.
  *
@@ -24,11 +24,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { prisma } from '@/lib/db';
+import { SERVER_URL } from './test-config';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const canRunTests = !!DATABASE_URL;
-
-const SERVER_URL = 'http://localhost:3000';
 
 const describeIfDb = canRunTests ? describe : describe.skip;
 

@@ -5,6 +5,7 @@ on:
     branches: [main, arena/**, feature/**]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   lint-and-typecheck:
@@ -119,6 +120,7 @@ jobs:
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET || 'ci_auth_secret_arena_2026' }}
           BETTER_AUTH_URL: "http://localhost:3001"
+          TEST_SERVER_URL: "http://localhost:3001"
           NODE_ENV: "test"
           PORT: "3001"
       - uses: actions/upload-artifact@v4

@@ -15,19 +15,18 @@
  * - Unauthorized access rejection
  *
  * Requires DATABASE_URL and BETTER_AUTH_SECRET environment variables.
- * Requires a running Next.js dev server at http://localhost:3000 for HTTP tests.
+ * Requires a running Next.js server (TEST_SERVER_URL / BETTER_AUTH_URL, default http://localhost:3001).
  * Skips gracefully if no database is available; FAILS if HTTP server is unavailable.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
+import { SERVER_URL } from './test-config';
 
 // Database availability flag
 const DATABASE_URL = process.env.DATABASE_URL;
 const canRunTests = !!DATABASE_URL;
 
-// Server availability flag - evaluated at test time, not module load time
-const SERVER_URL = 'http://localhost:3000';
 let canRunHttpTests = false;
 
 const describeIfDb = canRunTests ? describe : describe.skip;

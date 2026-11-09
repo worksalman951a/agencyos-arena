@@ -10,7 +10,8 @@ import { test, expect } from '@playwright/test';
 
 const canRun = !!(process.env.DATABASE_URL && process.env.BETTER_AUTH_SECRET);
 
-const baseURL = 'http://localhost:3000';
+// Port 3000 is reserved for a different local project; AgencyOS runs on 3001.
+const baseURL = process.env.APP_URL ?? process.env.BETTER_AUTH_URL ?? 'http://localhost:3001';
 
 test.describe('Auth smoke tests', () => {
   test.use({ baseURL });
@@ -18,26 +19,27 @@ test.describe('Auth smoke tests', () => {
   test.skip(!canRun, 'Skipping E2E auth smoke test: DATABASE_URL or BETTER_AUTH_SECRET not set');
 
   test('registration page loads successfully', async ({ page }) => {
-    await page.goto('/auth/register');
-    await expect(page).toHaveURL('/auth/register');
-    await expect(page.getByRole('heading', { name: /create an account/i })).toBeVisible();
+    await page.goto('/register');
+    await expect(page).toHaveURL('/register');
+    await expect(page.getByRole('heading', { name: /create account/i })).toBeVisible();
   });
 
   test('login page loads successfully', async ({ page }) => {
-    await page.goto('/auth/login');
-    await expect(page).toHaveURL('/auth/login');
-    await expect(page.getByRole('heading', { name: /sign in/i })).toBeVisible();
+    await page.goto('/login');
+    await expect(page).toHaveURL('/login');
+    await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible();
   });
 
   test('dashboard redirects to login when unauthenticated', async ({ page }) => {
     await page.goto('/dashboard');
-    await expect(page).toHaveURL(/auth\/login/);
+    await expect(page).toHaveURL(/\/login/);
   });
 
-  test('landing page is accessible without authentication', async ({ page }) => {
+  test('landing page redirects unauthenticated visitors to login', async ({ page }) => {
     await page.goto('/');
-    await expect(page).toHaveURL('/');
-    await expect(page.getByRole('heading', { name: /agencyos/i })).toBeVisible();
+    // "/" is a client-side router that sends visitors without a session to /login.
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible();
   });
 });
 
