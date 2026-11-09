@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import ContactsPage from '@/app/crm/contacts/page';
 
 const mockFetch = vi.fn();
@@ -19,8 +19,11 @@ global.fetch = mockFetch;
 const mockPush = vi.fn();
 const mockRefresh = vi.fn();
 
+/** Query string exposed by the mocked useSearchParams(). */
+let mockQueryString = '';
+
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(mockQueryString),
   useRouter: () => ({ push: mockPush, refresh: mockRefresh }),
 }));
 
@@ -57,6 +60,7 @@ function contactsApiCallCount() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mockQueryString = '';
   mockFetch.mockImplementation((url: string | URL) => {
     const u = typeof url === 'string' ? url : String(url);
     if (u.includes('/api/v1/crm/contacts')) {
@@ -172,5 +176,107 @@ describe('Contacts page - loading-state loop regression', () => {
     // Wait additional time to confirm no loop with empty data
     await new Promise((resolve) => setTimeout(resolve, 1000));
     expect(contactsApiCallCount()).toBe(1);
+  });
+});
+
+describe('Contacts page - soft-delete filter', () => {
+  it('asks the API to exclude deleted contacts by default', async () => {
+    render(<ContactsPage />);
+
+    await waitFor(() => {
+      expect(contactsApiCallCount()).toBe(1);
+    });
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(String(url)).toContain('includeDeleted=false');
+  });
+
+  it('requests deleted contacts only when the explicit filter is on', async () => {
+    mockQueryString = 'includeDeleted=true';
+
+    render(<ContactsPage />);
+
+    await waitFor(() => {
+      expect(contactsApiCallCount()).toBe(1);
+    });
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(String(url)).toContain('includeDeleted=true');
+    expect(screen.getByRole('link', { name: 'Hide deleted' })).toHaveAttribute(
+      'href',
+      '/crm/contacts'
+    );
+  });
+
+  it('marks deleted rows when the deleted filter is on', async () => {
+    mockQueryString = 'includeDeleted=true';
+
+    mockFetch.mockImplementation((url: string | URL) => {
+      const u = typeof url === 'string' ? url : String(url);
+      if (u.includes('/api/v1/crm/contacts')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              contacts: [
+                {
+                  ...mockContactsResponse.contacts[0],
+                  deletedAt: '2026-02-03T10:30:00Z',
+                },
+              ],
+              total: 1,
+              totalPages: 1,
+              page: 1,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    });
+
+    render(<ContactsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Jane Smith')).toBeInTheDocument();
+    });
+
+    expect(screen.getAllByText('Deleted').length).toBeGreaterThan(0);
+    // A deleted row offers no Delete action (it is already deleted).
+    expect(screen.queryByRole('button', { name: /^Delete$/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('Contacts page - delete confirmation', () => {
+  it('uses an accessible dialog instead of window.confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+
+    render(<ContactsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Jane Smith')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toBeInTheDocument();
+    expect(
+      screen.getByText(/will be marked as deleted and removed from the contacts list/i)
+    ).toBeInTheDocument();
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    // Nothing is deleted until the dialog is confirmed.
+    expect(
+      mockFetch.mock.calls.some(
+        ([, options]) => (options as RequestInit | undefined)?.method === 'DELETE'
+      )
+    ).toBe(false);
+
+    confirmSpy.mockRestore();
   });
 });

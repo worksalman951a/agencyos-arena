@@ -10,6 +10,18 @@ import {
   ContactQueryInput,
 } from '@/lib/schemas/crm/contact.schema';
 
+/**
+ * Display information for a user referenced by an audit field (`createdBy`,
+ * `updatedBy`). Only populated when the referenced user belongs to the same
+ * organization as the contact, so identities never cross organization
+ * boundaries.
+ */
+export interface ContactAuditUser {
+  id: string;
+  /** Full name, falling back to the user's email when no name is set. */
+  name: string;
+}
+
 /** Contact serialization with PII masking */
 export interface ContactResponse {
   id: string;
@@ -24,6 +36,10 @@ export interface ContactResponse {
   isMasked: boolean;
   createdBy: string | null;
   updatedBy: string | null;
+  /** Resolved creator identity, or null when unavailable/out of organization. */
+  createdByUser: ContactAuditUser | null;
+  /** Resolved updater identity, or null when unavailable/out of organization. */
+  updatedByUser: ContactAuditUser | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -149,6 +165,33 @@ function buildContactWhere(organizationId: string, input: ContactQueryInput) {
   return where;
 }
 
+/**
+ * Resolve an audit user into display information.
+ *
+ * Returns null when the relation was not loaded, when the user no longer
+ * exists (the FK is `onDelete: SetNull`), or when the user belongs to a
+ * different organization than the contact. Callers hold `contact.read`, but
+ * identity still never leaves the organization boundary.
+ */
+function serializeAuditUser(
+  user:
+    | {
+        id?: string | null;
+        name?: string | null;
+        email?: string | null;
+        organizationId?: string | null;
+      }
+    | null
+    | undefined,
+  contactOrganizationId: string
+): ContactAuditUser | null {
+  if (!user || typeof user.id !== 'string') return null;
+  if (user.organizationId !== contactOrganizationId) return null;
+
+  const name = user.name?.trim() || user.email?.trim() || 'Unknown user';
+  return { id: user.id, name };
+}
+
 /** Serialize a contact with PII masking applied */
 function serializeContact(
   contact: Awaited<ReturnType<typeof prisma.contact.findUnique>>,
@@ -167,6 +210,8 @@ function serializeContact(
     isMasked: contact.isMasked,
     createdBy: contact.createdBy,
     updatedBy: contact.updatedBy,
+    createdByUser: serializeAuditUser(contact.creator, contact.organizationId),
+    updatedByUser: serializeAuditUser(contact.updater, contact.organizationId),
     createdAt: contact.createdAt,
     updatedAt: contact.updatedAt,
     deletedAt: contact.deletedAt,
@@ -217,6 +262,10 @@ export async function getContact(id: string) {
           account: { select: { id: true, name: true } },
         },
       },
+      // Audit identities for the detail view. `organizationId` is selected so
+      // serialization can enforce organization isolation before exposing names.
+      creator: { select: { id: true, name: true, email: true, organizationId: true } },
+      updater: { select: { id: true, name: true, email: true, organizationId: true } },
     },
   });
 
