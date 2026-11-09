@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
 
 /**
  * Zod validation schemas for Lead CRUD operations.
@@ -51,7 +52,7 @@ export const leadQuerySchema = z.object({
   ownerId: z.string().cuid().optional(),
   sortBy: z.enum(['source', 'status', 'priority', 'createdAt', 'updatedAt']).default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
-  includeDeleted: z.coerce.boolean().default(false),
+  includeDeleted: includeDeletedQueryParam,
 });
 
 export type LeadCreateInput = z.infer<typeof leadCreateSchema>;

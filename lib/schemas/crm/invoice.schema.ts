@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
 
 /**
  * Zod validation schemas for Invoice CRUD operations.
@@ -42,7 +43,7 @@ export const invoiceQuerySchema = z.object({
     .enum(['title', 'status', 'total', 'createdAt', 'updatedAt', 'dueDate'])
     .default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
-  includeDeleted: z.coerce.boolean().default(false),
+  includeDeleted: includeDeletedQueryParam,
 });
 
 export type InvoiceCreateInput = z.infer<typeof invoiceCreateSchema>;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
 
 /**
  * Zod validation schemas for Opportunity CRUD operations.
@@ -63,7 +64,7 @@ export const opportunityQuerySchema = z.object({
     .enum(['title', 'status', 'value', 'closeDate', 'createdAt', 'updatedAt'])
     .default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
-  includeDeleted: z.coerce.boolean().default(false),
+  includeDeleted: includeDeletedQueryParam,
 });
 
 export type OpportunityCreateInput = z.infer<typeof opportunityCreateSchema>;

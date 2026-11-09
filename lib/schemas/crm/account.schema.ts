@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
 
 /**
  * Zod validation schemas for AgencyAccount CRUD operations.
@@ -35,7 +36,7 @@ export const accountQuerySchema = z.object({
   status: z.string().optional(),
   sortBy: z.enum(['name', 'status', 'createdAt', 'updatedAt']).default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
-  includeDeleted: z.coerce.boolean().default(false),
+  includeDeleted: includeDeletedQueryParam,
 });
 
 export type AccountCreateInput = z.infer<typeof accountCreateSchema>;

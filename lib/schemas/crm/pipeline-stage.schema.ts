@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
 
 /**
  * Zod validation schemas for Pipeline Stage CRUD operations.
@@ -39,7 +40,7 @@ export const pipelineStageQuerySchema = z.object({
   search: z.string().optional(),
   sortBy: z.enum(['order', 'name', 'createdAt', 'updatedAt']).default('order'),
   sortOrder: z.enum(['asc', 'desc']).default('asc'),
-  includeDeleted: z.coerce.boolean().default(false),
+  includeDeleted: includeDeletedQueryParam,
 });
 
 export type PipelineStageCreateInput = z.infer<typeof pipelineStageCreateSchema>;
