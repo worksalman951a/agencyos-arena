@@ -328,7 +328,14 @@ describe('Future module Coming Soon routes', () => {
   it('Invoices detail route page exists', () => {
     const src = readRel('app/finance/invoices/[id]/page.tsx');
     expect(src).toContain('getInvoice');
-    expect(src).toContain('Export PDF');
+    // PDF export is an interactive action, so it lives in a Client Component
+    // (event handlers cannot be passed from a Server Component). Assert both
+    // the wiring and the labelled control so the feature is still covered.
+    expect(src).toContain('ExportPdfButton');
+    const button = readRel('components/invoices/export-pdf-button.tsx');
+    expect(button).toContain("'use client'");
+    expect(button).toContain('Export PDF');
+    expect(button).toContain('printInvoice');
   });
 
   it('Invoices edit route page exists', () => {

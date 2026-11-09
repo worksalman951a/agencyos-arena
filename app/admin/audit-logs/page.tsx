@@ -3,34 +3,18 @@
  * Displays organization audit trail for compliance and debugging.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
-
-async function listAuditLogs() {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const res = await fetch('/api/v1/admin/audit-logs', {
-    headers: { cookie: cookieStore.toString() },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    return [];
-  }
-
-  return res.json();
-}
+import { listAuditLogs } from '@/lib/services/admin/audit-log-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 
 export default async function AuditLogsPage() {
-  const logs = await listAuditLogs();
+  const result = await loadPageData(() => listAuditLogs());
+
+  if (!result.ok) {
+    return <PageStateNotice reason={result.reason} />;
+  }
+
+  const logs = result.data;
 
   return (
     <div className="space-y-6 p-6">

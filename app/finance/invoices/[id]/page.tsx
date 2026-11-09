@@ -8,7 +8,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getInvoice } from '@/lib/services/crm/invoice-service';
-import { PrintInvoice, printInvoice } from '@/components/invoices/print-invoice';
+import { ExportPdfButton } from '@/components/invoices/export-pdf-button';
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -51,13 +51,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
               Edit
             </Link>
           ) : null}
-          <button
-            onClick={() => printInvoice()}
-            className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
-          >
-            Export PDF
-          </button>
-          <PrintInvoice invoiceId={id} />
+          <ExportPdfButton invoiceId={id} />
         </div>
       </div>
 

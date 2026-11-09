@@ -3,25 +3,29 @@
  * Server component that displays a single contract with signing actions.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getContract } from '@/lib/services/documents/contract-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
+import { ContractActions } from './ContractActions';
 
 export default async function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
+  // The service validates the session, permissions and organization scoping.
+  const result = await loadPageData(() => getContract(id));
 
-  if (!result?.session || !result.user) {
-    redirect('/login');
+  if (!result.ok) {
+    return (
+      <PageStateNotice
+        reason={result.reason}
+        backHref="/documents/contracts"
+        backLabel="Back to contracts"
+      />
+    );
   }
 
-  const contract = await getContract(id);
+  const contract = result.data;
 
   return (
     <div className="space-y-6 p-6">
@@ -134,64 +138,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
         <div className="col-span-1 md:col-span-1">
           <div className="rounded-md border bg-background p-6">
             <h2 className="text-lg font-semibold mb-4">Actions</h2>
-            {contract.status === 'draft' || contract.status === 'sent' ? (
-              <div className="space-y-2">
-                <button
-                  className="w-full px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90 disabled:opacity-50"
-                  onClick={() => {
-                    if (
-                      confirm('Mark this contract as signed? This action creates an audit record.')
-                    ) {
-                      fetch(`/api/v1/documents/contracts/${contract.id}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          signerName: '',
-                          signerEmail: '',
-                          signatureReference: 'manual',
-                        }),
-                      })
-                        .then((res) => {
-                          if (!res.ok) throw new Error('Failed to sign contract');
-                          return res.json();
-                        })
-                        .then(() => {
-                          window.location.reload();
-                        })
-                        .catch((err) => alert(err.message));
-                    }
-                  }}
-                >
-                  Sign Contract
-                </button>
-              </div>
-            ) : null}
-            {contract.status !== 'voided' ? (
-              <button
-                className="w-full px-4 py-2 bg-destructive text-destructive-foreground rounded-md text-sm font-medium hover:bg-destructive/90"
-                onClick={() => {
-                  if (
-                    confirm('Are you sure you want to void this contract? This cannot be undone.')
-                  ) {
-                    fetch(`/api/v1/documents/contracts/${contract.id}`, {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ status: 'voided' }),
-                    })
-                      .then((res) => {
-                        if (!res.ok) throw new Error('Failed to void contract');
-                        return res.json();
-                      })
-                      .then(() => {
-                        window.location.reload();
-                      })
-                      .catch((err) => alert(err.message));
-                  }
-                }}
-              >
-                Void Contract
-              </button>
-            ) : null}
+            <ContractActions contractId={contract.id} status={contract.status} />
           </div>
         </div>
       </div>

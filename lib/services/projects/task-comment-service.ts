@@ -144,7 +144,9 @@ export async function createTaskComment(input: TaskCommentCreateInput) {
     data: {
       organizationId,
       taskId: input.taskId,
-      userId: input.userId,
+      // Author is the authenticated caller. `input.userId` is intentionally
+      // ignored so a client cannot attribute a comment to another user.
+      userId,
       comment: input.comment,
     },
     include: {

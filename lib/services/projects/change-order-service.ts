@@ -94,24 +94,34 @@ async function createAuditLog({
   });
 }
 
-export async function listChangeOrders(projectId: string) {
+/**
+ * List change orders.
+ *
+ * `projectId` is optional: passing it lists one project's change orders (after
+ * verifying the project belongs to the caller's organization); omitting it
+ * lists the organization's change orders, which is what the "Change Orders"
+ * page needs. Both paths stay organization-scoped.
+ */
+export async function listChangeOrders(projectId?: string) {
   const { userId, organizationId } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'change.order.read');
 
-  // Verify project belongs to org
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, organizationId },
-  });
+  if (projectId) {
+    // Verify project belongs to org
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, organizationId },
+    });
 
-  if (!project) {
-    const error = new Error('Project not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    if (!project) {
+      const error = new Error('Project not found') as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
   }
 
   const changeOrders = await prisma.changeOrder.findMany({
-    where: { projectId, organizationId },
+    where: projectId ? { projectId, organizationId } : { organizationId },
     include: {
       approver: { select: { id: true, name: true, email: true } },
     },

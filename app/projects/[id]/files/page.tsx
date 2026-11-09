@@ -3,36 +3,28 @@
  * Lists files for a project and provides upload interface.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-
-async function listFiles(projectId: string) {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  const res = await fetch(`/api/v1/projects/files?projectId=${encodeURIComponent(projectId)}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    return [];
-  }
-
-  return res.json();
-}
+import { listProjectFiles } from '@/lib/services/projects/project-file-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
+import { ProjectFileForm } from './ProjectFileForm';
+import { DeleteProjectFileButton } from './DeleteProjectFileButton';
 
 export default async function ProjectFilesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const files = await listFiles(id);
+  const result = await loadPageData(() => listProjectFiles(id));
+
+  if (!result.ok) {
+    return (
+      <PageStateNotice
+        reason={result.reason}
+        backHref={`/projects/${id}`}
+        backLabel="Back to project"
+      />
+    );
+  }
+
+  const files = result.data;
 
   return (
     <div className="space-y-6 p-6">
@@ -53,37 +45,7 @@ export default async function ProjectFilesPage({ params }: { params: Promise<{ i
 
       <div className="rounded-md border bg-background p-6 max-w-3xl">
         <h2 className="text-lg font-semibold mb-4">Upload File</h2>
-        <form className="space-y-4" action="">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">File Asset ID</label>
-            <input
-              type="text"
-              name="fileAssetId"
-              placeholder="File asset CUID (from upload)"
-              className="border border-input rounded-md px-3 py-2 text-sm"
-              required
-            />
-            <p className="text-xs text-muted-foreground">
-              Enter the File Asset ID from a completed upload. Files are stored outside the web root
-              and served via signed URLs.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Task ID (optional)</label>
-            <input
-              type="text"
-              name="taskId"
-              placeholder="Associate with a specific task"
-              className="border border-input rounded-md px-3 py-2 text-sm"
-            />
-          </div>
-          <button
-            type="submit"
-            className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
-          >
-            Attach File
-          </button>
-        </form>
+        <ProjectFileForm projectId={id} />
       </div>
 
       <div className="overflow-x-auto">
@@ -138,19 +100,7 @@ export default async function ProjectFilesPage({ params }: { params: Promise<{ i
                     {new Date(file.createdAt).toLocaleDateString()}
                   </td>
                   <td className="py-4 text-right">
-                    <button
-                      className="text-sm text-destructive hover:underline"
-                      onClick={() => {
-                        if (window.confirm('Delete this file record? This cannot be undone.')) {
-                          fetch(`/api/v1/projects/files/${file.id}`, {
-                            method: 'DELETE',
-                            headers: { cookie: cookieStore.toString() },
-                          }).then(() => window.location.reload());
-                        }
-                      }}
-                    >
-                      Delete
-                    </button>
+                    <DeleteProjectFileButton fileId={file.id} />
                   </td>
                 </tr>
               ))

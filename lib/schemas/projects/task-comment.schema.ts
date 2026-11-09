@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 export const taskCommentCreateSchema = z.object({
   taskId: z.string().cuid('Valid task ID is required'),
-  userId: z.string().cuid('Valid user ID is required'),
+  /**
+   * Deprecated: the comment author is always the authenticated session user.
+   * Accepted (and ignored) so older clients that still send it keep working;
+   * it can never be used to attribute a comment to somebody else.
+   */
+  userId: z.string().cuid().optional(),
   comment: z.string().min(1, 'Comment is required').max(10000),
 });
 
