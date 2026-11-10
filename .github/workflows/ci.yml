@@ -99,10 +99,12 @@ jobs:
           name: prisma-migrate-log
           path: prisma-migrate.log
       - run: |
-          npm run build &
+          npm run build > build-output.log 2>&1 &
           BUILD_PID=$!
           wait $BUILD_PID
-          if [ $? -ne 0 ]; then
+          BUILD_EXIT=$?
+          tail -n 80 build-output.log
+          if [ $BUILD_EXIT -ne 0 ]; then
             echo "ERROR: Next.js build failed" >&2
             exit 1
           fi
@@ -154,7 +156,7 @@ jobs:
         if: failure()
         run: |
           echo "## Test failure details" >> "$GITHUB_STEP_SUMMARY"
-          for f in unit-test-output.log integration-test-output.log; do
+          for f in build-output.log unit-test-output.log integration-test-output.log; do
             [ -f "$f" ] || continue
             {
               echo ""
@@ -164,8 +166,11 @@ jobs:
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           done
-          tail -60 integration-test-output.log 2>/dev/null | sed -e 's/\x1b\[[0-9;]*m//g' | tr '\n' '|' | head -c 6000 > /tmp/tail.txt || true
-          echo "::error file=.github/workflows/ci.yml,title=integration tail::$(cat /tmp/tail.txt)"
+          for f in build-output.log unit-test-output.log integration-test-output.log; do
+            [ -f "$f" ] || continue
+            tail -n 40 "$f" | sed -e 's/\x1b\[[0-9;]*m//g' | tr '\n' '|' | head -c 5000 > /tmp/tail.txt || true
+            echo "::error file=.github/workflows/ci.yml,title=tail $f::$(cat /tmp/tail.txt)"
+          done
 
   build:
     runs-on: ubuntu-latest
