@@ -111,9 +111,7 @@ async function createAuditLog({
 }
 
 /** Serialize a pipeline stage */
-function serializePipelineStage(
-  stage: PipelineStageWithPipeline
-): PipelineStageResponse {
+function serializePipelineStage(stage: PipelineStageWithPipeline): PipelineStageResponse {
   return {
     id: stage.id,
     pipelineId: stage.pipelineId,
@@ -161,12 +159,14 @@ export async function listPipelineStages(
   }
 
   if (input.search) {
-    where.OR = [
-      { name: { contains: input.search, mode: 'insensitive' } },
-    ];
+    where.OR = [{ name: { contains: input.search, mode: 'insensitive' } }];
   }
 
-  const [stages, total] = await prisma.$transaction([
+  // Independent read-only statements: run concurrently on separate pooled
+  // connections. Deliberately not $transaction(): a transaction pins one pg
+  // client, Prisma 7 dispatches relation loads concurrently on it, and pg
+  // >= 8.22 deprecates overlapping client.query() (hard error in pg 9).
+  const [stages, total] = await Promise.all([
     prisma.pipelineStage.findMany({
       where,
       include: {
@@ -182,9 +182,7 @@ export async function listPipelineStages(
   ]);
 
   return {
-    stages: stages.map((s: PipelineStageWithPipeline) =>
-      serializePipelineStage(s)
-    ),
+    stages: stages.map((s: PipelineStageWithPipeline) => serializePipelineStage(s)),
     total,
     page: input.page,
     pageSize: input.pageSize,
@@ -455,8 +453,10 @@ export async function deletePipelineStage(id: string, pipelineId: string) {
     throw error;
   }
 
-  // Prevent deletion if there are non-deleted opportunities or leads referencing this stage
-  const [opportunityCount, leadCount] = await prisma.$transaction([
+  // Prevent deletion if there are non-deleted opportunities or leads referencing this stage.
+  // Two independent reads: no atomicity requirement, and keeping them out of a
+  // transaction avoids pinning them to a single pg connection.
+  const [opportunityCount, leadCount] = await Promise.all([
     prisma.opportunity.count({ where: { stageId: id } }),
     prisma.lead.count({ where: { stageId: id } }),
   ]);

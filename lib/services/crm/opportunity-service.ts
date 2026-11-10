@@ -211,7 +211,11 @@ export async function listOpportunities(input: OpportunityQueryInput) {
   await requirePermission(userId, organizationId, 'opportunity.read');
 
   const where = buildOpportunityWhere(organizationId, input);
-  const [opportunities, total] = await prisma.$transaction([
+  // Independent read-only statements: run concurrently on separate pooled
+  // connections. Deliberately not $transaction(): a transaction pins one pg
+  // client, Prisma 7 dispatches relation loads concurrently on it, and pg
+  // >= 8.22 deprecates overlapping client.query() (hard error in pg 9).
+  const [opportunities, total] = await Promise.all([
     prisma.opportunity.findMany({
       where,
       orderBy: { [input.sortBy]: input.sortOrder },
@@ -248,8 +252,12 @@ export async function getOpportunitySummary() {
     deletedAt: null,
   };
 
+  // Independent read-only statements: run concurrently on separate pooled
+  // connections. Deliberately not $transaction(): a transaction pins one pg
+  // client, Prisma 7 dispatches relation loads concurrently on it, and pg
+  // >= 8.22 deprecates overlapping client.query() (hard error in pg 9).
   const [openCount, wonCount, lostCount, openValue, wonValue, lostValue, byStage] =
-    await prisma.$transaction([
+    await Promise.all([
       prisma.opportunity.count({
         where: { ...where, status: 'open' },
       }),
