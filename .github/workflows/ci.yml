@@ -147,6 +147,18 @@ jobs:
             unit-test-output.log
             integration-test-output.log
           if-no-files-found: ignore
+      # Logs and artifacts live on a storage host that is not reachable from
+      # every environment; annotations are always available through the API, so
+      # the interesting failure lines are surfaced here as well.
+      - name: Surfaces test failures as annotations
+        if: failure()
+        run: |
+          for f in unit-test-output.log integration-test-output.log; do
+            [ -f "$f" ] || continue
+            grep -aE "FAIL |AssertionError|Expected|Received|Error:|✕|✗" "$f" | head -40 | while IFS= read -r line; do
+              echo "::error::$f: ${line//[%]/}"
+            done
+          done
 
   build:
     runs-on: ubuntu-latest
