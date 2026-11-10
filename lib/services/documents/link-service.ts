@@ -259,11 +259,12 @@ export async function verifyDocumentLink(token: string) {
     data: { accessCount: { increment: 1 } },
   });
 
+  // Anonymous callers only need the document they were granted; the
+  // organization id stays internal (nothing downstream needs it).
   return {
     id: link.id,
     documentId: link.documentId,
     documentTitle: link.document.title,
     documentType: link.document.type,
-    organizationId: link.organizationId,
   };
 }
