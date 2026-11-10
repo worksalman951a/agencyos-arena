@@ -155,9 +155,10 @@ jobs:
         run: |
           for f in unit-test-output.log integration-test-output.log; do
             [ -f "$f" ] || continue
-            grep -aE "FAIL |AssertionError|Expected|Received|Error:|✕|✗" "$f" | head -40 | while IFS= read -r line; do
-              echo "::error::$f: ${line//[%]/}"
-            done
+            summary=$(grep -aE "Test Files|Tests +[0-9]|FAIL " "$f" | tail -20 | tr '\n' '|')
+            echo "::error file=.github/workflows/ci.yml,title=summary $f::$summary"
+            tail=$(tail -120 "$f" | tr '\n' '|' | tr -d '\r')
+            echo "::error file=.github/workflows/ci.yml,title=tail $f::$tail"
           done
 
   build:
