@@ -52,3 +52,6 @@ next-env.d.ts
 /test-results/
 /playwright-report/
 /blob-report/
+
+# local sandbox Playwright config (uses /tmp/chromium)
+/playwright.local.config.ts
