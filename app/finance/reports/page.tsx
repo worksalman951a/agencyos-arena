@@ -1,186 +1,234 @@
 /**
  * AgencyOS Financial Reports page.
- * Server component showing revenue, outstanding, overdue, and profitability metrics.
+ *
+ * Server component. All money figures come from the same organization-scoped,
+ * permission-gated aggregates the dashboard uses:
+ *
+ *  - **Invoiced / Collected / Outstanding / Overdue** are computed per currency
+ *    from invoices plus their recorded payments. Collected is the *recorded*
+ *    revenue (partial payments included), not "invoices that happen to be paid",
+ *    and currencies are never summed together.
+ *  - Estimates and expenses are reported separately. Expenses carry no currency
+ *    in the schema, so they are labelled with the workspace default currency.
+ *
+ * The previous implementation aggregated only the first page of invoices and
+ * formatted everything as USD, which under-reported revenue and mixed
+ * currencies.
  */
 
-import { listInvoices } from '@/lib/services/crm/invoice-service';
 import { listEstimates } from '@/lib/services/crm/estimate-service';
 import { listExpenses } from '@/lib/services/crm/expense-service';
-import { invoiceQuerySchema } from '@/lib/schemas/crm/invoice.schema';
+import {
+  getDashboardMetrics,
+  getInvoiceStatusBreakdown,
+  type CurrencyTotals,
+} from '@/lib/services/dashboard/dashboard-service';
+import { formatMinorUnitsAsCurrency } from '@/lib/currencies';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 
-/**
- * Aggregate the reporting inputs through the service layer.
- *
- * Each service applies its own permission check and organization scoping, so
- * a section the user cannot read yields an empty list for that section instead
- * of failing the whole page (matching the previous best-effort behaviour, but
- * without the unserializable relative fetch).
- */
-async function fetchFinanceData() {
-  const [invoices, estimates, expenses] = await Promise.all([
-    listInvoices(invoiceQuerySchema.parse({})).then((result) => result.invoices),
+async function fetchReportData() {
+  const [metrics, statuses, estimates, expenses] = await Promise.all([
+    getDashboardMetrics(),
+    getInvoiceStatusBreakdown(),
     listEstimates(),
     listExpenses(),
   ]);
 
-  return { invoices, estimates, expenses };
+  if (!metrics.ok) {
+    const error = new Error('Forbidden: insufficient permissions') as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return {
+    metrics: metrics.data,
+    statuses: statuses.ok ? statuses.data : [],
+    estimates,
+    expenses,
+  };
 }
 
-function formatMoney(value: number): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
-}
+const money = (totals: CurrencyTotals, field: keyof CurrencyTotals) =>
+  formatMinorUnitsAsCurrency(totals[field] as number, totals.currency);
+
+const STATUS_ORDER = ['draft', 'sent', 'paid', 'overdue', 'voided'];
 
 export default async function FinancialReportsPage() {
-  const result = await loadPageData(fetchFinanceData);
+  const result = await loadPageData(fetchReportData);
 
   if (!result.ok) {
     return <PageStateNotice reason={result.reason} />;
   }
 
-  const { invoices, estimates, expenses } = result.data;
+  const { metrics, statuses, estimates, expenses } = result.data;
+  const currencyRows = [metrics.headline, ...metrics.otherCurrencies];
+  const defaultCurrency = metrics.defaultCurrency;
 
-  const invList = invoices as Array<{ status: string; total: string; currency: string }>;
-  const estList = estimates as Array<{ status: string; total: string }>;
-  const expList = expenses as Array<{ amount: string; billable: boolean }>;
+  // Estimates: totals per currency, never combined.
+  const estimateTotals = new Map<string, { total: number; accepted: number; count: number }>();
+  for (const estimate of estimates as Array<{ status: string; total: string; currency: string }>) {
+    const currency = estimate.currency || defaultCurrency;
+    const bucket = estimateTotals.get(currency) ?? { total: 0, accepted: 0, count: 0 };
+    const value = Number(estimate.total || 0);
+    bucket.total += Number.isFinite(value) ? value : 0;
+    bucket.count += 1;
+    if (estimate.status === 'accepted') bucket.accepted += Number.isFinite(value) ? value : 0;
+    estimateTotals.set(currency, bucket);
+  }
 
-  const totalInvoiced = invList.reduce((sum, inv) => sum + Number(inv.total || 0), 0);
-  const paidInvoiced = invList
-    .filter((inv) => inv.status === 'paid')
-    .reduce((sum, inv) => sum + Number(inv.total || 0), 0);
-  const outstandingInvoiced = invList
-    .filter((inv) => inv.status !== 'paid' && inv.status !== 'voided')
-    .reduce((sum, inv) => sum + Number(inv.total || 0), 0);
-  const overdueInvoiced = invList
-    .filter((inv) => inv.status === 'overdue')
-    .reduce((sum, inv) => sum + Number(inv.total || 0), 0);
+  // Expenses have no currency column: they are recorded in the workspace default.
+  const expenseList = expenses as Array<{ amount: string; billable: boolean }>;
+  const totalExpenses = expenseList.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const billableExpenses = expenseList
+    .filter((expense) => expense.billable)
+    .reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
 
-  const totalEstimated = estList.reduce((sum, est) => sum + Number(est.total || 0), 0);
-  const acceptedEstimated = estList
-    .filter((est) => est.status === 'accepted')
-    .reduce((sum, est) => sum + Number(est.total || 0), 0);
-
-  const totalExpenses = expList.reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
-  const billableExpenses = expList
-    .filter((exp) => exp.billable)
-    .reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
+  const statusRows = STATUS_ORDER.flatMap((status) =>
+    statuses
+      .filter((bucket) => bucket.status === status)
+      .map((bucket) => ({
+        status,
+        currency: bucket.currency,
+        count: bucket.count,
+        total: formatMinorUnitsAsCurrency(bucket.totalMinor, bucket.currency),
+      }))
+  );
 
   return (
     <div className="space-y-6 p-6">
-      <h1 className="text-2xl font-bold">Financial Reports</h1>
+      <div>
+        <h1 className="text-2xl font-bold">Financial Reports</h1>
+        <p className="text-sm text-muted-foreground">
+          Recorded revenue and balances per currency. Currencies are never combined or converted.
+        </p>
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="rounded-md border bg-background p-4">
-          <h2 className="text-lg font-semibold mb-2">Total Invoiced</h2>
-          <p className="text-3xl font-bold">{formatMoney(totalInvoiced)}</p>
-          <p className="text-xs text-muted-foreground">All invoices</p>
-        </div>
-
-        <div className="rounded-md border bg-background p-4">
-          <h2 className="text-lg font-semibold mb-2">Paid</h2>
-          <p className="text-3xl font-bold text-green-600">{formatMoney(paidInvoiced)}</p>
-          <p className="text-xs text-muted-foreground">Paid invoices</p>
-        </div>
-
-        <div className="rounded-md border bg-background p-4">
-          <h2 className="text-lg font-semibold mb-2">Outstanding</h2>
-          <p className="text-3xl font-bold text-amber-600">{formatMoney(outstandingInvoiced)}</p>
-          <p className="text-xs text-muted-foreground">Unpaid invoices</p>
-        </div>
-
-        <div className="rounded-md border bg-background p-4">
-          <h2 className="text-lg font-semibold mb-2">Overdue</h2>
-          <p className="text-3xl font-bold text-red-600">{formatMoney(overdueInvoiced)}</p>
-          <p className="text-xs text-muted-foreground">Overdue invoices</p>
-        </div>
+      <div className="rounded-md border bg-background p-4">
+        <h2 className="text-lg font-semibold mb-4">Revenue and receivables</h2>
+        {currencyRows.every((totals) => totals.invoicedMinor === 0) ? (
+          <p className="text-sm text-muted-foreground">No invoices recorded yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-border text-sm text-muted-foreground">
+                  <th className="pb-3 font-medium">Currency</th>
+                  <th className="pb-3 font-medium text-right">Invoiced</th>
+                  <th className="pb-3 font-medium text-right">Collected</th>
+                  <th className="pb-3 font-medium text-right">Outstanding</th>
+                  <th className="pb-3 font-medium text-right">Overdue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {currencyRows.map((totals) => (
+                  <tr key={totals.currency} className="border-b border-border">
+                    <td className="py-3 font-medium">{totals.currency}</td>
+                    <td className="py-3 text-right">{money(totals, 'invoicedMinor')}</td>
+                    <td className="py-3 text-right text-green-600">
+                      {money(totals, 'collectedMinor')}
+                    </td>
+                    <td className="py-3 text-right text-amber-600">
+                      {money(totals, 'outstandingMinor')}
+                    </td>
+                    <td className="py-3 text-right text-red-600">
+                      {money(totals, 'overdueMinor')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="mt-3 text-xs text-muted-foreground">
+          {metrics.invoiceCount} invoice{metrics.invoiceCount === 1 ? '' : 's'} in this workspace,{' '}
+          {metrics.issuedInvoiceCount} issued.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="rounded-md border bg-background p-4">
           <h2 className="text-lg font-semibold mb-2">Estimates</h2>
-          <dl className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Total Estimated</dt>
-              <dd className="font-medium">{formatMoney(totalEstimated)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Accepted</dt>
-              <dd className="font-medium text-green-600">{formatMoney(acceptedEstimated)}</dd>
-            </div>
-            <div className="flex justify-between pt-2 border-t border-border">
-              <dt className="text-muted-foreground">Conversion Rate</dt>
-              <dd className="font-medium">
-                {invList.length > 0
-                  ? ((acceptedEstimated / totalInvoiced) * 100).toFixed(1) + '%'
-                  : '—'}
-              </dd>
-            </div>
-          </dl>
+          {estimateTotals.size === 0 ? (
+            <p className="text-sm text-muted-foreground">No estimates recorded yet.</p>
+          ) : (
+            <dl className="space-y-2 text-sm">
+              {[...estimateTotals.entries()].map(([currency, bucket]) => (
+                <div key={currency} className="space-y-1">
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">{currency} — total estimated</dt>
+                    <dd className="font-medium">
+                      {formatMinorUnitsAsCurrency(Math.round(bucket.total * 100), currency)}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">{currency} — accepted</dt>
+                    <dd className="font-medium text-green-600">
+                      {formatMinorUnitsAsCurrency(Math.round(bucket.accepted * 100), currency)}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Estimates</dt>
+                    <dd className="font-medium">{bucket.count}</dd>
+                  </div>
+                </div>
+              ))}
+            </dl>
+          )}
         </div>
 
         <div className="rounded-md border bg-background p-4">
           <h2 className="text-lg font-semibold mb-2">Expenses</h2>
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <dt className="text-muted-foreground">Total Expenses</dt>
-              <dd className="font-medium">{formatMoney(totalExpenses)}</dd>
+              <dt className="text-muted-foreground">Total expenses</dt>
+              <dd className="font-medium">
+                {formatMinorUnitsAsCurrency(Math.round(totalExpenses * 100), defaultCurrency)}
+              </dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-muted-foreground">Billable Expenses</dt>
-              <dd className="font-medium">{formatMoney(billableExpenses)}</dd>
-            </div>
-            <div className="flex justify-between pt-2 border-t border-border">
-              <dt className="text-muted-foreground">Estimated Profit</dt>
-              <dd className="font-medium">{formatMoney(paidInvoiced - totalExpenses)}</dd>
+              <dt className="text-muted-foreground">Billable expenses</dt>
+              <dd className="font-medium">
+                {formatMinorUnitsAsCurrency(Math.round(billableExpenses * 100), defaultCurrency)}
+              </dd>
             </div>
           </dl>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Expenses are recorded in {defaultCurrency}; the expense model has no per-row currency.
+          </p>
         </div>
       </div>
 
       <div className="rounded-md border bg-background p-6">
-        <h2 className="text-lg font-semibold mb-4">Invoice Status Breakdown</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-border text-sm text-muted-foreground">
-                <th className="pb-3 font-medium">Status</th>
-                <th className="pb-3 font-medium text-right">Count</th>
-                <th className="pb-3 font-medium text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {['draft', 'sent', 'paid', 'overdue', 'voided'].map((status) => {
-                const filtered = invList.filter((inv) => inv.status === status);
-                const count = filtered.length;
-                const amount = filtered.reduce((sum, inv) => sum + Number(inv.total || 0), 0);
-                return (
-                  <tr key={status} className="border-b border-border hover:bg-muted/50">
-                    <td className="py-4 font-medium">
-                      <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium leading-none ${
-                          status === 'paid'
-                            ? 'bg-green-100 text-green-800'
-                            : status === 'voided'
-                              ? 'bg-red-100 text-red-800'
-                              : status === 'sent'
-                                ? 'bg-blue-100 text-blue-800'
-                                : status === 'overdue'
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-muted text-muted-foreground'
-                        }`}
-                      >
-                        {status}
-                      </span>
-                    </td>
-                    <td className="py-4 text-right text-sm">{count}</td>
-                    <td className="py-4 text-right text-sm">{formatMoney(amount)}</td>
+        <h2 className="text-lg font-semibold mb-4">Invoice status breakdown</h2>
+        {statusRows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No invoices recorded yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-border text-sm text-muted-foreground">
+                  <th className="pb-3 font-medium">Status</th>
+                  <th className="pb-3 font-medium">Currency</th>
+                  <th className="pb-3 font-medium text-right">Count</th>
+                  <th className="pb-3 font-medium text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {statusRows.map((row) => (
+                  <tr key={`${row.status}-${row.currency}`} className="border-b border-border">
+                    <td className="py-3 font-medium capitalize">{row.status}</td>
+                    <td className="py-3">{row.currency}</td>
+                    <td className="py-3 text-right text-sm">{row.count}</td>
+                    <td className="py-3 text-right text-sm">{row.total}</td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
