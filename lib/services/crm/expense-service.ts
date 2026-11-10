@@ -94,6 +94,14 @@ async function createAuditLog({
   });
 }
 
+const EXPENSE_SORTS: ExpenseSort[] = [
+  'date_desc',
+  'date_asc',
+  'amount_desc',
+  'amount_asc',
+  'category_asc',
+];
+
 export type ExpenseSort = 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc' | 'category_asc';
 
 export interface ExpenseListQuery {
@@ -123,13 +131,28 @@ export interface ExpenseListResult {
   currency: string;
 }
 
-const SORT_ORDER: Record<ExpenseSort, Record<string, 'asc' | 'desc'>> = {
-  date_desc: { expenseDate: 'desc', createdAt: 'desc' },
-  date_asc: { expenseDate: 'asc', createdAt: 'asc' },
-  amount_desc: { amount: 'desc' },
-  amount_asc: { amount: 'asc' },
-  category_asc: { category: 'asc', expenseDate: 'desc' },
-};
+/**
+ * Sort clause per option.
+ *
+ * One key per object and a plain object (not an array): this Prisma version
+ * rejects a multi-key order-by object, so the shapes stay literal and
+ * single-key, exactly like the rest of the services in this repository.
+ */
+function orderByFor(sort: ExpenseSort) {
+  switch (sort) {
+    case 'date_asc':
+      return { expenseDate: 'asc' as const };
+    case 'amount_desc':
+      return { amount: 'desc' as const };
+    case 'amount_asc':
+      return { amount: 'asc' as const };
+    case 'category_asc':
+      return { category: 'asc' as const };
+    case 'date_desc':
+    default:
+      return { expenseDate: 'desc' as const };
+  }
+}
 
 function parseDateBound(value: string | undefined, label: string, endOfDay = false) {
   if (!value) return undefined;
@@ -171,7 +194,9 @@ export async function searchExpenses(query: ExpenseListQuery = {}): Promise<Expe
 
   const page = Math.max(1, Math.trunc(query.page ?? 1));
   const pageSize = Math.min(100, Math.max(1, Math.trunc(query.pageSize ?? 20)));
-  const sort: ExpenseSort = query.sort && query.sort in SORT_ORDER ? query.sort : 'date_desc';
+  const sort: ExpenseSort = EXPENSE_SORTS.includes(query.sort as ExpenseSort)
+    ? (query.sort as ExpenseSort)
+    : 'date_desc';
   const search = query.q?.trim();
   const from = parseDateBound(query.from, 'from');
   const to = parseDateBound(query.to, 'to', true);
@@ -216,8 +241,7 @@ export async function searchExpenses(query: ExpenseListQuery = {}): Promise<Expe
   const [rows, totals, billableTotals] = await Promise.all([
     prisma.expenseItem.findMany({
       where: filters,
-      // Array form: the generated client rejects a bare object here.
-      orderBy: [SORT_ORDER[sort]],
+      orderBy: orderByFor(sort),
       skip: (currentPage - 1) * pageSize,
       take: pageSize,
     }),

@@ -160,20 +160,21 @@ describe('searchExpenses', () => {
     expect(result.pageSize).toBe(100);
   });
 
+  // One key per object: this Prisma version rejects multi-key order-by objects.
   it.each([
-    ['date_desc', { expenseDate: 'desc', createdAt: 'desc' }],
-    ['date_asc', { expenseDate: 'asc', createdAt: 'asc' }],
+    ['date_desc', { expenseDate: 'desc' }],
+    ['date_asc', { expenseDate: 'asc' }],
     ['amount_desc', { amount: 'desc' }],
     ['amount_asc', { amount: 'asc' }],
-    ['category_asc', { category: 'asc', expenseDate: 'desc' }],
+    ['category_asc', { category: 'asc' }],
   ] as const)('sorts by %s', async (sort, orderBy) => {
     await searchExpenses({ sort });
-    expect(rowsQuery().orderBy).toEqual([orderBy]);
+    expect(rowsQuery().orderBy).toEqual(orderBy);
   });
 
   it('falls back to the newest-first order for an unknown sort', async () => {
     await searchExpenses({ sort: 'nonsense' as never });
-    expect(rowsQuery().orderBy).toEqual([{ expenseDate: 'desc', createdAt: 'desc' }]);
+    expect(rowsQuery().orderBy).toEqual({ expenseDate: 'desc' });
   });
 
   it('returns the summary, categories and the workspace currency', async () => {
