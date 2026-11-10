@@ -70,5 +70,10 @@ describe('allocator contract (static guards)', () => {
     // Never renumber existing documents.
     expect(source).not.toContain('UPDATE "Invoice"');
     expect(source).not.toContain('UPDATE "Proposal"');
+
+    // The reserved sequence is floored at "highest existing + 1", so lowering the
+    // counter in Settings cannot rewind onto an already issued number.
+    expect(source).toContain('GREATEST(');
+    expect(source).toContain('highestExistingSequence');
   });
 });

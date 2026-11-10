@@ -24,11 +24,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import {
-  formatDocumentNumber,
-  parseSequenceFromNumber,
-  SEQUENCE_WIDTH,
-} from '@/lib/services/settings/document-number-format';
+import { formatDocumentNumber } from '@/lib/services/settings/document-number-format';
 import { normalizeOrganizationSettings } from '@/lib/schemas/settings/organization.schema';
 
 export type DocumentKind = 'invoice' | 'proposal';
@@ -104,14 +100,16 @@ async function highestExistingSequence(
 /**
  * Atomically reserve the next sequence value and return it.
  *
- * `fallback` is used only when the stored counter is absent or malformed, and is
- * always at least one higher than any number already used.
+ * `floor` is the lowest sequence this allocation may use: at least the stored
+ * counter, and at least one higher than any number already issued. Taking the
+ * maximum means lowering the counter in Settings can never rewind the sequence
+ * onto a number that is already in use.
  */
 async function reserveSequence(
   tx: PrismaTransactionClient,
   organizationId: string,
   key: KindConfig['counterKey'],
-  fallback: number
+  floor: number
 ): Promise<number> {
   const rows = (await tx.$queryRawUnsafe(
     `UPDATE "Organization"
@@ -119,8 +117,11 @@ async function reserveSequence(
               COALESCE("settings", '{}'::jsonb),
               ARRAY[$2]::text[],
               to_jsonb(
-                COALESCE(
-                  CASE WHEN "settings"->>$2 ~ '^[0-9]{1,9}$' THEN ("settings"->>$2)::int END,
+                GREATEST(
+                  COALESCE(
+                    CASE WHEN "settings"->>$2 ~ '^[0-9]{1,9}$' THEN ("settings"->>$2)::int END,
+                    $3::int
+                  ),
                   $3::int
                 ) + 1
               ),
@@ -131,7 +132,7 @@ async function reserveSequence(
       RETURNING ("settings"->>$2)::int AS next_value`,
     organizationId,
     key,
-    fallback
+    floor
   )) as Array<{ next_value: number | null }>;
 
   const nextValue = rows[0]?.next_value;
