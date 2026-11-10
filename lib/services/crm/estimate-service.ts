@@ -9,6 +9,17 @@ import {
   EstimateUpdateInput,
   EstimateConvertInput,
 } from '@/lib/schemas/crm/estimate.schema';
+import {
+  allocateDocumentNumber,
+  type PrismaTransactionClient,
+} from '@/lib/services/settings/document-numbering';
+
+/** Error carrying the HTTP status the route should answer with. */
+function codedError(message: string, statusCode: number): Error & { statusCode: number } {
+  const error = new Error(message) as Error & { statusCode: number };
+  error.statusCode = statusCode;
+  return error;
+}
 
 export interface EstimateResponse {
   id: string;
@@ -303,66 +314,85 @@ export async function deleteEstimate(id: string) {
   return { id };
 }
 
+/**
+ * Convert an accepted estimate into a draft invoice.
+ *
+ * The whole conversion runs in one transaction with the estimate row locked:
+ *
+ *  - the invoice number comes from the organization's allocator (`PREFIX-YYYY-NNNN`)
+ *    instead of the client-supplied `invoiceNumber`, so conversions can never
+ *    reuse or collide with an issued number;
+ *  - the estimate's amount and currency are carried over, because an estimate has
+ *    a single total and no line items in the current schema;
+ *  - the estimate is marked `converted` only after the invoice exists, so a
+ *    failure leaves the estimate convertible instead of stranding it.
+ */
 export async function convertEstimateToInvoice(id: string, input: EstimateConvertInput) {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'estimate.update');
   await requirePermission(userId, organizationId, 'invoice.create');
 
-  const estimate = await prisma.estimate.findFirst({
-    where: { id, organizationId },
-  });
-
-  if (!estimate) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+  const dueDate = input.dueDate ? new Date(input.dueDate) : null;
+  if (dueDate && Number.isNaN(dueDate.getTime())) {
+    throw codedError('Due date is not a valid date', 400);
   }
 
-  if (estimate.status !== 'accepted') {
-    const error = new Error('Only accepted estimates can be converted to invoices') as Error & {
-      statusCode?: number;
-    };
-    error.statusCode = 400;
-    throw error;
-  }
+  const result = await prisma.$transaction(
+    async (tx: PrismaTransactionClient): Promise<{ invoiceId: string; invoiceNumber: string }> => {
+      // Two conversions of the same estimate must not both create an invoice.
+      await tx.$queryRawUnsafe('SELECT id FROM "Estimate" WHERE id = $1 FOR UPDATE', id);
 
-  // Mark estimate as converted
-  await prisma.estimate.update({
-    where: { id },
-    data: { status: 'converted' },
-  });
+      const estimate = await tx.estimate.findFirst({ where: { id, organizationId } });
+      if (!estimate) throw codedError('Not found', 404);
 
-  // Create invoice from estimate
-  const invoice = await prisma.invoice.create({
-    data: {
-      organizationId,
-      clientId: estimate.clientId,
-      title: input.invoiceTitle,
-      status: 'draft',
-      currency: estimate.currency,
-      dueDate: input.dueDate ? new Date(input.dueDate) : null,
-      createdBy: userId,
-      updatedBy: userId,
-    },
-  });
+      if (estimate.status !== 'accepted') {
+        throw codedError('Only accepted estimates can be converted to invoices', 400);
+      }
+
+      const { number } = await allocateDocumentNumber(tx, organizationId, 'invoice');
+
+      const invoice = await tx.invoice.create({
+        data: {
+          organizationId,
+          number,
+          clientId: estimate.clientId,
+          title: input.invoiceTitle,
+          status: 'draft',
+          currency: estimate.currency,
+          subtotal: estimate.total,
+          tax: 0,
+          total: estimate.total,
+          dueDate,
+          notes: estimate.notes ?? null,
+          createdBy: userId,
+          updatedBy: userId,
+        },
+      });
+
+      await tx.estimate.update({ where: { id }, data: { status: 'converted' } });
+
+      return { invoiceId: invoice.id, invoiceNumber: invoice.number };
+    }
+  );
 
   await createAuditLog({
     actorId: userId,
     actorName: actorEmail,
     action: 'estimate.convert',
     entityType: 'Estimate',
-    entityId: estimate.id,
+    entityId: id,
     after: {
-      estimateId: estimate.id,
-      invoiceId: invoice.id,
-      invoiceNumber: input.invoiceNumber,
+      estimateId: id,
+      invoiceId: result.invoiceId,
+      invoiceNumber: result.invoiceNumber,
     },
     organizationId,
   });
 
   return {
-    estimateId: estimate.id,
-    invoiceId: invoice.id,
+    estimateId: id,
+    invoiceId: result.invoiceId,
+    invoiceNumber: result.invoiceNumber,
   };
 }
