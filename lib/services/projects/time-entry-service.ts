@@ -20,7 +20,12 @@ interface TimeEntryRecord {
   billable: boolean;
   createdAt: Date;
   user: { id: string; name: string | null; email: string | null } | null;
-  task: { id: string; title: string; projectId: string } | null;
+  task: {
+    id: string;
+    title: string;
+    projectId: string;
+    project?: { id: string; name: string } | null;
+  } | null;
 }
 
 export interface TimeEntryResponse {
@@ -33,6 +38,13 @@ export interface TimeEntryResponse {
   description: string | null;
   billable: boolean;
   createdAt: Date;
+  user?: { id: string; name: string | null; email: string | null } | null;
+  task?: {
+    id: string;
+    title: string;
+    projectId: string;
+    project?: { id: string; name: string } | null;
+  } | null;
 }
 
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
@@ -93,7 +105,69 @@ async function createAuditLog({
   });
 }
 
-export async function listTimeEntries(taskId?: string, projectId?: string) {
+function parseHours(value: string): number {
+  const trimmed = value.trim();
+  const parsed = Number(trimmed);
+  if (
+    !trimmed ||
+    Number.isNaN(parsed) ||
+    !Number.isFinite(parsed) ||
+    parsed <= 0 ||
+    parsed > 1000
+  ) {
+    const error = new Error('Hours must be a positive number up to 1000') as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 400;
+    throw error;
+  }
+  return parsed;
+}
+
+function parseEntryDate(value: string): Date {
+  const trimmed = value.trim();
+  const parsed = new Date(trimmed);
+  if (!trimmed || Number.isNaN(parsed.getTime())) {
+    const error = new Error('Valid date is required') as Error & { statusCode?: number };
+    error.statusCode = 400;
+    throw error;
+  }
+  return parsed;
+}
+
+function serializeTimeEntry(te: TimeEntryRecord): TimeEntryResponse {
+  return {
+    id: te.id,
+    organizationId: te.organizationId,
+    userId: te.userId,
+    taskId: te.taskId,
+    date: te.date,
+    hours: te.hours.toString(),
+    description: te.description,
+    billable: te.billable,
+    createdAt: te.createdAt,
+    user: te.user ?? null,
+    task: te.task ?? null,
+  };
+}
+
+const TIME_ENTRY_INCLUDE = {
+  user: { select: { id: true, name: true, email: true } },
+  task: {
+    select: {
+      id: true,
+      title: true,
+      projectId: true,
+      project: { select: { id: true, name: true } },
+    },
+  },
+} as const;
+
+export async function listTimeEntries(
+  taskId?: string,
+  projectId?: string,
+  billable?: boolean
+): Promise<TimeEntryResponse[]> {
   const { userId, organizationId } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'time.entry.read');
@@ -101,7 +175,6 @@ export async function listTimeEntries(taskId?: string, projectId?: string) {
   const where: Record<string, unknown> = { organizationId };
 
   if (taskId) {
-    // Verify task belongs to org
     const task = await prisma.task.findFirst({
       where: { id: taskId, organizationId },
     });
@@ -114,7 +187,6 @@ export async function listTimeEntries(taskId?: string, projectId?: string) {
   }
 
   if (projectId) {
-    // Verify project belongs to org
     const project = await prisma.project.findFirst({
       where: { id: projectId, organizationId },
     });
@@ -126,56 +198,82 @@ export async function listTimeEntries(taskId?: string, projectId?: string) {
     where.task = { projectId };
   }
 
-  const timeEntries = await prisma.timeEntry.findMany({
-    where,
-    include: {
-      user: { select: { id: true, name: true, email: true } },
-      task: { select: { id: true, title: true, projectId: true } },
-    },
-    orderBy: { date: 'desc' },
-  });
+  if (billable !== undefined) {
+    where.billable = billable;
+  }
 
-  return timeEntries.map((te: TimeEntryRecord) => ({
-    id: te.id,
-    organizationId: te.organizationId,
-    userId: te.userId,
-    taskId: te.taskId,
-    date: te.date,
-    hours: te.hours.toString(),
-    description: te.description,
-    billable: te.billable,
-    createdAt: te.createdAt,
-  }));
+  const timeEntries = (await prisma.timeEntry.findMany({
+    where,
+    include: TIME_ENTRY_INCLUDE,
+    orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+  })) as TimeEntryRecord[];
+
+  return timeEntries.map(serializeTimeEntry);
 }
 
-export async function createTimeEntry(input: TimeEntryCreateInput) {
+export async function getTimeEntry(id: string): Promise<TimeEntryResponse> {
+  const { userId, organizationId } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'time.entry.read');
+
+  const timeEntry = (await prisma.timeEntry.findFirst({
+    where: { id, organizationId },
+    include: TIME_ENTRY_INCLUDE,
+  })) as TimeEntryRecord | null;
+
+  if (!timeEntry) {
+    const error = new Error('Not found') as Error & { statusCode?: number };
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return serializeTimeEntry(timeEntry);
+}
+
+export async function createTimeEntry(input: TimeEntryCreateInput): Promise<TimeEntryResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'time.entry.create');
 
-  // Verify task belongs to org if provided
+  const targetUserId = input.userId ?? userId;
+  if (targetUserId !== userId) {
+    const targetUser = await prisma.user.findFirst({
+      where: { id: targetUserId, organizationId },
+    });
+    if (!targetUser) {
+      const error = new Error('User not found') as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
   if (input.taskId) {
     const task = await prisma.task.findFirst({
       where: { id: input.taskId, organizationId },
+      include: { project: { select: { deletedAt: true } } },
     });
-    if (!task) {
+    if (!task || task.project?.deletedAt) {
       const error = new Error('Task not found') as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
     }
   }
 
-  const timeEntry = await prisma.timeEntry.create({
+  const parsedDate = parseEntryDate(input.date);
+  const parsedHours = parseHours(input.hours);
+
+  const timeEntry = (await prisma.timeEntry.create({
     data: {
       organizationId,
-      userId: input.userId ?? userId,
+      userId: targetUserId,
       taskId: input.taskId ?? null,
-      date: new Date(input.date),
-      hours: Number(input.hours),
+      date: parsedDate,
+      hours: parsedHours,
       description: input.description ?? null,
       billable: input.billable,
     },
-  });
+    include: TIME_ENTRY_INCLUDE,
+  })) as TimeEntryRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -192,20 +290,13 @@ export async function createTimeEntry(input: TimeEntryCreateInput) {
     organizationId,
   });
 
-  return {
-    id: timeEntry.id,
-    organizationId: timeEntry.organizationId,
-    userId: timeEntry.userId,
-    taskId: timeEntry.taskId,
-    date: timeEntry.date,
-    hours: timeEntry.hours.toString(),
-    description: timeEntry.description,
-    billable: timeEntry.billable,
-    createdAt: timeEntry.createdAt,
-  };
+  return serializeTimeEntry(timeEntry);
 }
 
-export async function updateTimeEntry(id: string, input: TimeEntryUpdateInput) {
+export async function updateTimeEntry(
+  id: string,
+  input: TimeEntryUpdateInput
+): Promise<TimeEntryResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'time.entry.update');
@@ -220,17 +311,44 @@ export async function updateTimeEntry(id: string, input: TimeEntryUpdateInput) {
     throw error;
   }
 
-  const timeEntry = await prisma.timeEntry.update({
+  if (input.userId !== undefined && input.userId !== null) {
+    const targetUser = await prisma.user.findFirst({
+      where: { id: input.userId, organizationId },
+    });
+    if (!targetUser) {
+      const error = new Error('User not found') as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
+  if (input.taskId !== undefined && input.taskId !== null) {
+    const task = await prisma.task.findFirst({
+      where: { id: input.taskId, organizationId },
+      include: { project: { select: { deletedAt: true } } },
+    });
+    if (!task || task.project?.deletedAt) {
+      const error = new Error('Task not found') as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
+  const nextDate = input.date ? parseEntryDate(input.date) : existing.date;
+  const nextHours = input.hours !== undefined ? parseHours(input.hours) : existing.hours;
+
+  const timeEntry = (await prisma.timeEntry.update({
     where: { id },
     data: {
-      userId: input.userId !== undefined ? input.userId : existing.userId,
+      userId: input.userId !== undefined && input.userId !== null ? input.userId : existing.userId,
       taskId: input.taskId !== undefined ? input.taskId : existing.taskId,
-      date: input.date ? new Date(input.date) : existing.date,
-      hours: input.hours !== undefined ? Number(input.hours) : existing.hours,
+      date: nextDate,
+      hours: nextHours,
       description: input.description !== undefined ? input.description : existing.description,
       billable: input.billable !== undefined ? input.billable : existing.billable,
     },
-  });
+    include: TIME_ENTRY_INCLUDE,
+  })) as TimeEntryRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -249,20 +367,10 @@ export async function updateTimeEntry(id: string, input: TimeEntryUpdateInput) {
     organizationId,
   });
 
-  return {
-    id: timeEntry.id,
-    organizationId: timeEntry.organizationId,
-    userId: timeEntry.userId,
-    taskId: timeEntry.taskId,
-    date: timeEntry.date,
-    hours: timeEntry.hours.toString(),
-    description: timeEntry.description,
-    billable: timeEntry.billable,
-    createdAt: timeEntry.createdAt,
-  };
+  return serializeTimeEntry(timeEntry);
 }
 
-export async function deleteTimeEntry(id: string) {
+export async function deleteTimeEntry(id: string): Promise<{ id: string }> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'time.entry.delete');
@@ -287,7 +395,7 @@ export async function deleteTimeEntry(id: string) {
     action: 'time.entry.delete',
     entityType: 'TimeEntry',
     entityId: id,
-    before: { id: existing.id, taskId: existing.taskId, hours: existing.hours.toString() },
+    before: { id: existing.id, hours: existing.hours.toString(), taskId: existing.taskId },
     after: null,
     organizationId,
   });

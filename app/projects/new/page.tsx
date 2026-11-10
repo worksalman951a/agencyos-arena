@@ -1,17 +1,15 @@
 /**
  * AgencyOS Project New page.
  *
- * Client component form for creating a new project. The client is chosen from
- * the organization's real contacts (searchable combobox) instead of pasting a
- * raw database id, and the form reports server validation errors inline while
- * still toasting unexpected failures.
+ * Client component form for creating a new project. Supports choosing a real
+ * client contact (searchable combobox) and an optional project template.
  */
 
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
@@ -23,13 +21,23 @@ interface ContactSummary {
   email: string | null;
 }
 
+interface TemplateSummary {
+  id: string;
+  name: string;
+  description: string | null;
+}
+
 interface FieldErrors {
   [field: string]: string;
 }
 
-export default function NewProjectPage() {
+function NewProjectFormInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialTemplateId = searchParams.get('templateId') ?? '';
+
   const [clientId, setClientId] = useState('');
+  const [templateId, setTemplateId] = useState(initialTemplateId);
   const [name, setName] = useState('');
   const [status, setStatus] = useState('active');
   const [budget, setBudget] = useState('');
@@ -44,9 +52,29 @@ export default function NewProjectPage() {
   const [contacts, setContacts] = useState<ContactSummary[]>([]);
   const [contactsLoading, setContactsLoading] = useState(true);
   const [contactsError, setContactsError] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
 
-  // Fetching contacts: debounced search, cancellation via AbortController, and
-  // an explicit error state so an empty list is never mistaken for "no clients".
+  useEffect(() => {
+    let active = true;
+    fetch('/api/v1/projects/templates')
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = (await res.json()) as TemplateSummary[];
+        if (!active || !Array.isArray(data)) return;
+        setTemplates(data);
+        if (initialTemplateId) {
+          const matched = data.find((t) => t.id === initialTemplateId);
+          if (matched?.description) {
+            setDescription((prev) => prev || matched.description || '');
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [initialTemplateId]);
+
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -101,6 +129,14 @@ export default function NewProjectPage() {
     };
   });
 
+  const handleTemplateChange = (nextTemplateId: string) => {
+    setTemplateId(nextTemplateId);
+    const chosen = templates.find((t) => t.id === nextTemplateId);
+    if (chosen?.description && !description.trim()) {
+      setDescription(chosen.description);
+    }
+  };
+
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
@@ -114,6 +150,7 @@ export default function NewProjectPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             clientId: clientId || undefined,
+            templateId: templateId || undefined,
             name,
             status,
             budget: budget || undefined,
@@ -153,7 +190,7 @@ export default function NewProjectPage() {
         setLoading(false);
       }
     },
-    [budget, clientId, description, endDate, name, router, startDate, status]
+    [budget, clientId, description, endDate, name, router, startDate, status, templateId]
   );
 
   const inputClass = (field: string) =>
@@ -225,6 +262,27 @@ export default function NewProjectPage() {
             {fieldErrors.name && <p className="text-xs text-destructive">{fieldErrors.name}</p>}
           </div>
         </div>
+
+        {templates.length > 0 && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="project-template">
+              Project Template
+            </label>
+            <select
+              id="project-template"
+              value={templateId}
+              onChange={(e) => handleTemplateChange(e.target.value)}
+              className={inputClass('templateId')}
+            >
+              <option value="">No template (blank project)</option>
+              {templates.map((tpl) => (
+                <option key={tpl.id} value={tpl.id}>
+                  {tpl.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="space-y-2">
@@ -314,5 +372,13 @@ export default function NewProjectPage() {
         </button>
       </form>
     </div>
+  );
+}
+
+export default function NewProjectPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading form…</div>}>
+      <NewProjectFormInner />
+    </Suspense>
   );
 }

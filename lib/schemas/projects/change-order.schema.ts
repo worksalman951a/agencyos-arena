@@ -1,25 +1,33 @@
 import { z } from 'zod';
 
-export const changeOrderCreateSchema = z.object({
-  projectId: z.string().cuid('Valid project ID is required'),
-  description: z.string().min(1, 'Description is required').max(5000),
-  amount: z.string().refine(
-    (val) => {
-      const n = Number(val);
-      return !isNaN(n);
-    },
-    { message: 'Amount must be a valid number' }
-  ),
-  status: z.enum(['pending', 'approved', 'rejected']).default('pending'),
-  approvedBy: z.string().cuid().optional().nullable(),
-});
+const validAmount = z.string().refine(
+  (val) => {
+    const trimmed = val.trim();
+    if (!trimmed) return false;
+    const n = Number(trimmed);
+    return !Number.isNaN(n) && Number.isFinite(n);
+  },
+  { message: 'Amount must be a valid number' }
+);
+
+const userIdString = z.string().trim().min(1, 'Valid user ID is required').max(128);
+
+export const changeOrderCreateSchema = z
+  .object({
+    projectId: z.string().cuid('Valid project ID is required'),
+    description: z.string().trim().min(1, 'Description is required').max(5000),
+    amount: validAmount,
+    status: z.enum(['pending', 'approved', 'rejected']).default('pending'),
+    approvedBy: userIdString.optional().nullable(),
+  })
+  .strict();
 
 export const changeOrderUpdateSchema = z
   .object({
-    description: z.string().min(1).max(5000).optional(),
-    amount: z.string().optional(),
+    description: z.string().trim().min(1, 'Description is required').max(5000).optional(),
+    amount: validAmount.optional(),
     status: z.enum(['pending', 'approved', 'rejected']).optional(),
-    approvedBy: z.string().cuid().optional().nullable(),
+    approvedBy: userIdString.optional().nullable(),
   })
   .partial()
   .strict()

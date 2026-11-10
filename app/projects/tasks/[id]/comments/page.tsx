@@ -1,36 +1,41 @@
 /**
  * AgencyOS Task Comments page.
- * Lists and creates comments for a specific task.
+ * Lists, creates, edits, and deletes comments for a specific task.
  */
 
 import Link from 'next/link';
-import { listTaskComments } from '@/lib/services/projects/task-comment-service';
+import { getTaskCommentContext } from '@/lib/services/projects/task-comment-service';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { NewCommentForm } from './NewCommentForm';
+import { CommentListClient } from './CommentListClient';
 
 export default async function TaskCommentsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const result = await loadPageData(() => listTaskComments(id));
+  const result = await loadPageData(() => getTaskCommentContext(id));
 
   if (!result.ok) {
-    return <PageStateNotice reason={result.reason} />;
+    return (
+      <PageStateNotice reason={result.reason} backHref="/projects" backLabel="Back to projects" />
+    );
   }
 
-  const comments = result.data;
+  const { task, comments } = result.data;
 
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Task Comments</h1>
-          <p className="text-sm text-muted-foreground">Collaborate on this task with your team.</p>
+          <p className="text-sm text-muted-foreground">
+            {task.projectName} · {task.title}
+          </p>
         </div>
         <Link
-          href="/projects"
+          href={`/projects/${task.projectId}`}
           className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
         >
-          Back to Projects
+          Back to Project
         </Link>
       </div>
 
@@ -39,56 +44,7 @@ export default async function TaskCommentsPage({ params }: { params: Promise<{ i
         <NewCommentForm taskId={id} />
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-border text-sm text-muted-foreground">
-              <th className="pb-3 font-medium">User</th>
-              <th className="pb-3 font-medium">Comment</th>
-              <th className="pb-3 font-medium text-right">Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(
-              comments as Array<{
-                id: string;
-                comment: string;
-                user: { name: string | null; email: string | null };
-                createdAt: Date;
-                updatedAt: Date;
-              }>
-            ).length === 0 ? (
-              <tr>
-                <td colSpan={3} className="text-center py-8 text-muted-foreground">
-                  No comments yet. Be the first to comment.
-                </td>
-              </tr>
-            ) : (
-              (
-                comments as Array<{
-                  id: string;
-                  comment: string;
-                  user: { name: string | null; email: string | null };
-                  createdAt: Date;
-                  updatedAt: Date;
-                }>
-              ).map((c) => (
-                <tr key={c.id} className="border-b border-border hover:bg-muted/50">
-                  <td className="py-4 font-medium">
-                    {c.user?.name ?? (c.user?.email || 'Unknown')}
-                  </td>
-                  <td className="py-4 text-sm text-muted-foreground whitespace-pre-wrap">
-                    {c.comment}
-                  </td>
-                  <td className="py-4 text-right text-sm text-muted-foreground">
-                    {new Date(c.createdAt).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <CommentListClient taskId={id} comments={comments} />
     </div>
   );
 }

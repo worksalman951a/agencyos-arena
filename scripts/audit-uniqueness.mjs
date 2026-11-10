@@ -19,9 +19,29 @@
  *  4. Existing indexes / constraints on both tables, so nothing is added blind.
  */
 
-import { PrismaClient } from '@prisma/client';
+import { createRequire } from 'node:module';
 
-const prisma = new PrismaClient();
+const require = createRequire(import.meta.url);
+const { PrismaClient } = require('@prisma/client');
+const { PrismaPg } = require('@prisma/adapter-pg');
+
+function createPrismaClient() {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error('DATABASE_URL environment variable is required to run the uniqueness audit.');
+  }
+
+  const adapter = new PrismaPg({
+    connectionString,
+    max: Number(process.env.DB_POOL_MAX ?? 5),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+  });
+
+  return new PrismaClient({ adapter });
+}
+
+let prisma = null;
 
 const ROW_LIMIT = 50;
 
@@ -45,6 +65,7 @@ function reportDuplicates(label, rows, describe) {
 }
 
 async function main() {
+  prisma = createPrismaClient();
   let blocking = false;
 
   section('1. Invoice(organizationId, number) duplicates');
@@ -146,5 +167,7 @@ main()
     process.exitCode = 2;
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    if (prisma) {
+      await prisma.$disconnect();
+    }
   });

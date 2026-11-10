@@ -1,14 +1,16 @@
 import { z } from 'zod';
 
-export const projectTemplateCreateSchema = z.object({
-  name: z.string().min(1, 'Template name is required').max(200),
-  description: z.string().max(5000).optional().nullable(),
-});
+export const projectTemplateCreateSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Template name is required').max(200),
+    description: z.string().trim().max(5000).optional().nullable(),
+  })
+  .strict();
 
 export const projectTemplateUpdateSchema = z
   .object({
-    name: z.string().min(1).max(200).optional(),
-    description: z.string().max(5000).optional().nullable(),
+    name: z.string().trim().min(1, 'Template name is required').max(200).optional(),
+    description: z.string().trim().max(5000).optional().nullable(),
   })
   .partial()
   .strict()

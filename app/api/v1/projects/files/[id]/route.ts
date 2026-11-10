@@ -7,12 +7,7 @@
 import { NextResponse } from 'next/server';
 
 import { deleteProjectFile } from '@/lib/services/projects/project-file-service';
-
-function errorResponse(message: string, status: number, issues?: unknown[]) {
-  const body: Record<string, unknown> = { error: message };
-  if (issues) body.issues = issues;
-  return NextResponse.json(body, { status });
-}
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -20,10 +15,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const result = await deleteProjectFile(id);
     return NextResponse.json(result);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }

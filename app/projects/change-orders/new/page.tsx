@@ -1,23 +1,64 @@
 /**
  * AgencyOS New Change Order page.
- * Client component form for creating a new change order.
+ * Client component form for creating a new change order using real project
+ * and team member selectors.
  */
 
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
-export default function NewChangeOrderPage() {
+interface ProjectOption {
+  id: string;
+  name: string;
+}
+
+interface MemberOption {
+  id: string;
+  name: string | null;
+  email: string;
+}
+
+function NewChangeOrderFormInner() {
   const router = useRouter();
-  const [projectId, setProjectId] = useState('');
+  const searchParams = useSearchParams();
+  const initialProjectId = searchParams.get('projectId') ?? '';
+
+  const [projectId, setProjectId] = useState(initialProjectId);
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [status, setStatus] = useState('pending');
   const [approvedBy, setApprovedBy] = useState('');
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [members, setMembers] = useState<MemberOption[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      fetch('/api/v1/crm/projects?pageSize=100&sortBy=name&sortOrder=asc').then((r) =>
+        r.ok ? r.json() : null
+      ),
+      fetch('/api/v1/projects/members').then((r) => (r.ok ? r.json() : null)),
+    ])
+      .then(([projData, memData]) => {
+        if (!active) return;
+        if (projData && Array.isArray(projData.projects)) {
+          setProjects(projData.projects);
+        }
+        if (memData && Array.isArray(memData.members)) {
+          setMembers(memData.members);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,16 +72,16 @@ export default function NewChangeOrderPage() {
           description,
           amount,
           status,
-          approvedBy: approvedBy || undefined,
+          approvedBy: approvedBy || null,
         }),
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(err.error || 'Failed to create change order');
       }
 
-      const data = await res.json();
+      const data = (await res.json()) as { id: string };
       toast.success('Change order created');
       router.push(`/projects/change-orders/${data.id}`);
     } catch (err) {
@@ -55,7 +96,11 @@ export default function NewChangeOrderPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold">New Change Order</h1>
         <Link
-          href="/projects/change-orders"
+          href={
+            initialProjectId
+              ? `/projects/change-orders?projectId=${encodeURIComponent(initialProjectId)}`
+              : '/projects/change-orders'
+          }
           className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
         >
           Cancel
@@ -64,47 +109,68 @@ export default function NewChangeOrderPage() {
 
       <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
         <div className="space-y-2">
-          <label className="text-sm font-medium">Project ID</label>
-          <input
-            type="text"
+          <label htmlFor="co-project" className="text-sm font-medium">
+            Project
+          </label>
+          <select
+            id="co-project"
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
-            placeholder="Project CUID"
-            className="border border-input rounded-md px-3 py-2 text-sm"
+            className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
             required
-          />
+          >
+            <option value="">Select a project…</option>
+            {projectId && !projects.some((p) => p.id === projectId) && (
+              <option value={projectId}>Selected project</option>
+            )}
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium">Description</label>
+          <label htmlFor="co-description" className="text-sm font-medium">
+            Description
+          </label>
           <textarea
+            id="co-description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            placeholder="Describe the change..."
-            className="border border-input rounded-md px-3 py-2 text-sm"
+            placeholder="Describe the scope change..."
+            className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
             required
           />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium">Amount</label>
+            <label htmlFor="co-amount" className="text-sm font-medium">
+              Amount
+            </label>
             <input
+              id="co-amount"
               type="text"
+              inputMode="decimal"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
-              className="border border-input rounded-md px-3 py-2 text-sm text-right"
+              className="w-full border border-input rounded-md px-3 py-2 text-sm text-right bg-background"
               required
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium">Status</label>
+            <label htmlFor="co-status" className="text-sm font-medium">
+              Status
+            </label>
             <select
+              id="co-status"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              className="border border-input rounded-md px-3 py-2 text-sm bg-background"
+              className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
             >
               <option value="pending">Pending</option>
               <option value="approved">Approved</option>
@@ -112,14 +178,22 @@ export default function NewChangeOrderPage() {
             </select>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium">Approved By (User ID)</label>
-            <input
-              type="text"
+            <label htmlFor="co-approver" className="text-sm font-medium">
+              Approved By (optional)
+            </label>
+            <select
+              id="co-approver"
               value={approvedBy}
               onChange={(e) => setApprovedBy(e.target.value)}
-              placeholder="User CUID (optional)"
-              className="border border-input rounded-md px-3 py-2 text-sm"
-            />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+            >
+              <option value="">Unassigned / Auto on approval</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name ? `${m.name} (${m.email})` : m.email}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -132,5 +206,13 @@ export default function NewChangeOrderPage() {
         </button>
       </form>
     </div>
+  );
+}
+
+export default function NewChangeOrderPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading form…</div>}>
+      <NewChangeOrderFormInner />
+    </Suspense>
   );
 }

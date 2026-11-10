@@ -4,7 +4,7 @@
  * GET    /api/v1/crm/projects/[id] - Get project by ID
  * PUT    /api/v1/crm/projects/[id] - Update project
  * DELETE /api/v1/crm/projects/[id] - Soft delete project
- * POST   /api/v1/crm/projects/[id]/tasks - Add task to project
+ * POST   /api/v1/crm/projects/[id] - Add task to project
  *
  * Organization ID is resolved from the authenticated user's session,
  * never accepted from the client. Cross-org lookups return non-disclosing 404.
@@ -19,6 +19,7 @@ import {
   addProjectTask,
 } from '@/lib/services/crm/project-service';
 import { projectUpdateSchema, projectTaskSchema } from '@/lib/schemas/crm/project.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -32,18 +33,21 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const project = await getProject(id);
     return NextResponse.json(project);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const body = await request.json();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse('Invalid JSON body', 400);
+    }
+
     const parsed = projectUpdateSchema.safeParse(body);
     if (!parsed.success) {
       return errorResponse('Invalid request body', 400, parsed.error.issues);
@@ -52,11 +56,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const project = await updateProject(id, parsed.data);
     return NextResponse.json(project);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -66,18 +67,21 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const result = await deleteProject(id);
     return NextResponse.json(result);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const body = await request.json();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse('Invalid JSON body', 400);
+    }
+
     const parsed = projectTaskSchema.safeParse(body);
     if (!parsed.success) {
       return errorResponse('Invalid request body', 400, parsed.error.issues);
@@ -86,10 +90,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const task = await addProjectTask(id, parsed.data);
     return NextResponse.json(task, { status: 201 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
