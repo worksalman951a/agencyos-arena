@@ -1,182 +1,141 @@
 /**
- * AgencyOS Edit Workflow Rule page.
- * Client component form for editing an existing workflow rule.
+ * AgencyOS Workflow Rule detail page.
+ *
+ * Server-rendered (previous version was a client component that fetched with no
+ * credentials, so it always showed a 401 error). Shows the rule, its execution
+ * history with per-action results, and offers a retry for failed executions.
  */
 
-'use client';
-
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
 
-export default function EditWorkflowRulePage({ params }: { params: Promise<{ id: string }> }) {
-  const router = useRouter();
-  const [id, setId] = useState<string>('');
-  const [name, setName] = useState('');
-  const [trigger, setTrigger] = useState('');
-  const [conditions, setConditions] = useState('{}');
-  const [actions, setActions] = useState('{}');
-  const [enabled, setEnabled] = useState(true);
-  const [saving, setSaving] = useState(false);
+import {
+  getWorkflowRule,
+  listWorkflowExecutions,
+} from '@/lib/services/automation/workflow-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
+import { RetryExecutionButton } from './RetryExecutionButton';
 
-  useEffect(() => {
-    params.then(async ({ id: pid }) => {
-      setId(pid);
-      try {
-        const res = await fetch(`/api/v1/automation/workflows/${pid}`);
-        if (!res.ok) throw new Error('Failed to load workflow rule');
-        const data = await res.json();
-        setName(data.name || '');
-        setTrigger(data.trigger || '');
-        setConditions(JSON.stringify(data.conditions ?? {}, null, 2));
-        setActions(JSON.stringify(data.actions ?? {}, null, 2));
-        setEnabled(data.enabled ?? true);
-      } catch (err) {
-        toast.error((err as Error).message);
-      }
-    });
-  }, [params]);
+export default async function WorkflowRulePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      let conditionsObj: Record<string, unknown> = {};
-      let actionsObj: Record<string, unknown> = {};
-      try {
-        conditionsObj = conditions ? JSON.parse(conditions) : {};
-        actionsObj = actions ? JSON.parse(actions) : {};
-      } catch {
-        toast.error('Invalid JSON in conditions or actions');
-        setSaving(false);
-        return;
-      }
+  const result = await loadPageData(async () => {
+    const rule = await getWorkflowRule(id);
+    const executions = await listWorkflowExecutions(id);
+    return { rule, executions };
+  });
 
-      const res = await fetch(`/api/v1/automation/workflows/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name || undefined,
-          trigger: trigger || undefined,
-          conditions: conditionsObj,
-          actions: actionsObj,
-          enabled,
-        }),
-      });
+  if (!result.ok) return <PageStateNotice reason={result.reason} />;
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to update workflow rule');
-      }
-
-      toast.success('Workflow rule updated');
-      router.push(`/automation/rules`);
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!window.confirm('Delete this workflow rule? This cannot be undone.')) return;
-    try {
-      const res = await fetch(`/api/v1/automation/workflows/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Failed to delete workflow rule');
-      toast.success('Workflow rule deleted');
-      router.push(`/automation/rules`);
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
+  const { rule, executions } = result.data;
+  const actions = (rule.actions as { list?: Array<{ type: string; title?: string }> }).list ?? [];
 
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-2xl font-bold">Edit Workflow Rule</h1>
-        <div className="flex gap-2">
-          <Link
-            href="/automation/rules"
-            className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
-          >
-            Cancel
-          </Link>
-          <button
-            onClick={handleDelete}
-            className="px-4 py-2 bg-destructive text-destructive-foreground rounded-md text-sm font-medium hover:bg-destructive/90"
-          >
-            Delete
-          </button>
+        <div>
+          <h1 className="text-2xl font-bold">{rule.name}</h1>
+          <p className="text-sm text-muted-foreground font-mono">{rule.trigger}</p>
+        </div>
+        <Link
+          href="/automation/rules"
+          className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+        >
+          Back to rules
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-md border bg-background p-4 text-sm">
+          <p className="font-medium mb-2">Conditions</p>
+          <pre className="text-xs overflow-x-auto bg-muted/40 p-2 rounded">
+            {JSON.stringify(rule.conditions, null, 2)}
+          </pre>
+        </div>
+        <div className="rounded-md border bg-background p-4 text-sm">
+          <p className="font-medium mb-2">Actions</p>
+          <ul className="list-disc pl-5 space-y-1">
+            {actions.length === 0 ? <li>No actions</li> : null}
+            {actions.map((action, index) => (
+              <li key={index}>
+                <span className="font-mono text-xs">{action.type}</span>
+                {action.title ? ` — ${action.title}` : ''}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Status: {rule.enabled ? 'Enabled' : 'Disabled'}
+          </p>
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Rule Name</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="border border-input rounded-md px-3 py-2 text-sm"
-            required
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Trigger</label>
-          <input
-            type="text"
-            value={trigger}
-            onChange={(e) => setTrigger(e.target.value)}
-            placeholder="e.g. invoice.overdue"
-            className="border border-input rounded-md px-3 py-2 text-sm"
-            required
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Conditions (JSON)</label>
-          <textarea
-            value={conditions}
-            onChange={(e) => setConditions(e.target.value)}
-            rows={4}
-            className="border border-input rounded-md px-3 py-2 text-sm font-mono"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Actions (JSON)</label>
-          <textarea
-            value={actions}
-            onChange={(e) => setActions(e.target.value)}
-            rows={4}
-            className="border border-input rounded-md px-3 py-2 text-sm font-mono"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium flex items-center gap-2">
-            Enabled
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="rounded border-input text-accent bg-background"
-            />
-          </label>
-        </div>
-
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-6 py-3 bg-accent text-accent-foreground rounded-md text-sm font-medium disabled:opacity-50 hover:bg-accent/90"
-        >
-          {saving ? 'Saving...' : 'Save Changes'}
-        </button>
-      </form>
+      <div className="overflow-x-auto">
+        <h2 className="text-lg font-semibold mb-3">Execution history</h2>
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="border-b border-border text-sm text-muted-foreground">
+              <th className="pb-3 font-medium">Record</th>
+              <th className="pb-3 font-medium">Status</th>
+              <th className="pb-3 font-medium">Attempts</th>
+              <th className="pb-3 font-medium">Result</th>
+              <th className="pb-3 font-medium text-right">When</th>
+              <th className="pb-3 font-medium text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {executions.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="text-center py-8 text-muted-foreground">
+                  No executions yet. Rules run when an event is dispatched for a record.
+                </td>
+              </tr>
+            ) : (
+              executions.map((execution) => (
+                <tr
+                  key={execution.id}
+                  className="border-b border-border hover:bg-muted/50 align-top"
+                >
+                  <td className="py-4 text-sm">
+                    {execution.recordType}
+                    <span className="block text-xs text-muted-foreground font-mono">
+                      {execution.recordId}
+                    </span>
+                  </td>
+                  <td className="py-4">
+                    <span
+                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                        execution.status === 'succeeded'
+                          ? 'bg-green-100 text-green-800'
+                          : execution.status === 'failed'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      {execution.status}
+                    </span>
+                  </td>
+                  <td className="py-4 text-sm text-muted-foreground">{execution.attempts}</td>
+                  <td className="py-4 text-xs text-muted-foreground max-w-md">
+                    <code className="break-all">
+                      {JSON.stringify(execution.resultLog ?? {}).slice(0, 240)}
+                    </code>
+                  </td>
+                  <td className="py-4 text-right text-sm text-muted-foreground">
+                    {new Date(execution.createdAt).toLocaleString()}
+                  </td>
+                  <td className="py-4 text-right">
+                    {execution.status === 'failed' ? (
+                      <RetryExecutionButton executionId={execution.id} />
+                    ) : (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

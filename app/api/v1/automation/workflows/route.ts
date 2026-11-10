@@ -1,43 +1,32 @@
 /**
  * AgencyOS Automation Workflow Rules API
  *
- * GET    /api/v1/automation/workflows - List workflow rules
- * POST   /api/v1/automation/workflows - Create a workflow rule
+ * GET  /api/v1/automation/workflows - List workflow rules
+ * POST /api/v1/automation/workflows - Create a workflow rule (validated trigger/conditions/actions)
  */
 
 import { NextResponse } from 'next/server';
 
-import { listWorkflowRules, createWorkflowRule } from '@/lib/services/automation/workflow-service';
-
-function errorResponse(message: string, status: number, issues?: unknown[]) {
-  const body: Record<string, unknown> = { error: message };
-  if (issues) body.issues = issues;
-  return NextResponse.json(body, { status });
-}
+import { createWorkflowRule, listWorkflowRules } from '@/lib/services/automation/workflow-service';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 export async function GET() {
   try {
-    const data = await listWorkflowRules();
-    return NextResponse.json(data);
+    return NextResponse.json(await listWorkflowRules());
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const rule = await createWorkflowRule(body);
-    return NextResponse.json(rule, { status: 201 });
+    return NextResponse.json(await createWorkflowRule(await request.json()), { status: 201 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    const body: Record<string, unknown> = { error: message };
+    const issues = (err as { issues?: unknown }).issues;
+    if (issues) body.issues = issues;
+    return NextResponse.json(body, { status });
   }
 }

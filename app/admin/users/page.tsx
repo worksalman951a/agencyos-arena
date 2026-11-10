@@ -33,6 +33,7 @@ export default async function UsersPage() {
               <th className="pb-3 font-medium">Name</th>
               <th className="pb-3 font-medium">Email</th>
               <th className="pb-3 font-medium">Role</th>
+              <th className="pb-3 font-medium">Roles</th>
               <th className="pb-3 font-medium">Status</th>
               <th className="pb-3 font-medium text-right">Created</th>
               <th className="pb-3 font-medium w-32">Actions</th>
@@ -50,7 +51,7 @@ export default async function UsersPage() {
               }>
             ).length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-8 text-muted-foreground">
+                <td colSpan={7} className="text-center py-8 text-muted-foreground">
                   No users found.
                 </td>
               </tr>
@@ -61,6 +62,7 @@ export default async function UsersPage() {
                   name: string | null;
                   email: string;
                   role: string;
+                  roles: string[];
                   status: string;
                   createdAt: Date;
                 }>
@@ -69,6 +71,9 @@ export default async function UsersPage() {
                   <td className="py-4 font-medium">{u.name || 'Unnamed'}</td>
                   <td className="py-4 text-sm text-muted-foreground">{u.email}</td>
                   <td className="py-4 text-sm font-medium">{u.role}</td>
+                  <td className="py-4 text-sm text-muted-foreground">
+                    {u.roles.length > 0 ? u.roles.join(', ') : '—'}
+                  </td>
                   <td className="py-4">
                     <span
                       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium leading-none ${

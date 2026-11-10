@@ -1,48 +1,37 @@
 /**
  * AgencyOS Automation Notifications API
  *
- * GET    /api/v1/automation/notifications?userId= - List notifications
- * POST   /api/v1/automation/notifications - Create a notification
+ * GET  /api/v1/automation/notifications[?userId=] - List notifications
+ * POST /api/v1/automation/notifications - Create a notification (admin capability)
  */
 
 import { NextResponse } from 'next/server';
 
 import {
-  listNotifications,
   createNotification,
+  listNotifications,
 } from '@/lib/services/automation/notification-service';
-
-function errorResponse(message: string, status: number, issues?: unknown[]) {
-  const body: Record<string, unknown> = { error: message };
-  if (issues) body.issues = issues;
-  return NextResponse.json(body, { status });
-}
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('userId') || undefined;
-    const data = await listNotifications(userId);
-    return NextResponse.json(data);
+    return NextResponse.json(await listNotifications(userId));
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const notification = await createNotification(body);
-    return NextResponse.json(notification, { status: 201 });
+    return NextResponse.json(await createNotification(await request.json()), { status: 201 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    const body: Record<string, unknown> = { error: message };
+    const issues = (err as { issues?: unknown }).issues;
+    if (issues) body.issues = issues;
+    return NextResponse.json(body, { status });
   }
 }

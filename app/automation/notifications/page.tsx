@@ -8,6 +8,7 @@ import { listNotifications } from '@/lib/services/automation/notification-servic
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { MarkNotificationReadButton } from './MarkNotificationReadButton';
+import { MarkAllReadButton } from './MarkAllReadButton';
 
 export default async function NotificationsPage() {
   const result = await loadPageData(() => listNotifications());
@@ -16,25 +17,43 @@ export default async function NotificationsPage() {
     return <PageStateNotice reason={result.reason} />;
   }
 
-  const notifications = result.data;
+  const notifications = result.data as Array<{
+    id: string;
+    type: string;
+    channel: string;
+    read: boolean;
+    payload: Record<string, unknown> | null;
+    createdAt: Date;
+  }>;
 
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold">Notifications</h1>
-        <Link
-          href="/automation/workflows"
-          className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
-        >
-          Workflows
-        </Link>
+        <div className="flex items-center gap-2">
+          <MarkAllReadButton disabled={notifications.every((n) => n.read)} />
+          <Link
+            href="/automation/preferences"
+            className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+          >
+            Preferences
+          </Link>
+          <Link
+            href="/automation/rules"
+            className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+          >
+            Workflow Rules
+          </Link>
+        </div>
       </div>
 
-      <div className="rounded-md border bg-background p-6">
-        <h2 className="text-lg font-semibold mb-4">Mark as Read</h2>
-        <p className="text-sm text-muted-foreground">
-          Select a notification below to mark it as read.
-        </p>
+      <div className="rounded-md border bg-background p-6 flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">Inbox</h2>
+          <p className="text-sm text-muted-foreground" data-testid="unread-count">
+            {notifications.filter((n) => !n.read).length} unread of {notifications.length}
+          </p>
+        </div>
       </div>
 
       <div className="overflow-x-auto">

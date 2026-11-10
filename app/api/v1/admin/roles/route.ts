@@ -1,56 +1,36 @@
 /**
  * AgencyOS Admin Role API
  *
- * GET    /api/v1/admin/roles - List roles
- * PUT    /api/v1/admin/roles/[id] - Update role
- * GET    /api/v1/admin/permissions - List permissions
+ * GET  /api/v1/admin/roles[?type=permissions] - List roles or the permission catalogue
+ * POST /api/v1/admin/roles - Create a custom role
  */
 
 import { NextResponse } from 'next/server';
 
-import { listRoles, listPermissions, updateRole } from '@/lib/services/admin/role-service';
-
-function errorResponse(message: string, status: number, issues?: unknown[]) {
-  const body: Record<string, unknown> = { error: message };
-  if (issues) body.issues = issues;
-  return NextResponse.json(body, { status });
-}
+import { createRole, listPermissions, listRoles } from '@/lib/services/admin/role-service';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const type = searchParams.get('type');
-
-    if (type === 'permissions') {
-      const data = await listPermissions();
-      return NextResponse.json(data);
+    if (searchParams.get('type') === 'permissions') {
+      return NextResponse.json(await listPermissions());
     }
-
-    const data = await listRoles();
-    return NextResponse.json(data);
+    return NextResponse.json(await listRoles());
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
-export async function PUT(request: Request) {
+export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { id, ...updateData } = body;
-    if (!id || typeof id !== 'string') {
-      return errorResponse('role id is required', 400);
-    }
-    const role = await updateRole(id, updateData);
-    return NextResponse.json(role);
+    return NextResponse.json(await createRole(await request.json()), { status: 201 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    const body: Record<string, unknown> = { error: message };
+    const issues = (err as { issues?: unknown }).issues;
+    if (issues) body.issues = issues;
+    return NextResponse.json(body, { status });
   }
 }

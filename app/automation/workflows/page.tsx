@@ -1,32 +1,19 @@
 /**
- * AgencyOS Automation Coming Soon page.
+ * AgencyOS Automation entry point.
  *
- * Placeholder for the Automation module, planned for a future AgencyOS release.
- * Not a functional module - does not execute workflows or automations.
+ * This route used to be a "Coming Soon / Roadmap: Future Phase" placeholder even
+ * after workflow rules shipped, so anyone landing on `/automation/workflows`
+ * (the obvious URL, and the one the module is named after) was told the feature
+ * did not exist. The real module lives at `/automation/rules`, so this is now a
+ * plain redirect instead of a dead end.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { ComingSoon } from '@/components/layout/coming-soon';
 
+// Evaluate the redirect per request rather than baking it into the build, so the
+// route behaves like the rest of the authenticated module.
 export const dynamic = 'force-dynamic';
 
-export default async function WorkflowsPage() {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
-
-  if (!result?.session || !result.user) {
-    redirect('/login');
-  }
-
-  return (
-    <ComingSoon
-      title="Automation"
-      phase="Roadmap: Future Phase"
-      description="Automate repetitive tasks with workflows. Automation is planned for a future AgencyOS release."
-    />
-  );
+export default function WorkflowsPage() {
+  redirect('/automation/rules');
 }
