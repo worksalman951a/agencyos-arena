@@ -64,8 +64,19 @@ async function getActor(): Promise<{ userId: string; organizationId: string } | 
   const cookieStore = await cookies();
   const result = await auth.api.getSession({ headers: { cookie: cookieStore.toString() } });
   if (!result?.session || !result.user) return null;
-  const { organizationId } = await requireOrganization(result.user.id);
-  return { userId: result.user.id, organizationId };
+
+  try {
+    const { organizationId } = await requireOrganization(result.user.id);
+    return { userId: result.user.id, organizationId };
+  } catch (error) {
+    // A signed-in user who has not been attached to an organization yet (the
+    // moment after sign-up) has nothing to summarise. Returning null lets the
+    // dashboard explain the empty state instead of failing the whole render
+    // with a 403 -> 500.
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (statusCode === 401 || statusCode === 403) return null;
+    throw error;
+  }
 }
 
 /**
