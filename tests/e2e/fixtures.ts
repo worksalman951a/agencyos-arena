@@ -78,11 +78,15 @@ export async function createAccount(api: APIRequestContext, label: string): Prom
   const organizationName = `E2E ${label} ${uniqueSuffix()}`;
 
   const signUp = await postWithRateLimitRetry(api, '/api/auth/sign-up/email', {
+    // Better Auth enforces a same-origin check (CSRF); a raw HTTP client has to
+    // send Origin explicitly, exactly like the browser does.
+    headers: { Origin: APP_URL, Accept: 'application/json' },
     data: { email, password: E2E_PASSWORD, name: `E2E ${label}` },
   });
   expect(signUp.status(), `sign-up failed (${signUp.status()}): ${await signUp.text()}`).toBe(200);
 
   const signIn = await postWithRateLimitRetry(api, '/api/auth/sign-in/email', {
+    headers: { Origin: APP_URL, Accept: 'application/json' },
     data: { email, password: E2E_PASSWORD },
   });
   expect(signIn.status(), `sign-in failed (${signIn.status()}): ${await signIn.text()}`).toBe(200);
@@ -91,7 +95,11 @@ export async function createAccount(api: APIRequestContext, label: string): Prom
   expect(sessionToken, 'sign-in did not return a session cookie').toBeTruthy();
 
   const bootstrap = await postWithRateLimitRetry(api, '/api/auth/bootstrap-organization', {
-    headers: { Cookie: `better-auth.session_token=${sessionToken}` },
+    headers: {
+      Cookie: `better-auth.session_token=${sessionToken}`,
+      Origin: APP_URL,
+      Accept: 'application/json',
+    },
     data: { organizationName },
   });
   expect(bootstrap.status(), `bootstrap failed: ${await bootstrap.text()}`).toBe(200);
