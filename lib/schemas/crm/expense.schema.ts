@@ -37,3 +37,33 @@ export const expenseUpdateSchema = expenseCreateSchema
 
 export type ExpenseCreateInput = z.infer<typeof expenseCreateSchema>;
 export type ExpenseUpdateInput = z.infer<typeof expenseUpdateSchema>;
+
+/**
+ * Query parameters for the expense list.
+ *
+ * Deliberately limited to what the schema can answer: a free-text search over
+ * the category, an exact category filter, the billable flag, an `expenseDate`
+ * range, sorting and pagination. There is no currency filter because
+ * `ExpenseItem` has no currency column (expenses are reported in the workspace
+ * currency).
+ */
+export const EXPENSE_SORT_OPTIONS = [
+  'date_desc',
+  'date_asc',
+  'amount_desc',
+  'amount_asc',
+  'category_asc',
+] as const;
+
+export const expenseListQuerySchema = z.object({
+  q: z.string().trim().max(100).optional(),
+  category: z.string().trim().max(100).optional(),
+  billable: z.enum(['true', 'false']).optional(),
+  from: z.string().trim().optional(),
+  to: z.string().trim().optional(),
+  sort: z.enum(EXPENSE_SORT_OPTIONS).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+export type ExpenseListQueryInput = z.infer<typeof expenseListQuerySchema>;

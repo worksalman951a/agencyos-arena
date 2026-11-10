@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 
 import { recordPayment } from '@/lib/services/crm/invoice-service';
 import { invoicePaymentSchema } from '@/lib/schemas/crm/invoice.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -31,10 +32,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const result = await recordPayment(id, parsed.data);
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

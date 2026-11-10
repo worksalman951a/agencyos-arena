@@ -153,6 +153,33 @@ function formatMoney(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
+/** Error carrying the HTTP status the route should answer with. */
+function codedError(message: string, statusCode: number): Error & { statusCode: number } {
+  const error = new Error(message) as Error & { statusCode: number };
+  error.statusCode = statusCode;
+  return error;
+}
+
+interface RecordedPaymentOutcome {
+  payment: {
+    id: string;
+    invoiceId: string;
+    amount: string;
+    method: string;
+    reference: string | null;
+    paidAt: Date | null;
+    recordedBy: string | null;
+    createdAt: Date;
+  };
+  invoiceStatus: string;
+  /** Total recorded against the invoice, as decimal money. */
+  amountPaid: string;
+  /** Remaining balance, never negative. */
+  balance: string;
+  /** True when the request was an idempotent replay. */
+  duplicate: boolean;
+}
+
 /**
  * Format a Prisma Decimal (or numeric string) as a fixed 2-decimal money string.
  *
@@ -401,42 +428,59 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
   // organization counter can never advance without an invoice and two
   // concurrent creates cannot receive the same number. Only ids/line items are
   // touched inside the transaction; the full record is re-read after commit.
-  const created = await prisma.$transaction(async (tx: PrismaTransactionClient) => {
-    const { number } = await allocateDocumentNumber(tx, organizationId, 'invoice');
+  const createInvoiceInTransaction = () =>
+    prisma.$transaction(async (tx: PrismaTransactionClient) => {
+      const { number } = await allocateDocumentNumber(tx, organizationId, 'invoice');
 
-    return tx.invoice.create({
-      data: {
-        organizationId,
-        number,
-        clientId: input.clientId ?? null,
-        title: input.title,
-        status: input.status,
-        subtotal,
-        tax,
-        total,
-        currency: input.currency,
-        dueDate: input.dueDate ? new Date(input.dueDate) : null,
-        notes: input.notes ?? null,
-        createdBy: userId,
-        updatedBy: userId,
-        items: {
-          create: lineItems.map((item) => {
-            const qtyCents = toCents(item.quantity);
-            const priceCents = toCents(item.unitPrice);
-            const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
-            return {
-              description: item.description,
-              quantity: Number(item.quantity),
-              unitPrice: Number(item.unitPrice),
-              taxRate: Number(item.taxRate),
-              amount: formatMoney(itemAmountCents),
-            };
-          }),
+      return tx.invoice.create({
+        data: {
+          organizationId,
+          number,
+          clientId: input.clientId ?? null,
+          title: input.title,
+          status: input.status,
+          subtotal,
+          tax,
+          total,
+          currency: input.currency,
+          dueDate: input.dueDate ? new Date(input.dueDate) : null,
+          notes: input.notes ?? null,
+          createdBy: userId,
+          updatedBy: userId,
+          items: {
+            create: lineItems.map((item) => {
+              const qtyCents = toCents(item.quantity);
+              const priceCents = toCents(item.unitPrice);
+              const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
+              return {
+                description: item.description,
+                quantity: Number(item.quantity),
+                unitPrice: Number(item.unitPrice),
+                taxRate: Number(item.taxRate),
+                amount: formatMoney(itemAmountCents),
+              };
+            }),
+          },
         },
-      },
-      select: { id: true },
+        select: { id: true },
+      });
     });
-  });
+
+  // The unique index on (organizationId, number) is the database guarantee. It
+  // can only fire if the stored numbers and the organization counter drifted
+  // apart externally (import, manual SQL), so retry with a freshly allocated
+  // number instead of failing the user's invoice.
+  let created: { id: string } | undefined;
+  for (let attempt = 1; attempt <= 3 && !created; attempt += 1) {
+    try {
+      created = await createInvoiceInTransaction();
+    } catch (error) {
+      if (!isUniqueViolation(error) || attempt === 3) throw error;
+    }
+  }
+  if (!created) {
+    throw codedError('Could not allocate a unique invoice number. Please retry.', 400);
+  }
 
   const invoice = await prisma.invoice.findUniqueOrThrow({
     where: { id: created.id },
@@ -605,73 +649,38 @@ export async function updateInvoice(
   return serializeInvoice(invoice as unknown as InvoiceDbRecord);
 }
 
-export async function recordPayment(invoiceId: string, input: InvoicePaymentInput) {
-  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === 'P2002';
+}
 
-  await requirePermission(userId, organizationId, 'invoice.update');
-
+/**
+ * Re-read the payment that won a race on the idempotency unique index.
+ *
+ * The read-then-insert check inside the transaction covers sequential retries;
+ * this is the last line of defence for two requests that both pass that check.
+ */
+async function replayRecordedPayment(
+  invoiceId: string,
+  organizationId: string,
+  idempotencyKey: string
+): Promise<RecordedPaymentOutcome | null> {
   const invoice = await prisma.invoice.findFirst({
-    where: { id: invoiceId, organizationId },
+    where: { id: invoiceId, organizationId, deletedAt: null },
+    include: { payments: true },
   });
+  if (!invoice) return null;
 
-  if (!invoice) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
-  }
+  const payment = (invoice.payments ?? []).find(
+    (row: { idempotencyKey: string | null }) => row.idempotencyKey === idempotencyKey
+  );
+  if (!payment) return null;
 
-  if (invoice.status === 'voided') {
-    const error = new Error('Cannot record a payment on a voided invoice') as Error & {
-      statusCode?: number;
-    };
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const paymentAmountCents = toCents(input.amount);
-  const existingTotalCents = toCents(invoice.total);
-  const existingPaidCents = invoice.payments
-    ? invoice.payments.reduce((sum: number, p: { amount: string }) => sum + toCents(p.amount), 0)
-    : 0;
-  const newPaidCents = existingPaidCents + paymentAmountCents;
-
-  let newStatus = invoice.status;
-  if (newPaidCents >= existingTotalCents && existingTotalCents > 0) {
-    newStatus = 'paid';
-  } else if (newPaidCents > 0) {
-    newStatus = 'sent';
-  }
-
-  const payment = await prisma.payment.create({
-    data: {
-      invoiceId,
-      amount: formatMoney(paymentAmountCents),
-      method: input.method,
-      reference: input.reference ?? null,
-      paidAt: input.paidAt ? new Date(input.paidAt) : new Date(),
-      recordedBy: userId,
-      idempotencyKey: input.idempotencyKey ?? null,
-    },
-  });
-
-  await prisma.invoice.update({
-    where: { id: invoiceId },
-    data: { status: newStatus, updatedBy: userId },
-  });
-
-  await createAuditLog({
-    actorId: userId,
-    actorName: actorEmail,
-    action: 'invoice.payment',
-    entityType: 'Invoice',
-    entityId: invoiceId,
-    after: {
-      id: invoiceId,
-      status: newStatus,
-      totalPaidCents: newPaidCents,
-    },
-    organizationId,
-  });
+  const paidCents = (invoice.payments ?? []).reduce(
+    (sum: number, row: { amount: { toString: () => string } }) =>
+      sum + toCents(row.amount.toString()),
+    0
+  );
+  const totalCents = toCents(invoice.total);
 
   return {
     payment: {
@@ -684,8 +693,181 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
       recordedBy: payment.recordedBy,
       createdAt: payment.createdAt,
     },
-    invoiceStatus: newStatus,
-  };
+    invoiceStatus: invoice.status,
+    amountPaid: formatMoney(paidCents),
+    balance: formatMoney(Math.max(totalCents - paidCents, 0)),
+    duplicate: true,
+  } as RecordedPaymentOutcome;
+}
+
+/**
+ * Record a payment against an invoice.
+ *
+ * Financial-integrity rules (all enforced inside the transaction):
+ *
+ *  - the invoice is locked (`SELECT … FOR UPDATE`) so two concurrent payments
+ *    cannot both pass the outstanding-balance check;
+ *  - soft-deleted and voided invoices reject payments;
+ *  - the outstanding balance is derived from **all** recorded payments, so
+ *    partial payments accumulate and the invoice becomes `paid` only when it is
+ *    actually covered;
+ *  - overpayment is rejected instead of inflating collected revenue;
+ *  - a supplied `idempotencyKey` returns the original payment instead of
+ *    recording a duplicate when the same submission is retried.
+ */
+export async function recordPayment(invoiceId: string, input: InvoicePaymentInput) {
+  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'invoice.update');
+
+  const paymentAmountCents = toCents(input.amount);
+  if (!Number.isFinite(paymentAmountCents) || paymentAmountCents <= 0) {
+    throw codedError('Payment amount must be greater than zero', 400);
+  }
+
+  const paidAt = input.paidAt ? new Date(input.paidAt) : new Date();
+  if (Number.isNaN(paidAt.getTime())) {
+    throw codedError('Payment date is not a valid date', 400);
+  }
+
+  // Blank keys are keyless: the partial unique index skips NULLs, so storing
+  // '' for "no key" would either collide or weaken the guarantee.
+  const idempotencyKey = input.idempotencyKey?.trim() || null;
+
+  const recordPaymentInTransaction = () =>
+    prisma.$transaction(async (tx: PrismaTransactionClient): Promise<RecordedPaymentOutcome> => {
+      // Serialise concurrent payments for this invoice.
+      await tx.$queryRawUnsafe('SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE', invoiceId);
+
+      const invoice = await tx.invoice.findFirst({
+        where: { id: invoiceId, organizationId, deletedAt: null },
+        include: { payments: { orderBy: { paidAt: 'desc' } } },
+      });
+
+      if (!invoice) throw codedError('Not found', 404);
+      if (invoice.status === 'voided') {
+        throw codedError('Cannot record a payment on a voided invoice', 400);
+      }
+
+      const payments = (invoice.payments ?? []) as Array<{
+        id: string;
+        invoiceId: string;
+        amount: { toString: () => string };
+        method: string;
+        reference: string | null;
+        paidAt: Date | null;
+        recordedBy: string | null;
+        createdAt: Date;
+      }>;
+      const paidCents = payments.reduce(
+        (sum, payment) => sum + toCents(payment.amount.toString()),
+        0
+      );
+      const totalCents = toCents(invoice.total);
+
+      const serialize = (payment: (typeof payments)[number]) => ({
+        id: payment.id,
+        invoiceId: payment.invoiceId,
+        amount: formatDecimalMoney(payment.amount),
+        method: payment.method,
+        reference: payment.reference,
+        paidAt: payment.paidAt,
+        recordedBy: payment.recordedBy,
+        createdAt: payment.createdAt,
+      });
+
+      const summary = (paid: number, status: string) => ({
+        invoiceStatus: status,
+        amountPaid: formatMoney(paid),
+        balance: formatMoney(Math.max(totalCents - paid, 0)),
+      });
+
+      // Retried submission: return the payment that was already recorded.
+      if (idempotencyKey) {
+        const duplicate = await tx.payment.findFirst({
+          where: { invoiceId, idempotencyKey },
+        });
+        if (duplicate) {
+          return {
+            payment: serialize(duplicate as (typeof payments)[number]),
+            ...summary(paidCents, invoice.status),
+            duplicate: true,
+          };
+        }
+      }
+
+      if (totalCents <= 0) {
+        throw codedError('Cannot record a payment on an invoice without a total', 400);
+      }
+
+      const outstandingCents = Math.max(totalCents - paidCents, 0);
+      if (paymentAmountCents > outstandingCents) {
+        throw codedError(
+          `Payment exceeds the outstanding balance of ${formatMoney(outstandingCents)}`,
+          400
+        );
+      }
+
+      const newPaidCents = paidCents + paymentAmountCents;
+      const newStatus =
+        newPaidCents >= totalCents ? 'paid' : invoice.status === 'overdue' ? 'overdue' : 'sent';
+
+      const payment = await tx.payment.create({
+        data: {
+          invoiceId,
+          amount: formatMoney(paymentAmountCents),
+          method: input.method,
+          reference: input.reference ?? null,
+          paidAt,
+          recordedBy: userId,
+          idempotencyKey,
+        },
+      });
+
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: { status: newStatus, updatedBy: userId },
+      });
+
+      return {
+        payment: serialize(payment as unknown as (typeof payments)[number]),
+        ...summary(newPaidCents, newStatus),
+        duplicate: false,
+      };
+    });
+
+  let audited: RecordedPaymentOutcome;
+  try {
+    audited = await recordPaymentInTransaction();
+  } catch (error) {
+    // Two concurrent retries with the same key: the loser hits the partial
+    // unique index. Replay the winner's payment instead of failing the request.
+    const replayed =
+      idempotencyKey && isUniqueViolation(error)
+        ? await replayRecordedPayment(invoiceId, organizationId, idempotencyKey)
+        : null;
+    if (!replayed) throw error;
+    audited = replayed;
+  }
+
+  if (!audited.duplicate) {
+    await createAuditLog({
+      actorId: userId,
+      actorName: actorEmail,
+      action: 'invoice.payment',
+      entityType: 'Invoice',
+      entityId: invoiceId,
+      after: {
+        id: invoiceId,
+        status: audited.invoiceStatus,
+        amountPaid: audited.amountPaid,
+        balance: audited.balance,
+      },
+      organizationId,
+    });
+  }
+
+  return audited;
 }
 
 export async function deleteInvoice(id: string) {

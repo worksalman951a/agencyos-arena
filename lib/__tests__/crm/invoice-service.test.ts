@@ -27,11 +27,13 @@ vi.mock('@/lib/db', () => ({
     },
     payment: {
       create: vi.fn(),
+      findFirst: vi.fn(),
     },
     auditLog: {
       create: vi.fn(),
     },
     $transaction: vi.fn(),
+    $queryRawUnsafe: vi.fn(),
     $connect: vi.fn(),
     $disconnect: vi.fn(),
   },
@@ -88,6 +90,8 @@ const mockInvoiceCreate = prisma.invoice.create as unknown as ReturnType<typeof 
 const mockInvoiceUpdate = prisma.invoice.update as unknown as ReturnType<typeof vi.fn>;
 const mockContactFindFirst = prisma.contact.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockPaymentCreate = prisma.payment.create as unknown as ReturnType<typeof vi.fn>;
+const mockPaymentFindFirst = prisma.payment.findFirst as unknown as ReturnType<typeof vi.fn>;
+const mockQueryRawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 const mockTransaction = prisma.$transaction as unknown as ReturnType<typeof vi.fn>;
 const mockInvoiceFindUniqueOrThrow = prisma.invoice.findUniqueOrThrow as unknown as ReturnType<
   typeof vi.fn
@@ -139,6 +143,9 @@ beforeEach(() => {
   // Mirrors the allocator's real contract: it reserves a sequence and returns
   // the formatted number alongside it.
   mockAllocateNumber.mockResolvedValue({ number: 'INV-2026-0001', sequence: 1, prefix: 'INV' });
+  // Row lock used to serialise concurrent payments.
+  mockQueryRawUnsafe.mockResolvedValue([]);
+  mockPaymentFindFirst.mockResolvedValue(null);
 });
 
 describe('Money math and validation', () => {
@@ -373,6 +380,50 @@ describe('createInvoice', () => {
       )
     ).rejects.toMatchObject({ statusCode: 404 });
   });
+
+  it('retries with a fresh number when the unique index reports a collision', async () => {
+    mockInvoiceCreate.mockResolvedValue({ id: 'inv-retry' });
+    mockInvoiceFindUniqueOrThrow.mockResolvedValue({ ...baseInvoice, id: 'inv-retry' });
+    mockContactFindFirst.mockResolvedValue({ id: 'contact-1', organizationId: 'org-1' });
+    mockTransaction.mockRejectedValueOnce(
+      Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+    );
+
+    const result = await createInvoice(
+      {
+        clientId: 'contact-1',
+        title: 'Collision',
+        status: 'draft',
+        currency: 'USD',
+        dueDate: null,
+        notes: null,
+      },
+      lineItems
+    );
+
+    expect(mockTransaction).toHaveBeenCalledTimes(2);
+    expect(result.id).toBe('inv-retry');
+  });
+
+  it('does not retry a non-unique failure', async () => {
+    mockContactFindFirst.mockResolvedValue({ id: 'contact-1', organizationId: 'org-1' });
+    mockTransaction.mockRejectedValueOnce(new Error('connection lost'));
+
+    await expect(
+      createInvoice(
+        {
+          clientId: 'contact-1',
+          title: 'Fails',
+          status: 'draft',
+          currency: 'USD',
+          dueDate: null,
+          notes: null,
+        },
+        lineItems
+      )
+    ).rejects.toThrow('connection lost');
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('updateInvoice', () => {
@@ -445,6 +496,260 @@ describe('recordPayment', () => {
         method: 'cash',
         reference: null,
         paidAt: null,
+        idempotencyKey: null,
+      })
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('accumulates earlier partial payments before deciding the status', async () => {
+    mockInvoiceFindFirst.mockResolvedValue({
+      ...baseInvoice,
+      status: 'sent',
+      total: '100.00',
+      payments: [{ id: 'pay-0', invoiceId: 'inv-1', amount: '40.00' }],
+    });
+    mockPaymentCreate.mockResolvedValue({
+      id: 'pay-2',
+      invoiceId: 'inv-1',
+      amount: '60.00',
+      method: 'card',
+      reference: null,
+      paidAt: new Date(),
+      recordedBy: 'user-1',
+      createdAt: new Date(),
+    });
+    mockInvoiceUpdate.mockResolvedValue({ ...baseInvoice, status: 'paid' });
+
+    const result = await recordPayment('inv-1', {
+      amount: '60.00',
+      method: 'card',
+      reference: null,
+      paidAt: null,
+      idempotencyKey: null,
+    });
+
+    expect(result.invoiceStatus).toBe('paid');
+    expect(result.amountPaid).toBe('100.00');
+    expect(result.balance).toBe('0.00');
+    expect(mockInvoiceUpdate).toHaveBeenCalledWith({
+      where: { id: 'inv-1' },
+      data: { status: 'paid', updatedBy: 'user-1' },
+    });
+  });
+
+  it('keeps an overdue invoice overdue while it is only partly paid', async () => {
+    mockInvoiceFindFirst.mockResolvedValue({
+      ...baseInvoice,
+      status: 'overdue',
+      total: '100.00',
+      payments: [],
+    });
+    mockPaymentCreate.mockResolvedValue({
+      id: 'pay-3',
+      invoiceId: 'inv-1',
+      amount: '25.00',
+      method: 'cash',
+      reference: null,
+      paidAt: new Date(),
+      recordedBy: 'user-1',
+      createdAt: new Date(),
+    });
+    mockInvoiceUpdate.mockResolvedValue({ ...baseInvoice, status: 'overdue' });
+
+    const result = await recordPayment('inv-1', {
+      amount: '25.00',
+      method: 'cash',
+      reference: null,
+      paidAt: null,
+      idempotencyKey: null,
+    });
+
+    expect(result.invoiceStatus).toBe('overdue');
+    expect(result.balance).toBe('75.00');
+  });
+
+  it('rejects an overpayment without recording a payment', async () => {
+    mockInvoiceFindFirst.mockResolvedValue({
+      ...baseInvoice,
+      status: 'sent',
+      total: '100.00',
+      payments: [{ id: 'pay-0', invoiceId: 'inv-1', amount: '80.00' }],
+    });
+
+    await expect(
+      recordPayment('inv-1', {
+        amount: '30.00',
+        method: 'cash',
+        reference: null,
+        paidAt: null,
+        idempotencyKey: null,
+      })
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringMatching(/outstanding balance/i),
+    });
+
+    expect(mockPaymentCreate).not.toHaveBeenCalled();
+    expect(mockInvoiceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a payment on an invoice with no total', async () => {
+    mockInvoiceFindFirst.mockResolvedValue({ ...baseInvoice, total: '0.00', payments: [] });
+
+    await expect(
+      recordPayment('inv-1', {
+        amount: '10.00',
+        method: 'cash',
+        reference: null,
+        paidAt: null,
+        idempotencyKey: null,
+      })
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('replays an idempotency key instead of recording a duplicate', async () => {
+    mockInvoiceFindFirst.mockResolvedValue({
+      ...baseInvoice,
+      status: 'sent',
+      total: '100.00',
+      payments: [{ id: 'pay-1', invoiceId: 'inv-1', amount: '20.00' }],
+    });
+    mockPaymentFindFirst.mockResolvedValue({
+      id: 'pay-1',
+      invoiceId: 'inv-1',
+      amount: '20.00',
+      method: 'bank_transfer',
+      reference: null,
+      paidAt: new Date(),
+      recordedBy: 'user-1',
+      createdAt: new Date(),
+    });
+
+    const result = await recordPayment('inv-1', {
+      amount: '20.00',
+      method: 'bank_transfer',
+      reference: null,
+      paidAt: null,
+      idempotencyKey: 'key-1',
+    });
+
+    expect(result.duplicate).toBe(true);
+    expect(result.payment.id).toBe('pay-1');
+    expect(result.balance).toBe('80.00');
+    expect(mockPaymentCreate).not.toHaveBeenCalled();
+    expect(mockInvoiceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('treats a soft-deleted invoice as missing', async () => {
+    mockInvoiceFindFirst.mockResolvedValue(null);
+
+    await expect(
+      recordPayment('inv-1', {
+        amount: '10.00',
+        method: 'cash',
+        reference: null,
+        paidAt: null,
+        idempotencyKey: null,
+      })
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('normalises a blank idempotency key to NULL so it stays keyless', async () => {
+    mockInvoiceFindFirst.mockResolvedValue({
+      ...baseInvoice,
+      status: 'sent',
+      total: '100.00',
+      payments: [],
+    });
+    mockPaymentCreate.mockResolvedValue({
+      id: 'pay-blank',
+      invoiceId: 'inv-1',
+      amount: '10.00',
+      method: 'cash',
+      reference: null,
+      paidAt: new Date(),
+      recordedBy: 'user-1',
+      createdAt: new Date(),
+    });
+    mockInvoiceUpdate.mockResolvedValue({ ...baseInvoice, status: 'sent' });
+
+    const result = await recordPayment('inv-1', {
+      amount: '10.00',
+      method: 'cash',
+      reference: null,
+      paidAt: null,
+      idempotencyKey: '   ',
+    });
+
+    expect(mockPaymentCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ idempotencyKey: null }),
+    });
+    expect(mockPaymentFindFirst).not.toHaveBeenCalled();
+    expect(result.duplicate).toBe(false);
+  });
+
+  it('replays the winning payment when the unique index rejects a concurrent duplicate', async () => {
+    // Both requests passed the in-transaction check; the loser hits the partial
+    // unique index on (invoiceId, idempotencyKey).
+    mockTransaction.mockRejectedValueOnce(
+      Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+    );
+    const stored = {
+      id: 'pay-winner',
+      invoiceId: 'inv-1',
+      amount: '25.00',
+      method: 'bank_transfer',
+      reference: 'REF-1',
+      paidAt: new Date(),
+      recordedBy: 'user-1',
+      createdAt: new Date(),
+      idempotencyKey: 'race-key',
+    };
+    mockInvoiceFindFirst.mockResolvedValue({
+      ...baseInvoice,
+      status: 'sent',
+      total: '100.00',
+      payments: [stored],
+    });
+
+    const result = await recordPayment('inv-1', {
+      amount: '25.00',
+      method: 'bank_transfer',
+      reference: 'REF-1',
+      paidAt: null,
+      idempotencyKey: 'race-key',
+    });
+
+    expect(result.duplicate).toBe(true);
+    expect(result.payment.id).toBe('pay-winner');
+    expect(result.amountPaid).toBe('25.00');
+    expect(result.balance).toBe('75.00');
+    expect(mockPaymentCreate).not.toHaveBeenCalled();
+  });
+
+  it('rethrows a unique violation that is not a replayable idempotency key', async () => {
+    mockTransaction.mockRejectedValueOnce(
+      Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+    );
+
+    await expect(
+      recordPayment('inv-1', {
+        amount: '10.00',
+        method: 'cash',
+        reference: null,
+        paidAt: null,
+        idempotencyKey: null,
+      })
+    ).rejects.toMatchObject({ code: 'P2002' });
+  });
+
+  it('rejects an invalid payment date', async () => {
+    await expect(
+      recordPayment('inv-1', {
+        amount: '10.00',
+        method: 'cash',
+        reference: null,
+        paidAt: 'not-a-date',
         idempotencyKey: null,
       })
     ).rejects.toMatchObject({ statusCode: 400 });

@@ -5,6 +5,12 @@ import { requirePermission, requireOrganization, type AuthorizedUser } from '@/l
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 import { ExpenseCreateInput, ExpenseUpdateInput } from '@/lib/schemas/crm/expense.schema';
+import { DEFAULT_CURRENCY, normalizeCurrencyCode } from '@/lib/currencies';
+import { normalizeOrganizationSettings } from '@/lib/schemas/settings/organization.schema';
+
+function codedError(message: string, statusCode: number) {
+  return Object.assign(new Error(message), { statusCode });
+}
 
 export interface ExpenseResponse {
   id: string;
@@ -88,6 +94,185 @@ async function createAuditLog({
   });
 }
 
+const EXPENSE_SORTS: ExpenseSort[] = [
+  'date_desc',
+  'date_asc',
+  'amount_desc',
+  'amount_asc',
+  'category_asc',
+];
+
+export type ExpenseSort = 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc' | 'category_asc';
+
+export interface ExpenseListQuery {
+  /** Free-text search over the category (and receipt URL). */
+  q?: string;
+  /** Exact category filter. */
+  category?: string;
+  billable?: boolean;
+  /** Inclusive `expenseDate` bounds, `YYYY-MM-DD` or ISO. */
+  from?: string;
+  to?: string;
+  sort?: ExpenseSort;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ExpenseListResult {
+  rows: ExpenseResponse[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  summary: { count: number; totalAmount: string; billableAmount: string };
+  /** Categories already in use, for the filter dropdown. */
+  categories: string[];
+  /** Workspace currency. `ExpenseItem` has no per-row currency column. */
+  currency: string;
+}
+
+/**
+ * Sort clause per option.
+ *
+ * One key per object and a plain object (not an array): this Prisma version
+ * rejects a multi-key order-by object, so the shapes stay literal and
+ * single-key, exactly like the rest of the services in this repository.
+ */
+function orderByFor(sort: ExpenseSort) {
+  switch (sort) {
+    case 'date_asc':
+      return { expenseDate: 'asc' as const };
+    case 'amount_desc':
+      return { amount: 'desc' as const };
+    case 'amount_asc':
+      return { amount: 'asc' as const };
+    case 'category_asc':
+      return { category: 'asc' as const };
+    case 'date_desc':
+    default:
+      return { expenseDate: 'desc' as const };
+  }
+}
+
+function parseDateBound(value: string | undefined, label: string, endOfDay = false) {
+  if (!value) return undefined;
+  const date = new Date(value.length === 10 ? `${value}T00:00:00.000Z` : value);
+  if (Number.isNaN(date.getTime())) {
+    throw codedError(`The ${label} date filter is not a valid date`, 400);
+  }
+  if (endOfDay && value.length === 10) date.setUTCHours(23, 59, 59, 999);
+  return date;
+}
+
+function serializeExpense(expense: ExpenseRecord): ExpenseResponse {
+  return {
+    id: expense.id,
+    organizationId: expense.organizationId,
+    projectId: expense.projectId,
+    category: expense.category,
+    // Postgres hands back `100` for 100.00; keep one money format for the API
+    // and the UI (storage is untouched).
+    amount: Number(expense.amount.toString()).toFixed(2),
+    expenseDate: expense.expenseDate,
+    receiptUrl: expense.receiptUrl,
+    billable: expense.billable,
+    createdAt: expense.createdAt,
+  };
+}
+
+/**
+ * Search, filter, sort and paginate the organization's expenses.
+ *
+ * Everything is organization-scoped and permission-gated like the plain list.
+ * `ExpenseItem` has no currency column, so the summary is reported in the
+ * workspace currency and no conversion happens.
+ */
+export async function searchExpenses(query: ExpenseListQuery = {}): Promise<ExpenseListResult> {
+  const { userId, organizationId } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'expense.read');
+
+  const page = Math.max(1, Math.trunc(query.page ?? 1));
+  const pageSize = Math.min(100, Math.max(1, Math.trunc(query.pageSize ?? 20)));
+  const sort: ExpenseSort = EXPENSE_SORTS.includes(query.sort as ExpenseSort)
+    ? (query.sort as ExpenseSort)
+    : 'date_desc';
+  const search = query.q?.trim();
+  const from = parseDateBound(query.from, 'from');
+  const to = parseDateBound(query.to, 'to', true);
+
+  if (from && to && from > to) {
+    throw codedError('The from date must be before the to date', 400);
+  }
+
+  const filters: Record<string, unknown> = { organizationId };
+  if (query.category) filters.category = query.category;
+  if (query.billable !== undefined) filters.billable = query.billable;
+  if (from || to) {
+    filters.expenseDate = {
+      ...(from ? { gte: from } : {}),
+      ...(to ? { lte: to } : {}),
+    };
+  }
+  if (search) {
+    // Only text columns that exist: category and receipt URL.
+    filters.OR = [
+      { category: { contains: search, mode: 'insensitive' } },
+      { receiptUrl: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  // Count first so an out-of-range `page` is clamped before paging: asking for
+  // page 99 of 3 must show the last page, not an empty table.
+  const [organization, filteredCount, categoryRows] = await Promise.all([
+    prisma.organization.findUnique({ where: { id: organizationId }, select: { settings: true } }),
+    prisma.expenseItem.count({ where: filters }),
+    prisma.expenseItem.findMany({
+      where: { organizationId },
+      distinct: ['category'],
+      select: { category: true },
+      orderBy: { category: 'asc' },
+    }),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCount / pageSize));
+  const currentPage = Math.min(Math.max(page, 1), totalPages);
+
+  const [rows, totals, billableTotals] = await Promise.all([
+    prisma.expenseItem.findMany({
+      where: filters,
+      orderBy: orderByFor(sort),
+      skip: (currentPage - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.expenseItem.aggregate({ where: filters, _sum: { amount: true } }),
+    prisma.expenseItem.aggregate({
+      where: { ...filters, billable: true },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  const settings = normalizeOrganizationSettings(organization?.settings);
+  const currency = normalizeCurrencyCode(settings.defaultCurrency) ?? DEFAULT_CURRENCY;
+
+  return {
+    rows: (rows as ExpenseRecord[]).map(serializeExpense),
+    total: filteredCount,
+    page: currentPage,
+    pageSize,
+    totalPages,
+    summary: {
+      count: filteredCount,
+      totalAmount: Number(totals?._sum?.amount ?? 0).toFixed(2),
+      billableAmount: Number(billableTotals?._sum?.amount ?? 0).toFixed(2),
+    },
+    categories: (categoryRows as Array<{ category: string }>).map(
+      (row: { category: string }) => row.category
+    ),
+    currency,
+  };
+}
+
 export async function listExpenses() {
   const { userId, organizationId } = await getAuthorizedUser();
 
@@ -98,17 +283,7 @@ export async function listExpenses() {
     orderBy: { expenseDate: 'desc' },
   });
 
-  return expenses.map((e: ExpenseRecord) => ({
-    id: e.id,
-    organizationId: e.organizationId,
-    projectId: e.projectId,
-    category: e.category,
-    amount: e.amount.toString(),
-    expenseDate: e.expenseDate,
-    receiptUrl: e.receiptUrl,
-    billable: e.billable,
-    createdAt: e.createdAt,
-  }));
+  return (expenses as ExpenseRecord[]).map(serializeExpense);
 }
 
 export async function getExpense(id: string) {
@@ -131,7 +306,9 @@ export async function getExpense(id: string) {
     organizationId: expense.organizationId,
     projectId: expense.projectId,
     category: expense.category,
-    amount: expense.amount.toString(),
+    // Postgres hands back `100` for 100.00; keep one money format for the API
+    // and the UI (storage is untouched).
+    amount: Number(expense.amount.toString()).toFixed(2),
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
@@ -177,7 +354,9 @@ export async function createExpense(input: ExpenseCreateInput) {
     after: {
       id: expense.id,
       category: expense.category,
-      amount: expense.amount.toString(),
+      // Postgres hands back `100` for 100.00; keep one money format for the API
+      // and the UI (storage is untouched).
+      amount: Number(expense.amount.toString()).toFixed(2),
       billable: expense.billable,
     },
     organizationId,
@@ -188,7 +367,9 @@ export async function createExpense(input: ExpenseCreateInput) {
     organizationId: expense.organizationId,
     projectId: expense.projectId,
     category: expense.category,
-    amount: expense.amount.toString(),
+    // Postgres hands back `100` for 100.00; keep one money format for the API
+    // and the UI (storage is untouched).
+    amount: Number(expense.amount.toString()).toFixed(2),
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
@@ -250,7 +431,9 @@ export async function updateExpense(id: string, input: ExpenseUpdateInput) {
     organizationId: expense.organizationId,
     projectId: expense.projectId,
     category: expense.category,
-    amount: expense.amount.toString(),
+    // Postgres hands back `100` for 100.00; keep one money format for the API
+    // and the UI (storage is untouched).
+    amount: Number(expense.amount.toString()).toFixed(2),
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,

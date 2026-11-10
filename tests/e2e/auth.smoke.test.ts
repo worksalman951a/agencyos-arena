@@ -13,6 +13,27 @@ const canRun = !!(process.env.DATABASE_URL && process.env.BETTER_AUTH_SECRET);
 // Port 3000 is reserved for a different local project; AgencyOS runs on 3001.
 const baseURL = process.env.APP_URL ?? process.env.BETTER_AUTH_URL ?? 'http://localhost:3001';
 
+/**
+ * Same-origin POST for the auth endpoints, waiting out the rate limiter.
+ *
+ * Better Auth rejects requests without an Origin header (CSRF protection) and
+ * rate-limits sign-up/sign-in per IP. Without both of these the duplicate
+ * registration test could pass because the *first* registration was refused,
+ * which is a false positive rather than a verification.
+ */
+async function postAuth(
+  request: import('@playwright/test').APIRequestContext,
+  path: string,
+  data: Record<string, unknown>
+) {
+  let response = await request.post(path, { headers: { Origin: baseURL }, data });
+  for (let attempt = 1; attempt <= 3 && response.status() === 429; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 3000 * attempt));
+    response = await request.post(path, { headers: { Origin: baseURL }, data });
+  }
+  return response;
+}
+
 test.describe('Auth smoke tests', () => {
   test.use({ baseURL });
 
@@ -53,50 +74,43 @@ test.describe('Auth HTTP smoke tests', () => {
 
   test('should register a user through the Better Auth HTTP endpoint', async ({ request }) => {
     const uniqueEmail = `e2e-reg-${Date.now()}@test-agencyos.invalid`;
-    const res = await request.post('/api/auth/sign-up/email', {
-      data: {
-        email: uniqueEmail,
-        password: 'e2e-test-password-123',
-        name: 'E2E Register Test',
-      },
+    const res = await postAuth(request, '/api/auth/sign-up/email', {
+      email: uniqueEmail,
+      password: 'e2e-test-password-123',
+      name: 'E2E Register Test',
     });
-    expect(res.ok()).toBeTruthy();
+    expect(res.ok(), `registration failed (${res.status()})`).toBeTruthy();
     const body = await res.json();
     expect(body.user.email).toBe(uniqueEmail);
     expect(body.user.id).toBeDefined();
   });
 
-  test('should reject duplicate registration through the Better Auth HTTP endpoint', async ({
-    request,
-  }) => {
+  test('answers a duplicate registration without creating a session', async ({ request }) => {
     const uniqueEmail = `e2e-dup-${Date.now()}@test-agencyos.invalid`;
-    // First registration
-    await request.post('/api/auth/sign-up/email', {
-      data: {
-        email: uniqueEmail,
-        password: 'e2e-test-password-123',
-        name: 'E2E Dup Test',
-      },
-    });
-    // Second registration with same email should fail
-    const res = await request.post('/api/auth/sign-up/email', {
-      data: {
-        email: uniqueEmail,
-        password: 'e2e-test-password-123',
-        name: 'E2E Dup Test',
-      },
-    });
-    expect(res.ok()).toBeFalsy();
+    const payload = { email: uniqueEmail, password: 'e2e-test-password-123', name: 'E2E Dup Test' };
+
+    // First registration must succeed, otherwise the assertions below would be
+    // about a refused request rather than about duplicate handling.
+    const first = await postAuth(request, '/api/auth/sign-up/email', payload);
+    expect(first.ok(), `first registration failed (${first.status()})`).toBeTruthy();
+
+    // The app runs Better Auth with `autoSignIn: false`, which makes an
+    // existing email answer with the same generic 200 as a new registration
+    // (account-enumeration protection). What must never happen is a second
+    // session or a second account — the DB side of that is covered by
+    // lib/__tests__/integration/auth.duplicate-signup.integration.test.ts.
+    const duplicate = await postAuth(request, '/api/auth/sign-up/email', payload);
+    expect(duplicate.status(), `duplicate sign-up answered ${duplicate.status()}`).toBe(200);
+    const body = (await duplicate.json()) as { token?: string | null };
+    expect(body.token ?? null).toBeNull();
   });
 
   test('should reject invalid login credentials through the Better Auth HTTP endpoint', async ({
     request,
   }) => {
-    const res = await request.post('/api/auth/sign-in/email', {
-      data: {
-        email: 'nonexistent@test-agencyos.invalid',
-        password: 'wrong-password',
-      },
+    const res = await postAuth(request, '/api/auth/sign-in/email', {
+      email: 'nonexistent@test-agencyos.invalid',
+      password: 'wrong-password',
     });
     expect(res.ok()).toBeFalsy();
   });

@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 
 import { getProposal, updateProposal, deleteProposal } from '@/lib/services/crm/proposal-service';
 import { proposalUpdateSchema, proposalLineItemSchema } from '@/lib/schemas/crm/proposal.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 /** Error response helper */
 function errorResponse(message: string, status: number, issues?: unknown[]) {
@@ -28,11 +29,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const proposal = await getProposal(id);
     return NextResponse.json(proposal);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -78,11 +76,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const proposal = await updateProposal(id, parsed.data, lineItems);
     return NextResponse.json(proposal);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -93,10 +88,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const result = await deleteProposal(id);
     return NextResponse.json(result);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

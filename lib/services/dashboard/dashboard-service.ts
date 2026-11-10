@@ -80,6 +80,54 @@ async function getActor(): Promise<{ userId: string; organizationId: string } | 
 }
 
 /**
+ * Invoice counts and totals per status and currency, for the reports page.
+ *
+ * `listInvoices` is paginated (20 by default), so aggregating its first page
+ * under-reported every status. This is a single grouped query scoped to the
+ * organization, and it keeps currencies separate like the dashboard does.
+ */
+export interface InvoiceStatusBucket {
+  status: string;
+  currency: string;
+  count: number;
+  totalMinor: number;
+}
+
+export async function getInvoiceStatusBreakdown(): Promise<Permissioned<InvoiceStatusBucket[]>> {
+  const actor = await getActor();
+  if (!actor) return { ok: false, reason: 'forbidden' };
+
+  const { userId, organizationId } = actor;
+  if (!(await hasPermission(userId, organizationId, FINANCIAL_PERMISSION))) {
+    return { ok: false, reason: 'forbidden' };
+  }
+
+  const rows = (await prisma.invoice.groupBy({
+    by: ['status', 'currency'],
+    where: { organizationId, deletedAt: null },
+    _count: { _all: true },
+    _sum: { total: true },
+  })) as Array<{
+    status: string;
+    currency: string;
+    _count: { _all: number };
+    _sum: { total: unknown };
+  }>;
+
+  return {
+    ok: true,
+    data: rows
+      .map((row) => ({
+        status: row.status,
+        currency: row.currency,
+        count: row._count?._all ?? 0,
+        totalMinor: parseAmountToMinorUnits(String(row._sum?.total ?? '0')),
+      }))
+      .sort((a, b) => a.status.localeCompare(b.status) || a.currency.localeCompare(b.currency)),
+  };
+}
+
+/**
  * Dashboard financial metrics for the signed-in user's organization.
  *
  * Returns `{ ok: false }` for a user without `invoice.read` so the dashboard can

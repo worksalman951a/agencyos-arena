@@ -153,7 +153,9 @@ export async function convertLead(
 
       // Check if already converted (an Opportunity already links to this Lead)
       const existingOpportunity = await tx.opportunity.findFirst({
-        where: { leadId },
+        // Organization id is part of the predicate as well as the post-check:
+        // the lead is already scoped, and this keeps the two in lock-step.
+        where: { leadId, organizationId },
       });
 
       if (existingOpportunity) {

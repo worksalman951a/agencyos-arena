@@ -17,6 +17,7 @@ import {
   deleteQuotation,
 } from '@/lib/services/crm/quotation-service';
 import { quotationUpdateSchema, quotationLineItemSchema } from '@/lib/schemas/crm/quotation.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 /** Error response helper */
 function errorResponse(message: string, status: number, issues?: unknown[]) {
@@ -32,11 +33,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const quotation = await getQuotation(id);
     return NextResponse.json(quotation);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -82,11 +80,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const quotation = await updateQuotation(id, parsed.data, lineItems);
     return NextResponse.json(quotation);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -97,10 +92,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const result = await deleteQuotation(id);
     return NextResponse.json(result);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

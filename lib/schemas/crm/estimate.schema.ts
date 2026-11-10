@@ -40,9 +40,12 @@ export const estimateUpdateSchema = estimateCreateSchema
 export type EstimateCreateInput = z.infer<typeof estimateCreateSchema>;
 export type EstimateUpdateInput = z.infer<typeof estimateUpdateSchema>;
 
+/**
+ * The invoice number is assigned by the organization's document allocator, never
+ * by the client: a caller-supplied `invoiceNumber` is stripped by this schema.
+ */
 export const estimateConvertSchema = z.object({
   invoiceTitle: z.string().min(1, 'Invoice title is required').max(200),
-  invoiceNumber: z.string().min(1, 'Invoice number is required').max(50),
   dueDate: z.string().optional().nullable(),
 });
 
