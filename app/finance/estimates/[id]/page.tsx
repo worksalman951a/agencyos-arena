@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { getEstimate } from '@/lib/services/crm/estimate-service';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
+import { DocumentBrandHeader } from '@/components/documents/document-brand-header';
 
 export default async function EstimateDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -26,6 +27,7 @@ export default async function EstimateDetailPage({ params }: { params: Promise<{
 
   return (
     <div className="space-y-6 p-6">
+      <DocumentBrandHeader />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Estimate #{estimate.number}</h1>

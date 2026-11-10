@@ -132,6 +132,80 @@ export const organizationSettingsSchema = z
   })
   .strict();
 
+/**
+ * Keys that always carry a value. Sending `null` for one of these is rejected
+ * instead of silently falling back to a default — clearing the invoice counter,
+ * for example, must never look like a sequence reset.
+ */
+export const REQUIRED_SETTING_KEYS = [
+  'defaultCurrency',
+  'dateFormat',
+  'invoiceNumberPrefix',
+  'invoiceNextNumber',
+  'invoiceTaxDefault',
+  'proposalNumberPrefix',
+  'proposalNextNumber',
+  'proposalValidDays',
+] as const;
+
+/** Patch schema: same fields, but required keys cannot be cleared with `null`. */
+export const organizationSettingsPatchSchema = organizationSettingsSchema.superRefine(
+  (value, ctx) => {
+    for (const key of REQUIRED_SETTING_KEYS) {
+      if ((value as Record<string, unknown>)[key] === null) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: 'This value cannot be cleared',
+        });
+      }
+    }
+  }
+);
+
+/**
+ * Split a validated patch into values to write and keys to delete.
+ *
+ * `null` means "clear" — JSON.stringify drops `undefined`, which is why the old
+ * write path could never empty a field. Deleting the key (rather than storing
+ * `null`) keeps the JSON column canonical: a reader never has to distinguish
+ * "absent" from "explicitly empty".
+ */
+export function settingsPatchFromParsed(parsed: OrganizationSettings): {
+  set: Record<string, string | number>;
+  clear: string[];
+} {
+  const set: Record<string, string | number> = {};
+  const clear: string[] = [];
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (value === undefined) continue;
+    if (value === null) {
+      if (!(REQUIRED_SETTING_KEYS as readonly string[]).includes(key)) clear.push(key);
+      continue;
+    }
+    if (key === 'invoiceTaxDefault' && typeof value === 'number') {
+      // Stored as a plain percentage number, rounded to 2dp to avoid binary
+      // noise from `Number('7.5')` style input.
+      set[key] = Math.round(value * 100) / 100;
+      continue;
+    }
+    set[key] = value as string | number;
+  }
+
+  return { set, clear };
+}
+
+/** Merge a patch into stored settings without mutating the input. */
+export function applySettingsPatch(
+  current: Record<string, unknown>,
+  patch: { set: Record<string, string | number>; clear: string[] }
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...current };
+  for (const key of patch.clear) delete next[key];
+  return { ...next, ...patch.set };
+}
+
 export type OrganizationSettingsInput = z.input<typeof organizationSettingsSchema>;
 export type OrganizationSettings = z.output<typeof organizationSettingsSchema>;
 

@@ -154,6 +154,19 @@ export function formatMinorUnits(minorUnits: number, fractionDigits = 2): string
 }
 
 /**
+ * Format integer minor units as a currency string (`123450` → `$1,234.50`).
+ * Kept separate from `formatCurrencyAmount` so callers never convert money to
+ * a float on the way to display.
+ */
+export function formatMinorUnitsAsCurrency(
+  minorUnits: number,
+  currency: string,
+  fractionDigits = 2
+): string {
+  return formatCurrencyAmount(formatMinorUnits(minorUnits, fractionDigits), currency);
+}
+
+/**
  * Format an amount for display in a given currency.
  *
  * Falls back to `<CODE> <amount>` when the runtime cannot format the code, so a

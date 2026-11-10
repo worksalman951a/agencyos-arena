@@ -9,6 +9,7 @@ import { getCurrentPermissions } from '@/lib/current-user';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { ExportPdfButton } from '@/components/invoices/export-pdf-button';
+import { DocumentBrandHeader } from '@/components/documents/document-brand-header';
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -18,6 +19,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   if (!result.ok) {
     return (
       <div className="space-y-6 p-6">
+        <DocumentBrandHeader />
         <h1 className="text-2xl font-bold">Invoice</h1>
         <PageStateNotice
           reason={result.reason}

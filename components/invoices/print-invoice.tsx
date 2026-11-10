@@ -50,8 +50,64 @@ interface InvoiceData {
   payments: InvoicePayment[];
 }
 
+interface BrandingData {
+  brandName?: string;
+  logoUrl?: string | null;
+  brandColor?: string | null;
+}
+
 interface PrintInvoiceProps {
   invoiceId: string;
+}
+
+/**
+ * Load a remote logo into a data URL so jsPDF can embed it.
+ *
+ * Cross-origin logos may block CORS: that is a normal, non-fatal outcome — the
+ * document is generated with the brand name instead of failing the export.
+ */
+async function loadLogo(
+  url: string
+): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  try {
+    const res = await fetch(url, { mode: 'cors', referrerPolicy: 'no-referrer' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (!/^image\/(png|jpeg|jpg|webp)$/.test(blob.type)) return null;
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('Could not read logo'));
+      reader.readAsDataURL(blob);
+    });
+
+    const { width, height } = await new Promise<{ width: number; height: number }>(
+      (resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve({ width: image.width, height: image.height });
+        image.onerror = () => reject(new Error('Could not decode logo'));
+        image.src = dataUrl;
+      }
+    );
+
+    return { dataUrl, width, height };
+  } catch {
+    return null;
+  }
+}
+
+/** `#rrggbb` → `[r, g, b]`, or null when the value is not a hex colour. */
+function hexToRgbTuple(hex: string | null | undefined): [number, number, number] | null {
+  if (!hex) return null;
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!match) return null;
+  const value = match[1];
+  return [
+    parseInt(value.slice(0, 2), 16),
+    parseInt(value.slice(2, 4), 16),
+    parseInt(value.slice(4, 6), 16),
+  ];
 }
 
 type WindowWithPrint = Window & {
@@ -66,12 +122,47 @@ export function PrintInvoice({ invoiceId }: PrintInvoiceProps) {
         if (!res.ok) throw new Error('Failed to load invoice');
         const data: InvoiceData = await res.json();
 
+        // Branding is best-effort: a failure here must never block the export.
+        const branding: BrandingData | null = await fetch('/api/v1/settings/branding')
+          .then((response) => (response.ok ? response.json() : null))
+          .catch(() => null);
+
         const doc = new jsPDF();
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
         const margin = 20;
         let y = margin;
 
+        const brandColor = hexToRgbTuple(branding?.brandColor);
+        const brandName = branding?.brandName?.trim();
+
+        // Organization brand mark: logo on the right, name on the left. Both are
+        // optional; the invoice heading never shifts below the document header.
+        if (brandName) {
+          doc.setFontSize(16);
+          doc.setFont('helvetica', 'bold');
+          if (brandColor) doc.setTextColor(...brandColor);
+          doc.text(brandName, margin, y);
+          doc.setTextColor(0, 0, 0);
+        }
+
+        if (branding?.logoUrl) {
+          const logo = await loadLogo(branding.logoUrl);
+          if (logo) {
+            const height = 16;
+            const width = Math.min((logo.width / logo.height) * height, 48);
+            doc.addImage(
+              logo.dataUrl,
+              'PNG',
+              pageWidth - margin - width,
+              margin - 8,
+              width,
+              height
+            );
+          }
+        }
+
+        y += brandName ? 10 : 0;
         doc.setFontSize(20);
         doc.setFont('helvetica', 'bold');
         doc.text('INVOICE', margin, y);

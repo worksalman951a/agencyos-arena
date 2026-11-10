@@ -19,6 +19,8 @@ import { TopNav } from '@/components/layout/top-nav';
 import { Toaster } from '@/components/ui/toaster';
 import { useTheme } from '@/components/providers/theme-provider';
 import { classNames } from '@/lib/utils';
+import { BrandingProvider } from '@/components/providers/branding-provider';
+import type { BrandContext } from '@/lib/services/settings/branding-service';
 import type { NavSection } from '@/lib/navigation';
 
 interface ShellUser {
@@ -32,17 +34,31 @@ interface AppShellProps {
   user: ShellUser;
   /** Navigation already filtered for this user's permissions. */
   sections: readonly NavSection[];
+  /** Organization branding resolved for this request (null when unauthenticated). */
+  branding?: BrandContext | null;
 }
 
-export function AppShell({ children, user, sections }: AppShellProps) {
+export function AppShell({ children, user, sections, branding }: AppShellProps) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = React.useState(false);
   const { theme, setTheme } = useTheme();
   const router = useRouter();
 
-  return (
+  const shell = (
     <div className="flex h-screen bg-canvas text-foreground">
+      {/* Brand tokens last in the document so they win over the compiled
+          stylesheet for equal specificity. Only accent/primary/ring (and their
+          foregrounds) are overridden — semantic colours are never touched. */}
+      {branding && (
+        <style
+          id="org-brand-theme"
+          // Generated from validated hex colours only (lib/branding.ts), never user HTML.
+          dangerouslySetInnerHTML={{ __html: branding.themeCss }}
+        />
+      )}
       <Sidebar
+        brandName={branding?.brandName ?? 'AgencyOS'}
+        logoUrl={branding?.logoUrl ?? null}
         sections={sections}
         isCollapsed={isSidebarCollapsed}
         setIsCollapsed={setIsSidebarCollapsed}
@@ -86,4 +102,6 @@ export function AppShell({ children, user, sections }: AppShellProps) {
       <SonnerToaster richColors closeButton position="top-right" />
     </div>
   );
+
+  return branding ? <BrandingProvider branding={branding}>{shell}</BrandingProvider> : shell;
 }
