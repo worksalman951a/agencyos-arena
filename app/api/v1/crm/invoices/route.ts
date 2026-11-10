@@ -16,6 +16,7 @@ import {
   invoiceQuerySchema,
   invoiceLineItemSchema,
 } from '@/lib/schemas/crm/invoice.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 const ALLOWED_SORT_FIELDS = ['title', 'status', 'total', 'createdAt', 'updatedAt', 'dueDate'];
 
@@ -42,11 +43,8 @@ export async function GET(request: Request) {
     const data = await listInvoices(parsed.data);
     return NextResponse.json(data);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -75,10 +73,7 @@ export async function POST(request: Request) {
     const invoice = await createInvoice(parsed.data, lineItems);
     return NextResponse.json(invoice, { status: 201 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

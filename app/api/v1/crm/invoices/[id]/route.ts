@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 
 import { getInvoice, updateInvoice, deleteInvoice } from '@/lib/services/crm/invoice-service';
 import { invoiceUpdateSchema, invoiceLineItemSchema } from '@/lib/schemas/crm/invoice.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -26,11 +27,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const invoice = await getInvoice(id);
     return NextResponse.json(invoice);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -72,11 +70,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const invoice = await updateInvoice(id, parsed.data, lineItems);
     return NextResponse.json(invoice);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -86,10 +81,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const result = await deleteInvoice(id);
     return NextResponse.json(result);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
