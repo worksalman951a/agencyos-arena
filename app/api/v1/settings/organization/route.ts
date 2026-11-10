@@ -15,8 +15,8 @@ import { NextResponse } from 'next/server';
 import {
   getOrganizationSettings,
   updateOrganizationSettings,
-  SettingsValidationError,
 } from '@/lib/services/settings/organization-service';
+import { SettingsValidationError } from '@/lib/services/settings/settings-validation-error';
 
 interface CodedError {
   statusCode?: number;

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
+import { SettingsValidationError } from '@/lib/services/settings/settings-validation-error';
 import {
   DEFAULT_ORGANIZATION_SETTINGS,
   normalizeOrganizationSettings,
@@ -34,23 +35,6 @@ export interface OrganizationResponse {
 
 function httpError(message: string, statusCode: number) {
   return Object.assign(new Error(message), { statusCode });
-}
-
-/** Validation failure carrying per-field messages for inline display. */
-export class SettingsValidationError extends Error {
-  statusCode = 400;
-  fieldErrors: Record<string, string>;
-  issues: Array<{ path: string; message: string }>;
-
-  constructor(
-    fieldErrors: Record<string, string>,
-    issues: Array<{ path: string; message: string }>
-  ) {
-    super('Validation failed');
-    this.name = 'SettingsValidationError';
-    this.fieldErrors = fieldErrors;
-    this.issues = issues;
-  }
 }
 
 /** Validate session and resolve authorized user context */
