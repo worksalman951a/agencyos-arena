@@ -14,6 +14,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { useToast } from '@/components/ui/use-toast';
+import { Combobox } from '@/components/ui/combobox';
+import { listCurrencies } from '@/lib/currencies';
+
+const CURRENCY_OPTIONS = listCurrencies().map((option) => ({
+  value: option.code,
+  label: `${option.code} — ${option.name}`,
+  description: option.symbol ? `Symbol ${option.symbol}` : undefined,
+}));
 
 interface ContactOption {
   id: string;
@@ -27,26 +35,36 @@ interface LineItem {
   taxRate: string;
 }
 
-const emptyLineItem = (): LineItem => ({
+const emptyLineItem = (taxRate = 0): LineItem => ({
   description: '',
   quantity: '1',
   unitPrice: '0',
-  taxRate: '0',
+  taxRate: String(taxRate),
 });
 
-export function NewInvoiceForm({ contacts }: { contacts: ContactOption[] }) {
+export function NewInvoiceForm({
+  contacts,
+  defaultCurrency = 'USD',
+  defaultTaxRate = 0,
+}: {
+  contacts: ContactOption[];
+  /** Organization default currency (settings) — still editable per invoice. */
+  defaultCurrency?: string;
+  /** Organization default tax rate (%) applied to new line items. */
+  defaultTaxRate?: number;
+}) {
   const router = useRouter();
   const { toast } = useToast();
   const [clientId, setClientId] = useState('');
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('draft');
-  const [currency, setCurrency] = useState('USD');
+  const [currency, setCurrency] = useState(defaultCurrency);
   const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
-  const [lineItems, setLineItems] = useState<LineItem[]>([emptyLineItem()]);
+  const [lineItems, setLineItems] = useState<LineItem[]>([emptyLineItem(defaultTaxRate)]);
   const [loading, setLoading] = useState(false);
 
-  const addLineItem = () => setLineItems([...lineItems, emptyLineItem()]);
+  const addLineItem = () => setLineItems([...lineItems, emptyLineItem(defaultTaxRate)]);
 
   const removeLineItem = (index: number) => {
     if (lineItems.length > 1) setLineItems(lineItems.filter((_, i) => i !== index));
@@ -170,17 +188,14 @@ export function NewInvoiceForm({ contacts }: { contacts: ContactOption[] }) {
           <label htmlFor="currency" className="text-sm font-medium">
             Currency
           </label>
-          <select
+          <Combobox
             id="currency"
+            options={CURRENCY_OPTIONS}
             value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
-            className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
-          >
-            <option value="USD">USD</option>
-            <option value="EUR">EUR</option>
-            <option value="GBP">GBP</option>
-            <option value="PKR">PKR</option>
-          </select>
+            onChange={setCurrency}
+            placeholder="Select a currency"
+            searchPlaceholder="Search currencies…"
+          />
         </div>
         <div className="space-y-2">
           <label htmlFor="dueDate" className="text-sm font-medium">

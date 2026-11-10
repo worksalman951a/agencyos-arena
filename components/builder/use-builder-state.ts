@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { listCurrencies } from '@/lib/currencies';
 
 /**
  * Builder state management for Proposals and Quotations.
@@ -47,7 +48,10 @@ export type BuilderCoreState = {
   error: string | null;
 };
 
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'PKR'];
+// Every ISO currency the runtime knows about (searchable in the builder), rather
+// than a four-entry hardcoded list. The default comes from the organization's
+// settings via `initialInfo.currency`.
+const CURRENCIES = listCurrencies().map((currency) => currency.code);
 
 const INITIAL_DOCUMENT_INFO: DocumentInfo = {
   title: '',

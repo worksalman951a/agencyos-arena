@@ -7,6 +7,7 @@
  */
 
 import { auth } from '@/lib/auth-server';
+import { getFinancialDefaults } from '@/lib/services/settings/organization-service';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getProposal } from '@/lib/services/crm/proposal-service';
@@ -141,6 +142,9 @@ export default async function ProposalBuilderPage() {
       }
     : null;
 
+  // Organization defaults: a new document starts in the configured currency.
+  const financialDefaults = await getFinancialDefaults();
+
   return (
     <ProposalBuilderApp
       isEdit={isEdit}
@@ -148,6 +152,7 @@ export default async function ProposalBuilderPage() {
       existingProposal={existingQuotationLike}
       initialContacts={contacts}
       initialOpportunities={opportunities}
+      defaultCurrency={financialDefaults.defaultCurrency}
     />
   );
 }

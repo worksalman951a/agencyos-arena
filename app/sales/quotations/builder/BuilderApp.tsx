@@ -77,6 +77,8 @@ interface QuotationBuilderAppProps {
   existingQuotation: QuotationData | null;
   initialContacts: ContactOption[];
   initialOpportunities: OpportunityOption[];
+  /** Organization default currency for new documents (settings). */
+  defaultCurrency?: string;
 }
 
 const API_BASE = '/api/v1/crm/quotations';
@@ -87,6 +89,7 @@ export function QuotationBuilderApp({
   existingQuotation,
   initialContacts,
   initialOpportunities,
+  defaultCurrency = 'USD',
 }: QuotationBuilderAppProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -110,12 +113,12 @@ export function QuotationBuilderApp({
       title: '',
       contactId: null,
       opportunityId: null,
-      currency: 'USD',
+      currency: defaultCurrency,
       validUntil: null,
       notes: null,
       status: 'draft',
     };
-  }, [existingQuotation]);
+  }, [existingQuotation, defaultCurrency]);
 
   const initialItems: LineItem[] = React.useMemo(() => {
     if (existingQuotation?.items) {

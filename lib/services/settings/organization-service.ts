@@ -5,6 +5,7 @@ import { requirePermission, requireOrganization, type AuthorizedUser } from '@/l
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 import {
+  DEFAULT_ORGANIZATION_SETTINGS,
   normalizeOrganizationSettings,
   organizationSettingsPatchSchema,
   settingsPatchFromParsed,
@@ -123,6 +124,48 @@ async function serializeOrganization(
     createdAt: organization.createdAt,
     updatedAt: organization.updatedAt,
   };
+}
+
+export interface FinancialDefaults {
+  defaultCurrency: string;
+  invoiceTaxDefault: number;
+  proposalValidDays: number;
+  dateFormat: string;
+}
+
+/**
+ * Defaults new documents should start with (currency, invoice tax, proposal
+ * validity). Readable by any member — it is the organization's own configuration
+ * and contains nothing sensitive. Falls back to the schema defaults when the row
+ * or session is unavailable, so a form always renders.
+ */
+export async function getFinancialDefaults(): Promise<FinancialDefaults> {
+  const fallback = normalizeOrganizationSettings(null);
+  try {
+    const { organizationId } = await getAuthorizedUser();
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { settings: true },
+    });
+    const settings = normalizeOrganizationSettings(organization?.settings);
+    return {
+      defaultCurrency: settings.defaultCurrency ?? DEFAULT_ORGANIZATION_SETTINGS.defaultCurrency,
+      invoiceTaxDefault:
+        settings.invoiceTaxDefault ?? DEFAULT_ORGANIZATION_SETTINGS.invoiceTaxDefault,
+      proposalValidDays:
+        settings.proposalValidDays ?? DEFAULT_ORGANIZATION_SETTINGS.proposalValidDays,
+      dateFormat: settings.dateFormat ?? DEFAULT_ORGANIZATION_SETTINGS.dateFormat,
+    };
+  } catch {
+    return {
+      defaultCurrency: fallback.defaultCurrency ?? DEFAULT_ORGANIZATION_SETTINGS.defaultCurrency,
+      invoiceTaxDefault:
+        fallback.invoiceTaxDefault ?? DEFAULT_ORGANIZATION_SETTINGS.invoiceTaxDefault,
+      proposalValidDays:
+        fallback.proposalValidDays ?? DEFAULT_ORGANIZATION_SETTINGS.proposalValidDays,
+      dateFormat: fallback.dateFormat ?? DEFAULT_ORGANIZATION_SETTINGS.dateFormat,
+    };
+  }
 }
 
 /** Get organization settings for the current user's organization */

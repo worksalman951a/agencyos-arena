@@ -8,10 +8,16 @@
  */
 
 import { listContacts } from '@/lib/services/crm/contact-service';
+import { getFinancialDefaults } from '@/lib/services/settings/organization-service';
 import { loadPageData } from '@/lib/page-data';
 import { NewInvoiceForm } from './NewInvoiceForm';
 
 export default async function NewInvoicePage() {
+  // Organization financial defaults: the new invoice starts in the configured
+  // currency and with the configured default tax rate. The currency stays
+  // editable per document.
+  const defaults = await getFinancialDefaults();
+
   const contactsResult = await loadPageData(() =>
     listContacts({
       page: 1,
@@ -46,7 +52,11 @@ export default async function NewInvoicePage() {
         </div>
       </div>
 
-      <NewInvoiceForm contacts={contacts} />
+      <NewInvoiceForm
+        contacts={contacts}
+        defaultCurrency={defaults.defaultCurrency}
+        defaultTaxRate={defaults.invoiceTaxDefault}
+      />
     </div>
   );
 }
