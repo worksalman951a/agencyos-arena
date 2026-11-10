@@ -149,6 +149,9 @@ function ExpensesListContent() {
     if (filters.from) next.set('from', filters.from);
     if (filters.to) next.set('to', filters.to);
     if (filters.sort) next.set('sort', filters.sort);
+    // Keep the page size: without it "Next" silently resets to 20 rows and the
+    // page count the user is looking at changes underneath them.
+    if (filters.pageSize && filters.pageSize !== '20') next.set('pageSize', filters.pageSize);
     if (page > 1) next.set('page', String(page));
     const qs = next.toString();
     return qs ? `/finance/expenses?${qs}` : '/finance/expenses';
