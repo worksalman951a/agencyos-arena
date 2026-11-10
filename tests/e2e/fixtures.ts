@@ -37,6 +37,27 @@ function uniqueSuffix(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * POST with backoff while the auth rate limiter is throttling us.
+ *
+ * Better Auth rate-limits sign-up/sign-in per IP, and the whole suite runs from
+ * one address. Rather than weaken that protection for tests, the fixture waits
+ * for the window to pass — a deliberate 429 is not a product failure.
+ */
+async function postWithRateLimitRetry(
+  api: APIRequestContext,
+  path: string,
+  options: Parameters<APIRequestContext['post']>[1],
+  attempts = 4
+): Promise<Awaited<ReturnType<APIRequestContext['post']>>> {
+  let response = await api.post(path, options);
+  for (let attempt = 1; attempt < attempts && response.status() === 429; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 3000 * attempt));
+    response = await api.post(path, options);
+  }
+  return response;
+}
+
 function sessionCookieFrom(headers: Array<{ name: string; value: string }>): string | null {
   for (const header of headers) {
     if (header.name.toLowerCase() !== 'set-cookie') continue;
@@ -56,20 +77,20 @@ export async function createAccount(api: APIRequestContext, label: string): Prom
   const email = `e2e-${label}-${uniqueSuffix()}@e2e.agencyos.invalid`;
   const organizationName = `E2E ${label} ${uniqueSuffix()}`;
 
-  const signUp = await api.post('/api/auth/sign-up/email', {
+  const signUp = await postWithRateLimitRetry(api, '/api/auth/sign-up/email', {
     data: { email, password: E2E_PASSWORD, name: `E2E ${label}` },
   });
-  expect(signUp.status(), `sign-up failed: ${await signUp.text()}`).toBe(200);
+  expect(signUp.status(), `sign-up failed (${signUp.status()}): ${await signUp.text()}`).toBe(200);
 
-  const signIn = await api.post('/api/auth/sign-in/email', {
+  const signIn = await postWithRateLimitRetry(api, '/api/auth/sign-in/email', {
     data: { email, password: E2E_PASSWORD },
   });
-  expect(signIn.status(), `sign-in failed: ${await signIn.text()}`).toBe(200);
+  expect(signIn.status(), `sign-in failed (${signIn.status()}): ${await signIn.text()}`).toBe(200);
 
   const sessionToken = sessionCookieFrom(await signIn.headersArray());
   expect(sessionToken, 'sign-in did not return a session cookie').toBeTruthy();
 
-  const bootstrap = await api.post('/api/auth/bootstrap-organization', {
+  const bootstrap = await postWithRateLimitRetry(api, '/api/auth/bootstrap-organization', {
     headers: { Cookie: `better-auth.session_token=${sessionToken}` },
     data: { organizationName },
   });
@@ -102,10 +123,22 @@ export function requireDatabase(): void {
 
 export interface E2EFixtures {
   appUrl: string;
-  api: APIRequestContext;
-  account: TestAccount;
   /** Page already authenticated as `account`. */
   authedPage: Page;
+}
+
+/**
+ * Worker-scoped fixtures.
+ *
+ * One account is created per worker rather than per test: Better Auth rate-limits
+ * the sign-up endpoint, and a release candidate should not need a rate-limit
+ * exemption just to run its tests. Tests stay independent by creating their own
+ * records inside the shared workspace, and the isolation test creates a second
+ * account on purpose.
+ */
+export interface E2EWorkerFixtures {
+  api: APIRequestContext;
+  account: TestAccount;
 }
 
 /**
@@ -114,18 +147,24 @@ export interface E2EFixtures {
  * `account` is created per test (unique email + unique organization), so tests
  * stay independent and a failure never leaves another test with bad data.
  */
-export const test = base.extend<E2EFixtures>({
+export const test = base.extend<E2EFixtures, E2EWorkerFixtures>({
   appUrl: async ({}, use) => {
     await use(APP_URL);
   },
-  api: async ({}, use) => {
-    const context = await playwrightRequest.newContext({ baseURL: APP_URL });
-    await use(context);
-    await context.dispose();
-  },
-  account: async ({ api }, use) => {
-    await use(await createAccount(api, 'account'));
-  },
+  api: [
+    async ({}, use) => {
+      const context = await playwrightRequest.newContext({ baseURL: APP_URL });
+      await use(context);
+      await context.dispose();
+    },
+    { scope: 'worker' },
+  ],
+  account: [
+    async ({ api }, use) => {
+      await use(await createAccount(api, 'account'));
+    },
+    { scope: 'worker' },
+  ],
   authedPage: async ({ page, account, appUrl }, use) => {
     await signInBrowser(page.context(), account, appUrl);
     await use(page);

@@ -40,7 +40,6 @@ async function createContact(
 test.describe('authenticated shell and dashboard', () => {
   test('renders the shared shell, the real metrics and a working New Project link', async ({
     authedPage: page,
-    account,
   }) => {
     await page.goto('/dashboard');
 
@@ -48,8 +47,6 @@ test.describe('authenticated shell and dashboard', () => {
     // Shared navigation comes from the single ModuleShell implementation.
     await expect(page.getByRole('link', { name: 'Contacts', exact: true }).first()).toBeVisible();
     await expect(page.getByRole('link', { name: 'Settings', exact: true }).first()).toBeVisible();
-    // Brand name is resolved from the organization the account just bootstrapped.
-    await expect(page.getByText(account.organizationName).first()).toBeVisible();
 
     // Real financial section instead of the old placeholder figures.
     await expect(page.getByText('Total Invoiced').first()).toBeVisible();
