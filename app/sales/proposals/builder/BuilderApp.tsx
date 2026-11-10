@@ -13,7 +13,7 @@ import { DocumentPreview } from '@/components/builder/document-preview';
 import { BuilderLayout } from '@/components/builder/builder-layout';
 import { useBuilderState, type DocumentInfo } from '@/components/builder/use-builder-state';
 import { useUnsavedChanges } from '@/components/builder/use-unsaved-changes';
-import { Toaster, useToast } from '@/components/ui/toast';
+import { useToast } from '@/components/ui/toast';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -308,8 +308,6 @@ export function ProposalBuilderApp({
 
   return (
     <div className="space-y-6 p-6">
-      <Toaster />
-
       <AlertDialog open={showDiscardDialog} onOpenChange={setShowDiscardDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>

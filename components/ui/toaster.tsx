@@ -16,9 +16,15 @@ function Toaster() {
   return (
     <ToastProvider>
       <ToastViewport>
-        {toasts.map(function ({ id, title, description, action, ...props }) {
+        {toasts.map(function ({ id, title, description, action, variant, ...props }) {
           return (
-            <Toast key={id} {...props}>
+            <Toast
+              key={id}
+              className={
+                variant === 'destructive' ? 'border-destructive/50 bg-destructive/10' : undefined
+              }
+              {...props}
+            >
               {title && <ToastTitle>{title}</ToastTitle>}
               {description && <ToastDescription>{description}</ToastDescription>}
               {action}
