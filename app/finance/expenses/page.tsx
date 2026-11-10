@@ -16,6 +16,13 @@ import { loadPageData } from '@/lib/page-data';
 import { EXPENSE_SORT_OPTIONS, expenseListQuerySchema } from '@/lib/schemas/crm/expense.schema';
 import { searchExpenses, type ExpenseSort } from '@/lib/services/crm/expense-service';
 
+/**
+ * The list is per-request data: filters, sorting and pagination live in the URL
+ * and the rows are organization-scoped, so it must never be served from a route
+ * cache (a cached shell would show the previous filter's rows).
+ */
+export const dynamic = 'force-dynamic';
+
 const SORT_LABELS: Record<ExpenseSort, string> = {
   date_desc: 'Newest first',
   date_asc: 'Oldest first',
