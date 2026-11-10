@@ -22,6 +22,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
+import { NAV_SECTIONS } from '@/lib/navigation';
+
 const ROOT = process.cwd();
 
 function readRel(p: string): string {
@@ -64,35 +66,50 @@ describe('Sales route integration (redirects to Phase 2.2 builder)', () => {
   });
 });
 
-describe('Sales layout uses unified DashboardClientLayout', () => {
-  it('SalesLayout imports DashboardClientLayout (not standalone header)', () => {
+describe('Sales layout uses the shared application shell', () => {
+  it('SalesLayout renders the one shared ModuleShell (not a standalone header)', () => {
     const src = readRel('app/sales/layout.tsx');
-    expect(src).toContain('@/app/dashboard/dashboard-client-layout');
-    expect(src).toContain('DashboardClientLayout');
+    expect(src).toContain('@/components/server/module-shell');
+    expect(src).toContain('<ModuleShell>');
     expect(src).not.toContain('AgencyOS Sales');
+    // The shell must not be re-implemented per module.
+    expect(src).not.toContain('@/components/layout/sidebar');
+    expect(src).not.toContain('DashboardClientLayout');
   });
 
-  it('SalesLayout preserves auth validation (redirect to /login)', () => {
-    const src = readRel('app/sales/layout.tsx');
-    expect(src).toContain("redirect('/login')");
-    expect(src).toContain('dynamic = ');
+  it('SalesLayout preserves auth validation (session check lives in the shell)', () => {
+    const layout = readRel('app/sales/layout.tsx');
+    expect(layout).toContain('dynamic = ');
+
+    const shell = readRel('components/server/module-shell.tsx');
+    expect(shell).toContain('getSessionUser');
+    expect(shell).toContain("redirect('/login')");
   });
 });
 
 describe('Sidebar navigation includes Proposals and Quotations', () => {
+  const navItems = NAV_SECTIONS.flatMap((section) => section.items);
+
   it('Sidebar has Proposals nav item pointing to /sales/proposals', () => {
-    const src = readRel('components/layout/sidebar.tsx');
-    expect(src).toContain("{ name: 'Proposals', href: '/sales/proposals'");
+    expect(navItems).toContainEqual({
+      name: 'Proposals',
+      href: '/sales/proposals',
+      icon: 'proposals',
+      permission: 'proposal.read',
+    });
   });
 
   it('Sidebar has Quotations nav item pointing to /sales/quotations', () => {
-    const src = readRel('components/layout/sidebar.tsx');
-    expect(src).toContain("{ name: 'Quotations', href: '/sales/quotations'");
-    expect(src).toContain('Receipt');
+    expect(navItems).toContainEqual({
+      name: 'Quotations',
+      href: '/sales/quotations',
+      icon: 'quotations',
+      permission: 'quotation.read',
+    });
   });
 
   it('All CRM and Sales modules are accessible from sidebar', () => {
-    const src = readRel('components/layout/sidebar.tsx');
+    const hrefs = navItems.map((item) => item.href);
     const expected = [
       '/dashboard',
       '/crm/contacts',
@@ -104,7 +121,7 @@ describe('Sidebar navigation includes Proposals and Quotations', () => {
       '/sales/quotations',
     ];
     for (const href of expected) {
-      expect(src).toContain(`href: '${href}'`);
+      expect(hrefs).toContain(href);
     }
   });
 });
@@ -322,7 +339,10 @@ describe('Future module Coming Soon routes', () => {
   it('Invoices new route page exists', () => {
     const src = readRel('app/finance/invoices/new/page.tsx');
     expect(src).toContain('New Invoice');
-    expect(src).toContain('/api/v1/crm/invoices');
+    // The POST is issued by the Client Component the page renders.
+    expect(src).toContain('NewInvoiceForm');
+    const form = readRel('app/finance/invoices/new/NewInvoiceForm.tsx');
+    expect(form).toContain('/api/v1/crm/invoices');
   });
 
   it('Invoices detail route page exists', () => {
@@ -341,7 +361,9 @@ describe('Future module Coming Soon routes', () => {
   it('Invoices edit route page exists', () => {
     const src = readRel('app/finance/invoices/[id]/edit/page.tsx');
     expect(src).toContain('Edit Invoice');
-    expect(src).toContain('/api/v1/crm/invoices');
+    expect(src).toContain('EditInvoiceForm');
+    const form = readRel('app/finance/invoices/[id]/edit/EditInvoiceForm.tsx');
+    expect(form).toContain('/api/v1/crm/invoices/${invoice.id}');
   });
 });
 
@@ -366,11 +388,15 @@ it('Projects detail route page exists', () => {
 
 it('Automation Coming Soon route page exists', () => {
   const src = readRel('app/automation/workflows/page.tsx');
-  expect(src).toContain('DashboardClientLayout');
+  // The page renders only its own content: the shell comes from the module
+  // layout. Wrapping it in a layout here produced a second, nested shell.
+  expect(src).not.toContain('DashboardClientLayout');
   expect(src).toContain('ComingSoon');
   expect(src).toContain("redirect('/login')");
   expect(src).toContain('title="Automation"');
   expect(src).toContain('Roadmap: Future Phase');
+
+  expect(readRel('app/automation/layout.tsx')).toContain('<ModuleShell>');
 });
 
 it('Settings page is a real functional page (not Coming Soon)', () => {
@@ -388,7 +414,8 @@ it('Future-only module routes use dynamic = force-dynamic', () => {
 });
 
 it('Sidebar navigation remains intact with all modules listed', () => {
-  const src = readRel('components/layout/sidebar.tsx');
+  // The menu lives in lib/navigation.ts so every module renders the same one.
+  const hrefs = NAV_SECTIONS.flatMap((section) => section.items.map((item) => item.href));
   const expected = [
     '/dashboard',
     '/crm/contacts',
@@ -400,11 +427,14 @@ it('Sidebar navigation remains intact with all modules listed', () => {
     '/sales/quotations',
     '/finance/invoices',
     '/projects',
-    '/automation/workflows',
+    '/projects/time-entries',
+    '/documents/contracts',
+    '/automation/rules',
+    '/admin/users',
     '/settings',
   ];
   for (const href of expected) {
-    expect(src).toContain(`href: '${href}'`);
+    expect(hrefs).toContain(href);
   }
 });
 
