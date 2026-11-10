@@ -291,15 +291,22 @@ export async function getExpense(id: string) {
 
   await requirePermission(userId, organizationId, 'expense.read');
 
-  const expense = await prisma.expenseItem.findFirst({
-    where: { id, organizationId },
-  });
+  const [expense, organization] = await Promise.all([
+    prisma.expenseItem.findFirst({
+      where: { id, organizationId },
+    }),
+    prisma.organization.findUnique({ where: { id: organizationId }, select: { settings: true } }),
+  ]);
 
   if (!expense) {
     const error = new Error('Not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;
   }
+
+  // Same workspace currency the list uses; `ExpenseItem` has no currency column.
+  const settings = normalizeOrganizationSettings(organization?.settings);
+  const currency = normalizeCurrencyCode(settings.defaultCurrency) ?? DEFAULT_CURRENCY;
 
   return {
     id: expense.id,
@@ -313,6 +320,7 @@ export async function getExpense(id: string) {
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
     createdAt: expense.createdAt,
+    currency,
   };
 }
 

@@ -1,17 +1,41 @@
 'use server';
 
+/**
+ * Automation workflow rules: CRUD, validation and execution history.
+ *
+ * Defects this replaces:
+ * - `createWorkflowRule` accepted any JSON (including actions nothing could
+ *   execute) so rules looked saved but could never run;
+ * - `listWorkflowExecutions` built a `where` filter and then never used it, so
+ *   `GET /workflows/{id}/executions` returned *every* rule's executions;
+ * - a rule could be deleted while its executions remained, leaving orphaned
+ *   history;
+ * - nothing recorded which trigger/action combinations were unsupported.
+ *
+ * Rule execution lives in `run-workflow-service.ts`; this module is the
+ * read/write surface plus the shared organization guard.
+ */
+
 import { prisma } from '@/lib/db';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 
+import {
+  workflowRuleCreateSchema,
+  workflowRuleUpdateSchema,
+  type WorkflowTrigger,
+  type WorkflowConditions,
+  type WorkflowActions,
+} from '@/lib/automation/rules';
+
 export interface WorkflowRuleResponse {
   id: string;
   organizationId: string;
   name: string;
-  trigger: string;
-  conditions: Record<string, unknown>;
-  actions: Record<string, unknown>;
+  trigger: WorkflowTrigger;
+  conditions: WorkflowConditions;
+  actions: WorkflowActions;
   enabled: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -25,7 +49,16 @@ export interface WorkflowExecutionResponse {
   recordId: string;
   status: string;
   resultLog: Record<string, unknown> | null;
+  attempts: number;
+  lastAttemptAt: Date | null;
   createdAt: Date;
+}
+
+function codedError(message: string, statusCode: number, issues?: unknown[]) {
+  const error = new Error(message) as Error & { statusCode: number; issues?: unknown };
+  error.statusCode = statusCode;
+  if (issues) error.issues = issues;
+  return error;
 }
 
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
@@ -35,9 +68,7 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
   });
 
   if (!result?.session || !result.user) {
-    const error = new Error('Unauthenticated') as Error & { statusCode?: number };
-    error.statusCode = 401;
-    throw error;
+    throw codedError('Unauthenticated', 401);
   }
 
   const user = result.user as { role?: string; organizationId?: string };
@@ -86,6 +117,60 @@ async function createAuditLog({
   });
 }
 
+interface WorkflowRuleRecord {
+  id: string;
+  organizationId: string;
+  name: string;
+  trigger: string;
+  conditions: unknown;
+  actions: unknown;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+function serializeRule(rule: WorkflowRuleRecord): WorkflowRuleResponse {
+  return {
+    id: rule.id,
+    organizationId: rule.organizationId,
+    name: rule.name,
+    trigger: rule.trigger as WorkflowTrigger,
+    conditions: (rule.conditions ?? {}) as WorkflowConditions,
+    actions: (rule.actions ?? { list: [] }) as WorkflowActions,
+    enabled: rule.enabled,
+    createdAt: rule.createdAt,
+    updatedAt: rule.updatedAt,
+  };
+}
+
+interface WorkflowExecutionRecord {
+  id: string;
+  organizationId: string;
+  ruleId: string;
+  recordType: string;
+  recordId: string;
+  status: string;
+  resultLog: unknown;
+  attempts: number;
+  lastAttemptAt: Date | null;
+  createdAt: Date;
+}
+
+function serializeExecution(execution: WorkflowExecutionRecord): WorkflowExecutionResponse {
+  return {
+    id: execution.id,
+    organizationId: execution.organizationId,
+    ruleId: execution.ruleId,
+    recordType: execution.recordType,
+    recordId: execution.recordId,
+    status: execution.status,
+    resultLog: (execution.resultLog ?? null) as Record<string, unknown> | null,
+    attempts: execution.attempts,
+    lastAttemptAt: execution.lastAttemptAt,
+    createdAt: execution.createdAt,
+  };
+}
+
 export async function listWorkflowRules() {
   const { userId, organizationId } = await getAuthorizedUser();
 
@@ -96,29 +181,7 @@ export async function listWorkflowRules() {
     orderBy: { createdAt: 'desc' },
   });
 
-  interface WorkflowRuleRecord {
-    id: string;
-    organizationId: string;
-    name: string;
-    trigger: string;
-    conditions: Record<string, unknown>;
-    actions: Record<string, unknown>;
-    enabled: boolean;
-    createdAt: Date;
-    updatedAt: Date;
-  }
-
-  return rules.map((r: WorkflowRuleRecord) => ({
-    id: r.id,
-    organizationId: r.organizationId,
-    name: r.name,
-    trigger: r.trigger,
-    conditions: r.conditions,
-    actions: r.actions,
-    enabled: r.enabled,
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-  }));
+  return (rules as WorkflowRuleRecord[]).map(serializeRule);
 }
 
 export async function getWorkflowRule(id: string) {
@@ -126,48 +189,53 @@ export async function getWorkflowRule(id: string) {
 
   await requirePermission(userId, organizationId, 'workflow.read');
 
-  const rule = await prisma.workflowRule.findFirst({
-    where: { id, organizationId },
-  });
+  const rule = await prisma.workflowRule.findFirst({ where: { id, organizationId } });
+  if (!rule) throw codedError('Not found', 404);
 
-  if (!rule) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
-  }
-
-  return {
-    id: rule.id,
-    organizationId: rule.organizationId,
-    name: rule.name,
-    trigger: rule.trigger,
-    conditions: rule.conditions,
-    actions: rule.actions,
-    enabled: rule.enabled,
-    createdAt: rule.createdAt,
-    updatedAt: rule.updatedAt,
-  };
+  return serializeRule(rule as WorkflowRuleRecord);
 }
 
-export async function createWorkflowRule(input: {
-  name: string;
-  trigger: string;
-  conditions: Record<string, unknown>;
-  actions: Record<string, unknown>;
-  enabled?: boolean;
-}) {
+export async function createWorkflowRule(input: unknown) {
+  const parsed = workflowRuleCreateSchema.safeParse(input);
+  if (!parsed.success) {
+    throw codedError('Invalid request body', 400, parsed.error.issues);
+  }
+
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'workflow.create');
 
+  // Duplicate rule names inside one organization make the execution log
+  // impossible to read; reject them rather than silently allow.
+  const duplicate = await prisma.workflowRule.findFirst({
+    where: { organizationId, name: parsed.data.name },
+    select: { id: true },
+  });
+  if (duplicate) throw codedError('A workflow rule with this name already exists', 400);
+
+  const roleTargets = parsed.data.actions.list
+    .filter((action) => action.type === 'notify_role')
+    .map((action) => (action as { roleName: string }).roleName);
+  if (roleTargets.length > 0) {
+    const roles = await prisma.role.findMany({
+      where: { organizationId, name: { in: roleTargets } },
+      select: { name: true },
+    });
+    const known = new Set(roles.map((role: { name: string }) => role.name));
+    const missing = roleTargets.filter((name) => !known.has(name));
+    if (missing.length > 0) {
+      throw codedError(`Unknown role in actions: ${missing.join(', ')}`, 400);
+    }
+  }
+
   const rule = await prisma.workflowRule.create({
     data: {
       organizationId,
-      name: input.name,
-      trigger: input.trigger,
-      conditions: input.conditions,
-      actions: input.actions,
-      enabled: input.enabled ?? true,
+      name: parsed.data.name,
+      trigger: parsed.data.trigger,
+      conditions: parsed.data.conditions,
+      actions: parsed.data.actions,
+      enabled: parsed.data.enabled ?? true,
     },
   });
 
@@ -177,60 +245,42 @@ export async function createWorkflowRule(input: {
     action: 'workflow.create',
     entityType: 'WorkflowRule',
     entityId: rule.id,
-    after: {
-      id: rule.id,
-      name: rule.name,
-      trigger: rule.trigger,
-      enabled: rule.enabled,
-    },
+    after: { id: rule.id, name: rule.name, trigger: rule.trigger, enabled: rule.enabled },
     organizationId,
   });
 
-  return {
-    id: rule.id,
-    organizationId: rule.organizationId,
-    name: rule.name,
-    trigger: rule.trigger,
-    conditions: rule.conditions,
-    actions: rule.actions,
-    enabled: rule.enabled,
-    createdAt: rule.createdAt,
-    updatedAt: rule.updatedAt,
-  };
+  return serializeRule(rule as WorkflowRuleRecord);
 }
 
-export async function updateWorkflowRule(
-  id: string,
-  input: {
-    name?: string;
-    trigger?: string;
-    conditions?: Record<string, unknown>;
-    actions?: Record<string, unknown>;
-    enabled?: boolean;
+export async function updateWorkflowRule(id: string, input: unknown) {
+  const parsed = workflowRuleUpdateSchema.safeParse(input);
+  if (!parsed.success) {
+    throw codedError('Invalid request body', 400, parsed.error.issues);
   }
-) {
+
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'workflow.update');
 
-  const existing = await prisma.workflowRule.findFirst({
-    where: { id, organizationId },
-  });
+  const existing = await prisma.workflowRule.findFirst({ where: { id, organizationId } });
+  if (!existing) throw codedError('Not found', 404);
 
-  if (!existing) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+  if (parsed.data.name && parsed.data.name !== existing.name) {
+    const duplicate = await prisma.workflowRule.findFirst({
+      where: { organizationId, name: parsed.data.name, NOT: { id } },
+      select: { id: true },
+    });
+    if (duplicate) throw codedError('A workflow rule with this name already exists', 400);
   }
 
   const rule = await prisma.workflowRule.update({
     where: { id },
     data: {
-      name: input.name ?? existing.name,
-      trigger: input.trigger ?? existing.trigger,
-      conditions: input.conditions ?? existing.conditions,
-      actions: input.actions ?? existing.actions,
-      enabled: input.enabled ?? existing.enabled,
+      ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+      ...(parsed.data.trigger !== undefined ? { trigger: parsed.data.trigger } : {}),
+      ...(parsed.data.conditions !== undefined ? { conditions: parsed.data.conditions } : {}),
+      ...(parsed.data.actions !== undefined ? { actions: parsed.data.actions } : {}),
+      ...(parsed.data.enabled !== undefined ? { enabled: parsed.data.enabled } : {}),
     },
   });
 
@@ -245,17 +295,12 @@ export async function updateWorkflowRule(
     organizationId,
   });
 
-  return {
-    id: rule.id,
-    organizationId: rule.organizationId,
-    name: rule.name,
-    trigger: rule.trigger,
-    conditions: rule.conditions,
-    actions: rule.actions,
-    enabled: rule.enabled,
-    createdAt: rule.createdAt,
-    updatedAt: rule.updatedAt,
-  };
+  return serializeRule(rule as WorkflowRuleRecord);
+}
+
+/** Activate/deactivate in one call — the toggle the rules list uses. */
+export async function setWorkflowRuleEnabled(id: string, enabled: boolean) {
+  return updateWorkflowRule(id, { enabled });
 }
 
 export async function deleteWorkflowRule(id: string) {
@@ -263,19 +308,15 @@ export async function deleteWorkflowRule(id: string) {
 
   await requirePermission(userId, organizationId, 'workflow.delete');
 
-  const existing = await prisma.workflowRule.findFirst({
-    where: { id, organizationId },
-  });
+  const existing = await prisma.workflowRule.findFirst({ where: { id, organizationId } });
+  if (!existing) throw codedError('Not found', 404);
 
-  if (!existing) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
-  }
-
-  await prisma.workflowRule.delete({
-    where: { id },
-  });
+  // Executions are the rule's history; they go with it instead of being
+  // orphaned (the FK is ON DELETE CASCADE so this is explicit, not implicit).
+  await prisma.$transaction([
+    prisma.workflowExecution.deleteMany({ where: { ruleId: id, organizationId } }),
+    prisma.workflowRule.delete({ where: { id } }),
+  ]);
 
   await createAuditLog({
     actorId: userId,
@@ -291,73 +332,30 @@ export async function deleteWorkflowRule(id: string) {
   return { id };
 }
 
+/**
+ * Execution history, newest first.
+ *
+ * When `ruleId` is given the rule must belong to the actor's organization;
+ * otherwise every execution in the organization is returned.
+ */
 export async function listWorkflowExecutions(ruleId?: string) {
   const { userId, organizationId } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'workflow.read');
 
-  const where: Record<string, unknown> = { organizationId };
-  if (ruleId) where.ruleId = ruleId;
-
-  const executions = await prisma.workflowExecution.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: 50,
-  });
-
-  interface WorkflowExecutionRecord {
-    id: string;
-    organizationId: string;
-    ruleId: string;
-    recordType: string;
-    recordId: string;
-    status: string;
-    resultLog: Record<string, unknown> | null;
-    createdAt: Date;
+  if (ruleId) {
+    const rule = await prisma.workflowRule.findFirst({
+      where: { id: ruleId, organizationId },
+      select: { id: true },
+    });
+    if (!rule) throw codedError('Not found', 404);
   }
 
-  return executions.map((e: WorkflowExecutionRecord) => ({
-    id: e.id,
-    organizationId: e.organizationId,
-    ruleId: e.ruleId,
-    recordType: e.recordType,
-    recordId: e.recordId,
-    status: e.status,
-    resultLog: e.resultLog,
-    createdAt: e.createdAt,
-  }));
-}
-
-export async function createWorkflowExecution(input: {
-  ruleId: string;
-  recordType: string;
-  recordId: string;
-  status?: string;
-  resultLog?: Record<string, unknown>;
-}) {
-  const { userId, organizationId } = await getAuthorizedUser();
-
-  await requirePermission(userId, organizationId, 'workflow.update');
-
-  const execution = await prisma.workflowExecution.create({
-    data: {
-      organizationId,
-      ruleId: input.ruleId,
-      recordType: input.recordType,
-      recordId: input.recordId,
-      status: input.status ?? 'pending',
-      resultLog: input.resultLog ?? null,
-    },
+  const executions = await prisma.workflowExecution.findMany({
+    where: { organizationId, ...(ruleId ? { ruleId } : {}) },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
   });
 
-  return {
-    id: execution.id,
-    organizationId: execution.organizationId,
-    ruleId: execution.ruleId,
-    recordType: execution.recordType,
-    recordId: execution.recordId,
-    status: execution.status,
-    resultLog: execution.resultLog,
-    createdAt: execution.createdAt,
-  };
+  return (executions as WorkflowExecutionRecord[]).map(serializeExecution);
 }
