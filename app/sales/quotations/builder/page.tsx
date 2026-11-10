@@ -7,6 +7,7 @@
  */
 
 import { auth } from '@/lib/auth-server';
+import { getFinancialDefaults } from '@/lib/services/settings/organization-service';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getQuotation } from '@/lib/services/crm/quotation-service';
@@ -143,6 +144,9 @@ export default async function QuotationBuilderPage() {
       }
     : null;
 
+  // Organization defaults: a new document starts in the configured currency.
+  const financialDefaults = await getFinancialDefaults();
+
   return (
     <QuotationBuilderApp
       isEdit={isEdit}
@@ -150,6 +154,7 @@ export default async function QuotationBuilderPage() {
       existingQuotation={existingQuotationLike}
       initialContacts={contacts}
       initialOpportunities={opportunities}
+      defaultCurrency={financialDefaults.defaultCurrency}
     />
   );
 }

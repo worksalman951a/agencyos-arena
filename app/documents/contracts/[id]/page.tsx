@@ -8,6 +8,7 @@ import { getContract } from '@/lib/services/documents/contract-service';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { ContractActions } from './ContractActions';
+import { DocumentBrandHeader } from '@/components/documents/document-brand-header';
 
 export default async function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,6 +30,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
 
   return (
     <div className="space-y-6 p-6">
+      <DocumentBrandHeader />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Contract</h1>

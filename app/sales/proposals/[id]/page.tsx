@@ -8,6 +8,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getProposal } from '@/lib/services/crm/proposal-service';
+import { DocumentBrandHeader } from '@/components/documents/document-brand-header';
 
 export default async function ProposalDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
@@ -26,6 +27,7 @@ export default async function ProposalDetailPage({ params }: { params: Promise<{
 
   return (
     <div className="space-y-6 p-6">
+      <DocumentBrandHeader />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">{proposal.title}</h1>

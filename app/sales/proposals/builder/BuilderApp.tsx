@@ -77,6 +77,8 @@ interface ProposalBuilderAppProps {
   existingProposal: ProposalData | null;
   initialContacts: ContactOption[];
   initialOpportunities: OpportunityOption[];
+  /** Organization default currency for new documents (settings). */
+  defaultCurrency?: string;
 }
 
 const API_BASE = '/api/v1/crm/proposals';
@@ -87,6 +89,7 @@ export function ProposalBuilderApp({
   existingProposal,
   initialContacts,
   initialOpportunities,
+  defaultCurrency = 'USD',
 }: ProposalBuilderAppProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -110,12 +113,12 @@ export function ProposalBuilderApp({
       title: '',
       contactId: null,
       opportunityId: null,
-      currency: 'USD',
+      currency: defaultCurrency,
       validUntil: null,
       notes: null,
       status: 'draft',
     };
-  }, [existingProposal]);
+  }, [existingProposal, defaultCurrency]);
 
   const initialItems: LineItem[] = React.useMemo(() => {
     if (existingProposal?.items) {

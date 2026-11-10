@@ -20,6 +20,7 @@ vi.mock('@/lib/db', () => ({
       count: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     contact: {
       findFirst: vi.fn(),
@@ -53,6 +54,13 @@ vi.mock('next/headers', () => ({
   cookies: vi.fn(),
 }));
 
+// Document numbers are allocated inside the creation transaction; the allocator
+// itself is covered by lib/__tests__/settings/document-numbering.test.ts and the
+// integration suite.
+vi.mock('@/lib/services/settings/document-numbering', () => ({
+  allocateDocumentNumber: vi.fn(),
+}));
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '@/lib/db';
 import { requirePermission, requireOrganization } from '@/lib/permissions';
@@ -67,6 +75,7 @@ import {
   deleteInvoice,
 } from '@/lib/services/crm/invoice-service';
 import { invoiceLineItemSchema } from '@/lib/schemas/crm/invoice.schema';
+import { allocateDocumentNumber } from '@/lib/services/settings/document-numbering';
 
 const mockRequirePermission = requirePermission as unknown as ReturnType<typeof vi.fn>;
 const mockRequireOrganization = requireOrganization as unknown as ReturnType<typeof vi.fn>;
@@ -80,6 +89,10 @@ const mockInvoiceUpdate = prisma.invoice.update as unknown as ReturnType<typeof 
 const mockContactFindFirst = prisma.contact.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockPaymentCreate = prisma.payment.create as unknown as ReturnType<typeof vi.fn>;
 const mockTransaction = prisma.$transaction as unknown as ReturnType<typeof vi.fn>;
+const mockInvoiceFindUniqueOrThrow = prisma.invoice.findUniqueOrThrow as unknown as ReturnType<
+  typeof vi.fn
+>;
+const mockAllocateNumber = allocateDocumentNumber as unknown as ReturnType<typeof vi.fn>;
 
 const baseInvoice = {
   id: 'inv-1',
@@ -119,6 +132,13 @@ function setupAuth() {
 beforeEach(() => {
   vi.clearAllMocks();
   setupAuth();
+  // Interactive transaction: run the callback against the same mocked client.
+  mockTransaction.mockImplementation((arg: unknown) =>
+    typeof arg === 'function' ? (arg as (tx: unknown) => unknown)(prisma) : Promise.all(arg as [])
+  );
+  // Mirrors the allocator's real contract: it reserves a sequence and returns
+  // the formatted number alongside it.
+  mockAllocateNumber.mockResolvedValue({ number: 'INV-2026-0001', sequence: 1, prefix: 'INV' });
 });
 
 describe('Money math and validation', () => {
@@ -222,7 +242,8 @@ describe('createInvoice', () => {
   ];
 
   it('calculates totals server-side and scopes to organization', async () => {
-    mockInvoiceCreate.mockResolvedValue({ ...baseInvoice, id: 'inv-new' });
+    mockInvoiceCreate.mockResolvedValue({ id: 'inv-new' });
+    mockInvoiceFindUniqueOrThrow.mockResolvedValue({ ...baseInvoice, id: 'inv-new' });
     mockContactFindFirst.mockResolvedValue({ id: 'contact-1', organizationId: 'org-1' });
 
     const result = await createInvoice(
@@ -251,6 +272,17 @@ describe('createInvoice', () => {
       })
     );
     expect(result.id).toBe('inv-new');
+
+    // Numbering is delegated to the atomic allocator, inside the transaction,
+    // instead of scanning for the last number (which could race).
+    expect(mockAllocateNumber).toHaveBeenCalledWith(expect.anything(), 'org-1', 'invoice');
+    expect(mockInvoiceCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ number: 'INV-2026-0001' }) })
+    );
+    // The stored column is the formatted string, never the allocator's result
+    // object (Prisma rejects an object value for `number` at runtime).
+    const createArgs = mockInvoiceCreate.mock.calls[0][0] as { data: { number: unknown } };
+    expect(typeof createArgs.data.number).toBe('string');
   });
 
   it('returns a complete response when the created row omits optional relations', async () => {
@@ -265,7 +297,8 @@ describe('createInvoice', () => {
     delete withoutRelations.updater;
     delete withoutRelations.items;
 
-    mockInvoiceCreate.mockResolvedValue(withoutRelations);
+    mockInvoiceCreate.mockResolvedValue({ id: 'inv-bare' });
+    mockInvoiceFindUniqueOrThrow.mockResolvedValue(withoutRelations);
     mockContactFindFirst.mockResolvedValue({ id: 'contact-1', organizationId: 'org-1' });
 
     const result = await createInvoice(
@@ -289,7 +322,8 @@ describe('createInvoice', () => {
   });
 
   it('requests the relations the response serializer needs', async () => {
-    mockInvoiceCreate.mockResolvedValue({ ...baseInvoice, id: 'inv-inc' });
+    mockInvoiceCreate.mockResolvedValue({ id: 'inv-inc' });
+    mockInvoiceFindUniqueOrThrow.mockResolvedValue({ ...baseInvoice, id: 'inv-inc' });
     mockContactFindFirst.mockResolvedValue({ id: 'contact-1', organizationId: 'org-1' });
 
     await createInvoice(
@@ -304,8 +338,11 @@ describe('createInvoice', () => {
       lineItems
     );
 
-    expect(mockInvoiceCreate).toHaveBeenCalledWith(
+    // The full record (with the relations the serializer needs) is re-read after
+    // the transaction commits, keyed by the id the create returned.
+    expect(mockInvoiceFindUniqueOrThrow).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: { id: 'inv-inc' },
         include: expect.objectContaining({
           items: expect.anything(),
           payments: expect.anything(),

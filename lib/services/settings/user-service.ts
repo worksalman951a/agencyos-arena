@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
+import type { UserProfileUpdate } from '@/lib/schemas/settings/user.schema';
 
 /** User profile settings shape */
 export interface UserSettings {
@@ -85,8 +86,13 @@ export async function getUserProfile() {
   };
 }
 
-/** Update user profile (own profile only) */
-export async function updateUserProfile(input: { displayName?: string; avatarUrl?: string }) {
+/**
+ * Update user profile (own profile only).
+ *
+ * An explicit `null` clears the value; `undefined` leaves it untouched. The
+ * email, role and status are never writable here.
+ */
+export async function updateUserProfile(input: UserProfileUpdate) {
   const { userId } = await getAuthorizedUser();
 
   const user = await prisma.user.findUnique({

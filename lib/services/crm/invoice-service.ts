@@ -5,6 +5,10 @@ import { requirePermission, requireOrganization, type AuthorizedUser } from '@/l
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 import {
+  allocateDocumentNumber,
+  type PrismaTransactionClient,
+} from '@/lib/services/settings/document-numbering';
+import {
   InvoiceCreateInput,
   InvoiceUpdateInput,
   InvoiceQueryInput,
@@ -188,33 +192,6 @@ function calculateInvoiceTotals(items: InvoiceLineItemInput[]) {
     taxCents,
     totalCents: subtotalCents + taxCents,
   };
-}
-
-async function generateInvoiceNumber(organizationId: string): Promise<string> {
-  const now = new Date();
-  const year = now.getFullYear().toString();
-  const prefixPattern = `INV-${year}`;
-
-  const last = await prisma.invoice.findFirst({
-    where: {
-      organizationId,
-      number: {
-        startsWith: prefixPattern,
-      },
-    },
-    orderBy: { number: 'desc' },
-    select: { number: true },
-  });
-
-  let seq = 1;
-  if (last?.number) {
-    const match = last.number.match(/-(\d+)$/);
-    if (match) {
-      seq = parseInt(match[1], 10) + 1;
-    }
-  }
-
-  return `${prefixPattern}-${seq.toString().padStart(4, '0')}`;
 }
 
 type InvoiceDbRecord = {
@@ -418,40 +395,51 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
     }
   }
 
-  const number = await generateInvoiceNumber(organizationId);
-
   const { subtotal, tax, total } = calculateInvoiceTotals(lineItems);
 
-  const invoice = await prisma.invoice.create({
-    data: {
-      organizationId,
-      number,
-      clientId: input.clientId ?? null,
-      title: input.title,
-      status: input.status,
-      subtotal,
-      tax,
-      total,
-      currency: input.currency,
-      dueDate: input.dueDate ? new Date(input.dueDate) : null,
-      notes: input.notes ?? null,
-      createdBy: userId,
-      updatedBy: userId,
-      items: {
-        create: lineItems.map((item) => {
-          const qtyCents = toCents(item.quantity);
-          const priceCents = toCents(item.unitPrice);
-          const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
-          return {
-            description: item.description,
-            quantity: Number(item.quantity),
-            unitPrice: Number(item.unitPrice),
-            taxRate: Number(item.taxRate),
-            amount: formatMoney(itemAmountCents),
-          };
-        }),
+  // Number allocation and row insertion share one transaction, so the
+  // organization counter can never advance without an invoice and two
+  // concurrent creates cannot receive the same number. Only ids/line items are
+  // touched inside the transaction; the full record is re-read after commit.
+  const created = await prisma.$transaction(async (tx: PrismaTransactionClient) => {
+    const { number } = await allocateDocumentNumber(tx, organizationId, 'invoice');
+
+    return tx.invoice.create({
+      data: {
+        organizationId,
+        number,
+        clientId: input.clientId ?? null,
+        title: input.title,
+        status: input.status,
+        subtotal,
+        tax,
+        total,
+        currency: input.currency,
+        dueDate: input.dueDate ? new Date(input.dueDate) : null,
+        notes: input.notes ?? null,
+        createdBy: userId,
+        updatedBy: userId,
+        items: {
+          create: lineItems.map((item) => {
+            const qtyCents = toCents(item.quantity);
+            const priceCents = toCents(item.unitPrice);
+            const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
+            return {
+              description: item.description,
+              quantity: Number(item.quantity),
+              unitPrice: Number(item.unitPrice),
+              taxRate: Number(item.taxRate),
+              amount: formatMoney(itemAmountCents),
+            };
+          }),
+        },
       },
-    },
+      select: { id: true },
+    });
+  });
+
+  const invoice = await prisma.invoice.findUniqueOrThrow({
+    where: { id: created.id },
     include: {
       items: { orderBy: { createdAt: 'asc' } },
       payments: { orderBy: { paidAt: 'desc' } },

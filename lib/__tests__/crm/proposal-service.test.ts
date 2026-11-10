@@ -56,6 +56,12 @@ vi.mock('@/lib/permissions', () => ({
   requireOrganization: vi.fn(),
 }));
 
+// The number allocator runs inside the creation transaction; its own atomicity
+// is covered by the integration suite, so here we only verify the delegation.
+vi.mock('@/lib/services/settings/document-numbering', () => ({
+  allocateDocumentNumber: vi.fn(),
+}));
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth-server';
@@ -68,6 +74,7 @@ import {
   updateProposal,
   deleteProposal,
 } from '@/lib/services/crm/proposal-service';
+import { allocateDocumentNumber } from '@/lib/services/settings/document-numbering';
 import type {
   ProposalCreateInput,
   ProposalUpdateInput,
@@ -77,8 +84,8 @@ import type {
 
 const mockProposalFindMany = prisma.proposal.findMany as unknown as ReturnType<typeof vi.fn>;
 const mockProposalFindFirst = prisma.proposal.findFirst as unknown as ReturnType<typeof vi.fn>;
-const mockProposalFindUnique = prisma.proposal.findUnique as unknown as ReturnType<typeof vi.fn>;
 const mockProposalCreate = prisma.proposal.create as unknown as ReturnType<typeof vi.fn>;
+const mockAllocateNumber = allocateDocumentNumber as unknown as ReturnType<typeof vi.fn>;
 const mockProposalUpdate = prisma.proposal.update as unknown as ReturnType<typeof vi.fn>;
 const mockProposalCount = prisma.proposal.count as unknown as ReturnType<typeof vi.fn>;
 const mockOppFindFirst = prisma.opportunity.findFirst as unknown as ReturnType<typeof vi.fn>;
@@ -124,12 +131,18 @@ beforeEach(() => {
   mockAuth();
   mockRequireOrganization.mockResolvedValue({ organizationId: orgId });
   mockRequirePermission.mockResolvedValue(undefined);
-  mockTransaction.mockImplementation((arg: unknown) => {
-    if (Array.isArray(arg)) {
-      return Promise.all(arg);
-    }
-    // Callback form: prisma.$transaction(async (tx) => { ... })
-    return (arg as (tx: typeof prisma) => unknown)(prisma);
+  // Interactive transaction: run the callback against the same mocked client.
+  mockTransaction.mockImplementation((arg: unknown) =>
+    typeof arg === 'function' ? (arg as (tx: unknown) => unknown)(prisma) : Promise.all(arg as [])
+  );
+  let sequence = 0;
+  mockAllocateNumber.mockImplementation(async () => {
+    sequence += 1;
+    return {
+      number: `PRP-2026-${String(sequence).padStart(4, '0')}`,
+      sequence,
+      prefix: 'PRP',
+    };
   });
 });
 
@@ -554,79 +567,75 @@ describe('Proposal service - deleteProposal', () => {
   });
 });
 
-describe('Proposal service - document number concurrency', () => {
-  it('generates unique numbers under concurrent calls (no collisions)', async () => {
-    // Simulate concurrent calls all trying to generate numbers
-    mockTransaction.mockImplementation((arg: unknown) => {
-      if (Array.isArray(arg)) {
-        return Promise.all(arg);
-      }
-      // Callback form: prisma.$transaction(async (tx) => { ... })
-      return (arg as (tx: typeof prisma) => unknown)(prisma);
-    });
+describe('Proposal service - document numbering', () => {
+  const numberingInput = {
+    title: 'Test Proposal',
+    status: 'draft',
+    currency: 'USD',
+    contactId: null,
+    opportunityId: null,
+    validUntil: null,
+    notes: null,
+  } as ProposalCreateInput;
 
-    const localCreateInput = {
-      title: 'Test Proposal',
-      status: 'draft',
-      currency: 'USD',
-      contactId: null,
-      opportunityId: null,
-      validUntil: null,
-      notes: null,
-    } as ProposalCreateInput;
+  const numberingItems: ProposalLineItemInput[] = [
+    { description: 'Design services', quantity: '1', unitPrice: '100', taxRate: '0', sortOrder: 0 },
+  ];
 
-    // First call returns PRP-2026-0001, second finds collision and retries
-    mockProposalFindFirst
-      .mockResolvedValueOnce(null) // no existing, first call gets 0001
-      .mockResolvedValueOnce(null) // second call also finds none (concurrent)
-      .mockResolvedValueOnce({ number: 'PRP-2026-0001' }) // retry finds existing
-      .mockResolvedValueOnce(null) // retry again, no existing
-      .mockResolvedValueOnce(null);
-
-    mockProposalFindUnique
-      .mockResolvedValueOnce(null) // first call: no collision
-      .mockResolvedValueOnce({ id: 'existing', number: 'PRP-2026-0001' }) // second: collision!
-      .mockResolvedValueOnce(null); // retry: no collision
-
-    mockProposalCreate.mockImplementation(
-      (args: { data: { number: string; [key: string]: unknown } }) => {
-        return Promise.resolve({
-          id: proposalId,
-          organizationId: orgId,
-          number: args.data.number,
-          opportunityId: args.data.opportunityId ?? null,
-          contactId: args.data.contactId ?? null,
-          title: args.data.title,
-          status: args.data.status,
-          subtotal: args.data.subtotal,
-          tax: args.data.tax,
-          total: args.data.total,
-          currency: args.data.currency,
-          validUntil: args.data.validUntil,
-          notes: args.data.notes,
-          deletedAt: null,
-          createdBy: args.data.createdBy,
-          updatedBy: args.data.updatedBy,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          items: [],
-        });
-      }
+  it('allocates each number inside the creation transaction', async () => {
+    mockProposalCreate.mockImplementation((args: { data: { number: string } }) =>
+      Promise.resolve({
+        id: proposalId,
+        organizationId: orgId,
+        number: args.data.number,
+        opportunityId: null,
+        contactId: null,
+        title: 'Concurrent proposal',
+        status: 'draft',
+        subtotal: '100.00',
+        tax: '0.00',
+        total: '100.00',
+        currency: 'USD',
+        validUntil: null,
+        notes: null,
+        deletedAt: null,
+        createdBy: userId,
+        updatedBy: userId,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        items: [],
+      })
     );
+    mockAuditLogCreate.mockResolvedValue({ id: 'audit_1' });
 
-    const results = await Promise.all([
-      createProposal({ ...localCreateInput, title: 'Concurrent 1' }, [
-        { description: 'Item', quantity: '1', unitPrice: '100', taxRate: '0', sortOrder: 0 },
-      ]),
-      createProposal({ ...localCreateInput, title: 'Concurrent 2' }, [
-        { description: 'Item', quantity: '1', unitPrice: '100', taxRate: '0', sortOrder: 0 },
-      ]),
+    const [first, second] = await Promise.all([
+      createProposal({ ...numberingInput, title: 'Concurrent 1' }, numberingItems),
+      createProposal({ ...numberingInput, title: 'Concurrent 2' }, numberingItems),
     ]);
 
-    // Both should succeed with different numbers
-    expect(results[0].number).not.toBe(results[1].number);
-    expect(results[0].number).toMatch(/^PRP-2026-\d{4}$/);
-    expect(results[1].number).toMatch(/^PRP-2026-\d{4}$/);
+    // Two creations → two allocations, both inside a transaction for this org.
+    expect(mockAllocateNumber).toHaveBeenCalledTimes(2);
+    for (const call of mockAllocateNumber.mock.calls) {
+      expect(call[1]).toBe(orgId);
+      expect(call[2]).toBe('proposal');
+    }
+
+    // The numbers the service stores come from the allocator, so they cannot
+    // collide even when both creates start at the same time.
+    expect(first.number).not.toBe(second.number);
+    expect(first.number).toMatch(/^PRP-2026-\d{4}$/);
+    expect(second.number).toMatch(/^PRP-2026-\d{4}$/);
+  });
+
+  it('fails the creation when the allocator fails, so no unnumbered row is written', async () => {
+    mockAllocateNumber.mockRejectedValueOnce(
+      Object.assign(new Error('numbering unavailable'), { statusCode: 500 })
+    );
+
+    await expect(createProposal({ ...numberingInput }, numberingItems)).rejects.toThrow(
+      'numbering unavailable'
+    );
+    expect(mockProposalCreate).not.toHaveBeenCalled();
   });
 });
 

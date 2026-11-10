@@ -4,54 +4,65 @@
  * GET    /api/v1/settings/user - Get current user profile
  * PUT    /api/v1/settings/user - Update current user profile
  *
- * Organization ID is resolved from the authenticated user's session,
- * never accepted from the client. Users can only update their own profile.
+ * Users can only update their own profile; the user id always comes from the
+ * session. Validation lives in the shared zod schema so the UI and the API
+ * agree on limits and URL rules, and failures return honest status codes.
  */
 
 import { NextResponse } from 'next/server';
 
 import { getUserProfile, updateUserProfile } from '@/lib/services/settings/user-service';
+import { userProfileUpdateSchema } from '@/lib/schemas/settings/user.schema';
 
-function errorResponse(message: string, status: number, issues?: unknown[]) {
-  const body: Record<string, unknown> = { error: message };
-  if (issues) body.issues = issues;
-  return NextResponse.json(body, { status });
+function errorResponse(message: string, status: number, extra?: Record<string, unknown>) {
+  return NextResponse.json({ error: message, ...extra }, { status });
+}
+
+function handleError(err: unknown) {
+  const statusCode = (err as Error & { statusCode?: number }).statusCode;
+  if (statusCode === 401) return errorResponse('Unauthenticated', 401);
+  if (statusCode === 403) return errorResponse('Forbidden', 403);
+  if (statusCode === 404) return errorResponse('User not found', 404);
+  return errorResponse('Could not load or save your profile. Please try again.', 500);
 }
 
 /** GET /api/v1/settings/user - Get current user profile */
 export async function GET() {
   try {
-    const data = await getUserProfile();
-    return NextResponse.json(data);
+    return NextResponse.json(await getUserProfile());
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    return handleError(err);
   }
 }
 
 /** PUT /api/v1/settings/user - Update current user profile */
 export async function PUT(request: Request) {
+  let body: unknown;
   try {
-    const body = await request.json();
-    const { displayName, avatarUrl } = body;
+    body = await request.json();
+  } catch {
+    return errorResponse('Request body must be valid JSON', 400);
+  }
 
-    if (displayName !== undefined && typeof displayName !== 'string') {
-      return errorResponse('Invalid display name', 400);
+  const parsed = userProfileUpdateSchema.safeParse(body ?? {});
+  if (!parsed.success) {
+    const fieldErrors: Record<string, string> = {};
+    for (const issue of parsed.error.issues) {
+      const key = issue.path.join('.') || '_';
+      if (!fieldErrors[key]) fieldErrors[key] = issue.message;
     }
-    if (avatarUrl !== undefined && typeof avatarUrl !== 'string') {
-      return errorResponse('Invalid avatar URL', 400);
-    }
+    return errorResponse('Validation failed', 400, {
+      fieldErrors,
+      issues: parsed.error.issues.map((issue) => ({
+        path: issue.path.join('.'),
+        message: issue.message,
+      })),
+    });
+  }
 
-    const data = await updateUserProfile({ displayName, avatarUrl });
-    return NextResponse.json(data);
+  try {
+    return NextResponse.json(await updateUserProfile(parsed.data));
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    return handleError(err);
   }
 }

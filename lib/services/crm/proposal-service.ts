@@ -1,6 +1,10 @@
 'use server';
 
 import { prisma } from '@/lib/db';
+import {
+  allocateDocumentNumber,
+  type PrismaTransactionClient,
+} from '@/lib/services/settings/document-numbering';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -163,75 +167,6 @@ async function createAuditLog({
       organizationId,
     },
   });
-}
-
-/** Generate the next document number for an organization */
-/** Generate the next document number for an organization (concurrency-safe with retry) */
-async function generateDocumentNumber(organizationId: string, prefix: string): Promise<string> {
-  const now = new Date();
-  const year = now.getFullYear().toString();
-  const prefixPattern = `${prefix}-${year}`;
-
-  const MAX_RETRIES = 5;
-
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      const result = await prisma.$transaction(async (tx: typeof prisma) => {
-        const last = await tx.proposal.findFirst({
-          where: {
-            organizationId,
-            number: {
-              startsWith: prefixPattern,
-            },
-          },
-          orderBy: { number: 'desc' },
-          select: { number: true },
-        });
-
-        let seq = 1;
-        if (last?.number) {
-          const match = last.number.match(/-(\d+)$/);
-          if (match) {
-            seq = parseInt(match[1], 10) + 1;
-          }
-        }
-
-        const nextNumber = `${prefixPattern}-${seq.toString().padStart(4, '0')}`;
-
-        // Check for collision (another concurrent tx may have committed this number)
-        const existing = await tx.proposal.findUnique({
-          where: {
-            organizationId_number: {
-              organizationId,
-              number: nextNumber,
-            },
-          },
-        });
-
-        if (existing) {
-          throw new Error('NUMBER_COLLISION');
-        }
-
-        return nextNumber;
-      });
-
-      if (result) {
-        return result;
-      }
-    } catch (err) {
-      if ((err as Error).message !== 'NUMBER_COLLISION') {
-        throw err;
-      }
-      // Collision detected, retry with next sequence
-      continue;
-    }
-  }
-
-  const error = new Error('Failed to generate unique document number') as Error & {
-    statusCode?: number;
-  };
-  error.statusCode = 500;
-  throw error;
 }
 
 /** Convert a decimal string to cents (integer) for safe money math */
@@ -452,49 +387,52 @@ export async function createProposal(
     }
   }
 
-  // Generate document number
-  const number = await generateDocumentNumber(organizationId, 'PRP');
-
   // Calculate totals server-side from line items (never trust client)
   const { subtotal, tax, total } = calculateLineItemTotals(lineItems);
 
-  const proposal = await prisma.proposal.create({
-    data: {
-      organizationId,
-      number,
-      opportunityId: input.opportunityId ?? null,
-      contactId: input.contactId ?? null,
-      title: input.title,
-      status: input.status,
-      subtotal,
-      tax,
-      total,
-      currency: input.currency,
-      validUntil: input.validUntil ? new Date(input.validUntil) : null,
-      notes: input.notes ?? null,
-      createdBy: userId,
-      updatedBy: userId,
-      items: {
-        create: lineItems.map((item, index) => {
-          const qtyCents = toCents(item.quantity);
-          const priceCents = toCents(item.unitPrice);
-          const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
-          return {
-            description: item.description,
-            quantity: Number(item.quantity),
-            unitPrice: Number(item.unitPrice),
-            taxRate: Number(item.taxRate),
-            amount: formatMoney(itemAmountCents),
-            sortOrder: item.sortOrder ?? index,
-          };
-        }),
+  // Allocation and insertion share one transaction: the proposal counter cannot
+  // advance without a proposal, and concurrent creates cannot collide.
+  const proposal = await prisma.$transaction(async (tx: PrismaTransactionClient) => {
+    const { number } = await allocateDocumentNumber(tx, organizationId, 'proposal');
+
+    return tx.proposal.create({
+      data: {
+        organizationId,
+        number,
+        opportunityId: input.opportunityId ?? null,
+        contactId: input.contactId ?? null,
+        title: input.title,
+        status: input.status,
+        subtotal,
+        tax,
+        total,
+        currency: input.currency,
+        validUntil: input.validUntil ? new Date(input.validUntil) : null,
+        notes: input.notes ?? null,
+        createdBy: userId,
+        updatedBy: userId,
+        items: {
+          create: lineItems.map((item, index) => {
+            const qtyCents = toCents(item.quantity);
+            const priceCents = toCents(item.unitPrice);
+            const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
+            return {
+              description: item.description,
+              quantity: Number(item.quantity),
+              unitPrice: Number(item.unitPrice),
+              taxRate: Number(item.taxRate),
+              amount: formatMoney(itemAmountCents),
+              sortOrder: item.sortOrder ?? index,
+            };
+          }),
+        },
       },
-    },
-    include: {
-      items: {
-        orderBy: { sortOrder: 'asc' },
+      include: {
+        items: {
+          orderBy: { sortOrder: 'asc' },
+        },
       },
-    },
+    });
   });
 
   await createAuditLog({

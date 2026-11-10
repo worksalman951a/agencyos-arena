@@ -19,6 +19,7 @@
 import { redirect } from 'next/navigation';
 
 import { getCurrentPermissions, getSessionUser } from '@/lib/current-user';
+import { getBranding } from '@/lib/services/settings/branding-service';
 import { filterNavigation, NAV_SECTIONS } from '@/lib/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 
@@ -29,11 +30,11 @@ export async function ModuleShell({ children }: { children: React.ReactNode }) {
     redirect('/login');
   }
 
-  const permissions = await getCurrentPermissions();
+  const [permissions, branding] = await Promise.all([getCurrentPermissions(), getBranding()]);
   const sections = filterNavigation(NAV_SECTIONS, permissions);
 
   return (
-    <AppShell user={user} sections={sections}>
+    <AppShell user={user} sections={sections} branding={branding}>
       {children}
     </AppShell>
   );

@@ -14,6 +14,7 @@ import * as React from 'react';
 import NextLink from 'next/link';
 import { usePathname } from 'next/navigation';
 import { classNames } from '@/lib/utils';
+import { BrandMark } from '@/components/brand/brand-mark';
 import { allNavItems, resolveActiveHref, type NavIconKey, type NavSection } from '@/lib/navigation';
 import {
   Activity,
@@ -81,6 +82,10 @@ export const SIDEBAR_ICONS: Record<NavIconKey, React.ComponentType<{ className?:
 };
 
 interface SidebarProps {
+  /** Organization brand name (falls back to the product name). */
+  brandName?: string;
+  /** Validated organization logo URL, if any. */
+  logoUrl?: string | null;
   /** Sections already filtered for the current user's permissions. */
   sections: readonly NavSection[];
   isCollapsed: boolean;
@@ -90,6 +95,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({
+  brandName = 'AgencyOS',
+  logoUrl = null,
   sections,
   isCollapsed,
   setIsCollapsed,
@@ -140,8 +147,10 @@ export function Sidebar({
     >
       <div className="flex h-full flex-col">
         <div className="flex h-12 items-center justify-between border-b border-border bg-background p-4 shrink-0 relative">
-          {/* AgencyOS logo: shown when sidebar is expanded (desktop or open mobile drawer) */}
-          {expanded && <h1 className="text-xl font-bold tracking-tight text-accent">AgencyOS</h1>}
+          {/* Brand mark: shown when the sidebar is expanded (desktop or open
+              mobile drawer). Falls back to "AgencyOS" when the organization has
+              configured nothing, and to the name alone if the logo fails. */}
+          {expanded && <BrandMark name={brandName} logoUrl={logoUrl} />}
 
           {/* Right-aligned toggle: collapse chevron (expanded desktop) or close button (open mobile drawer) */}
           {expanded && (
