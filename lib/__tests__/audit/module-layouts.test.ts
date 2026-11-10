@@ -12,8 +12,13 @@ import { describe, expect, it } from 'vitest';
 
 const APP_DIR = path.join(process.cwd(), 'app');
 
-/** Route groups that are intentionally outside the authenticated shell. */
-const PUBLIC_DIRS = new Set(['login', 'register', 'api']);
+/**
+ * Route groups that are intentionally outside the authenticated shell.
+ *
+ * `invite` is the invitation-acceptance surface: an invitee usually has no
+ * session yet, so the page must render without navigation or toasts.
+ */
+const PUBLIC_DIRS = new Set(['login', 'register', 'api', 'invite']);
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
