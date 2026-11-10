@@ -1,48 +1,31 @@
 /**
  * AgencyOS Finance Expenses List page.
  *
- * Client component, matching the pattern used by the CRM lists: the URL is the
- * single source of truth for the query (`?q=&category=&billable=&from=&to=&sort=&page=`),
- * and the component asks the API for the page it needs. That keeps the list
- * shareable, back/forward friendly and free of a stale server render when the
- * filters change.
+ * Server component: the URL is the single source of truth for the query
+ * (`?q=&category=&billable=&from=&to=&sort=&page=`) and the page is rendered
+ * from it on every request.
  *
- * The API scopes everything to the signed-in organization, applies the RBAC
+ * This page used to fetch its data from the API in a client `useEffect` after
+ * mount. That made the first paint an empty summary and left a window in which
+ * the DOM held a client-rendered tree that was replaced once data arrived —
+ * which is what made `finance-expenses.spec.ts` intermittently read a stale
+ * count after navigating and reloading (and, under load, briefly observe two
+ * copies of the filter form). Rendering on the server removes that window
+ * entirely: a reload can only produce the complete, correctly filtered page.
+ *
+ * The service scopes everything to the signed-in organization, applies the RBAC
  * `expense.read` check and returns the filtered summary. `ExpenseItem` has no
  * currency column, so amounts are labelled with the workspace currency and
  * nothing is converted.
  */
 
-'use client';
-
-import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
 
+import { searchExpenses } from '@/lib/services/crm/expense-service';
+import { expenseListQuerySchema, EXPENSE_SORT_OPTIONS } from '@/lib/schemas/crm/expense.schema';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 import { formatMinorUnitsAsCurrency } from '@/lib/currencies';
-import { EXPENSE_SORT_OPTIONS } from '@/lib/schemas/crm/expense.schema';
-
-interface ExpenseRow {
-  id: string;
-  category: string;
-  projectId: string | null;
-  amount: string;
-  expenseDate: string;
-  billable: boolean;
-  receiptUrl: string | null;
-  createdAt: string;
-}
-
-interface ExpensesResponse {
-  expenses: ExpenseRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-  summary: { count: number; totalAmount: string; billableAmount: string };
-  categories: string[];
-  currency: string;
-}
 
 const SORT_LABELS: Record<(typeof EXPENSE_SORT_OPTIONS)[number], string> = {
   date_desc: 'Newest first',
@@ -55,87 +38,61 @@ const SORT_LABELS: Record<(typeof EXPENSE_SORT_OPTIONS)[number], string> = {
 const money = (amount: string, currency: string) =>
   formatMinorUnitsAsCurrency(Math.round(Number(amount || 0) * 100), currency);
 
-export default function ExpensesListPage() {
-  // `useSearchParams()` needs a Suspense boundary so the route can be prerendered
-  // without blocking on the query string.
-  return (
-    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading expenses...</div>}>
-      <ExpensesListContent />
-    </Suspense>
-  );
+function first(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value ?? '';
 }
 
-function ExpensesListContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const [data, setData] = useState<ExpensesResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export default async function ExpensesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const { q, category, billable, from, to, sort, page, pageSize } = await searchParams;
 
   const filters = {
-    q: searchParams.get('q') ?? '',
-    category: searchParams.get('category') ?? '',
-    billable: searchParams.get('billable') ?? '',
-    from: searchParams.get('from') ?? '',
-    to: searchParams.get('to') ?? '',
-    sort: searchParams.get('sort') ?? 'date_desc',
-    page: searchParams.get('page') ?? '1',
-    pageSize: searchParams.get('pageSize') ?? '20',
+    q: first(q),
+    category: first(category),
+    billable: first(billable),
+    from: first(from),
+    to: first(to),
+    sort: first(sort) || 'date_desc',
+    page: first(page) || '1',
+    pageSize: first(pageSize) || '20',
   };
 
-  useEffect(() => {
-    let mounted = true;
+  // An invalid query is a 400 from the service; the page reports it instead of
+  // silently rendering an unfiltered list.
+  const result = await loadPageData(() => {
+    const parsed = expenseListQuerySchema.safeParse({
+      q: filters.q || undefined,
+      category: filters.category || undefined,
+      billable: filters.billable || undefined,
+      from: filters.from || undefined,
+      to: filters.to || undefined,
+      sort: filters.sort,
+      page: filters.page,
+      pageSize: filters.pageSize,
+    });
+    if (!parsed.success) {
+      const error = new Error('Invalid request query') as Error & { statusCode?: number };
+      error.statusCode = 400;
+      throw error;
+    }
+    return searchExpenses({
+      q: parsed.data.q,
+      category: parsed.data.category,
+      billable: parsed.data.billable === undefined ? undefined : parsed.data.billable === 'true',
+      from: parsed.data.from,
+      to: parsed.data.to,
+      sort: parsed.data.sort,
+      page: parsed.data.page,
+      pageSize: parsed.data.pageSize,
+    });
+  });
 
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const qs = new URLSearchParams();
-        if (filters.q) qs.set('q', filters.q);
-        if (filters.category) qs.set('category', filters.category);
-        if (filters.billable) qs.set('billable', filters.billable);
-        if (filters.from) qs.set('from', filters.from);
-        if (filters.to) qs.set('to', filters.to);
-        if (filters.sort) qs.set('sort', filters.sort);
-        if (filters.page) qs.set('page', filters.page);
-        if (filters.pageSize) qs.set('pageSize', filters.pageSize);
-
-        const res = await fetch(`/api/v1/finance/expenses?${qs.toString()}`, {
-          cache: 'no-store',
-          credentials: 'include',
-          headers: { Accept: 'application/json' },
-        });
-        if (!mounted) return;
-
-        const body = await res.json();
-        if (!mounted) return;
-
-        if (!res.ok) {
-          setError(body?.error ?? 'Unable to load expenses.');
-          return;
-        }
-        setData(body as ExpensesResponse);
-      } catch {
-        if (mounted) setError('Unable to load expenses.');
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [
-    filters.q,
-    filters.category,
-    filters.billable,
-    filters.from,
-    filters.to,
-    filters.sort,
-    filters.page,
-    filters.pageSize,
-  ]);
+  if (!result.ok) return <PageStateNotice reason={result.reason} />;
+  const data = result.data;
 
   const isFiltered = Boolean(
     filters.q || filters.category || filters.billable || filters.from || filters.to
@@ -157,7 +114,7 @@ function ExpensesListContent() {
     return qs ? `/finance/expenses?${qs}` : '/finance/expenses';
   };
 
-  const currency = data?.currency ?? 'USD';
+  const currency = data.currency;
 
   return (
     <div className="space-y-6 p-6">
@@ -180,17 +137,6 @@ function ExpensesListContent() {
         method="get"
         action="/finance/expenses"
         className="rounded-md border bg-background p-4 grid grid-cols-1 md:grid-cols-6 gap-3 items-end"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const formData = new FormData(event.currentTarget);
-          const next = new URLSearchParams();
-          for (const key of ['q', 'category', 'billable', 'from', 'to', 'sort']) {
-            const value = String(formData.get(key) ?? '').trim();
-            if (value) next.set(key, value);
-          }
-          const qs = next.toString();
-          router.push(qs ? `/finance/expenses?${qs}` : '/finance/expenses');
-        }}
       >
         <div className="md:col-span-2 space-y-1">
           <label className="text-xs font-medium text-muted-foreground" htmlFor="q">
@@ -216,7 +162,7 @@ function ExpensesListContent() {
             className="w-full border border-input rounded-md px-3 py-2 text-sm"
           >
             <option value="">All</option>
-            {(data?.categories ?? []).map((category) => (
+            {data.categories.map((category) => (
               <option key={category} value={category}>
                 {category}
               </option>
@@ -297,34 +243,25 @@ function ExpensesListContent() {
         </div>
       </form>
 
-      {error ? (
-        <div
-          role="alert"
-          className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800"
-        >
-          {error}
-        </div>
-      ) : null}
-
       <div className="rounded-md border bg-background p-6">
         <h2 className="text-lg font-semibold mb-4">Summary{isFiltered ? ' (filtered)' : ''}</h2>
         <dl className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
           <div className="border rounded-md p-3">
             <dt className="text-xs text-muted-foreground uppercase">Expenses</dt>
             <dd className="font-medium text-lg" data-testid="expense-count">
-              {data?.summary.count ?? 0}
+              {data.summary.count}
             </dd>
           </div>
           <div className="border rounded-md p-3">
             <dt className="text-xs text-muted-foreground uppercase">Total Amount</dt>
             <dd className="font-medium text-lg" data-testid="expense-total">
-              {money(data?.summary.totalAmount ?? '0', currency)}
+              {money(data.summary.totalAmount, currency)}
             </dd>
           </div>
           <div className="border rounded-md p-3">
             <dt className="text-xs text-muted-foreground uppercase">Billable</dt>
             <dd className="font-medium text-lg" data-testid="expense-billable">
-              {money(data?.summary.billableAmount ?? '0', currency)}
+              {money(data.summary.billableAmount, currency)}
             </dd>
           </div>
         </dl>
@@ -344,13 +281,7 @@ function ExpensesListContent() {
             </tr>
           </thead>
           <tbody>
-            {loading && !data ? (
-              <tr>
-                <td colSpan={7} className="text-center py-8 text-muted-foreground">
-                  Loading expenses...
-                </td>
-              </tr>
-            ) : (data?.expenses.length ?? 0) === 0 ? (
+            {data.rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="text-center py-8 text-muted-foreground">
                   {isFiltered
@@ -359,7 +290,7 @@ function ExpensesListContent() {
                 </td>
               </tr>
             ) : (
-              data!.expenses.map((expense) => (
+              data.rows.map((expense) => (
                 <tr key={expense.id} className="border-b border-border hover:bg-muted/50">
                   <td className="py-4 font-medium">{expense.category}</td>
                   <td className="py-4 text-sm text-muted-foreground">{expense.projectId ?? '—'}</td>
@@ -406,14 +337,14 @@ function ExpensesListContent() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm text-muted-foreground">
         <span>
-          {(data?.total ?? 0) === 0
+          {data.total === 0
             ? 'No expenses'
-            : `Showing ${((data?.page ?? 1) - 1) * (data?.pageSize ?? 20) + 1}–${
-                ((data?.page ?? 1) - 1) * (data?.pageSize ?? 20) + (data?.expenses.length ?? 0)
-              } of ${data?.total ?? 0}`}
+            : `Showing ${(data.page - 1) * data.pageSize + 1}–${
+                (data.page - 1) * data.pageSize + data.rows.length
+              } of ${data.total}`}
         </span>
         <div className="flex items-center gap-2">
-          {data && data.page > 1 ? (
+          {data.page > 1 ? (
             <Link
               href={pageHref(data.page - 1)}
               className="px-3 py-1.5 border rounded-md hover:bg-muted"
@@ -424,9 +355,9 @@ function ExpensesListContent() {
             <span className="px-3 py-1.5 border rounded-md opacity-50">Previous</span>
           )}
           <span>
-            Page {data?.page ?? 1} of {data?.totalPages ?? 1}
+            Page {data.page} of {data.totalPages}
           </span>
-          {data && data.page < data.totalPages ? (
+          {data.page < data.totalPages ? (
             <Link
               href={pageHref(data.page + 1)}
               className="px-3 py-1.5 border rounded-md hover:bg-muted"

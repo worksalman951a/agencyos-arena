@@ -89,13 +89,25 @@ export async function updateFeatureFlag(
     throw error;
   }
 
-  const flag = await prisma.featureFlag.update({
-    where: { id },
+  // `updateMany` keeps the organization predicate in the write itself: the
+  // lookup above already 404s cross-organization ids, but a bare `where: { id }`
+  // write would still be a latent cross-tenant hole if the check were ever
+  // refactored or the row moved between reads.
+  const { count } = await prisma.featureFlag.updateMany({
+    where: { id, organizationId },
     data: {
       enabled: input.enabled ?? existing.enabled,
       description: input.description ?? existing.description,
     },
   });
+
+  if (count === 0) {
+    const error = new Error('Not found') as Error & { statusCode?: number };
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const flag = await prisma.featureFlag.findFirstOrThrow({ where: { id, organizationId } });
 
   return {
     id: flag.id,

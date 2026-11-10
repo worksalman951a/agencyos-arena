@@ -386,17 +386,19 @@ it('Projects detail route page exists', () => {
   expect(src).toContain('getProject');
 });
 
-it('Automation Coming Soon route page exists', () => {
+it('Automation entry route redirects to the implemented rules module', () => {
   const src = readRel('app/automation/workflows/page.tsx');
+  // Automation is implemented now: `/automation/workflows` must send people to
+  // the real module instead of showing a "Roadmap: Future Phase" placeholder.
   // The page renders only its own content: the shell comes from the module
   // layout. Wrapping it in a layout here produced a second, nested shell.
   expect(src).not.toContain('DashboardClientLayout');
-  expect(src).toContain('ComingSoon');
-  expect(src).toContain("redirect('/login')");
-  expect(src).toContain('title="Automation"');
-  expect(src).toContain('Roadmap: Future Phase');
+  expect(src).not.toContain('ComingSoon');
+  expect(src).toContain("redirect('/automation/rules')");
 
   expect(readRel('app/automation/layout.tsx')).toContain('<ModuleShell>');
+  // The redirect target is the real, server-rendered rules list.
+  expect(readRel('app/automation/rules/page.tsx')).toContain('listWorkflowRules');
 });
 
 it('Settings page is a real functional page (not Coming Soon)', () => {

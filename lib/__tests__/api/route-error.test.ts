@@ -39,6 +39,29 @@ describe('apiErrorFrom', () => {
     });
   });
 
+  it.each([
+    [409, 'You already belong to an organization'],
+    [410, 'Invitation has expired'],
+    [429, 'Too many requests'],
+  ])(
+    'keeps the %i status and its message instead of collapsing it into a 500',
+    (statusCode, message) => {
+      // These used to fall through to the generic 500 branch, so an expired
+      // invitation looked like a server crash.
+      expect(apiErrorFrom(coded(message, statusCode as number))).toEqual({
+        status: statusCode,
+        message,
+      });
+    }
+  );
+
+  it('falls back to a generic message for a bare 4xx with no message', () => {
+    expect(apiErrorFrom({ statusCode: 409 })).toEqual({
+      status: 409,
+      message: 'Request failed',
+    });
+  });
+
   it('hides unexpected failures behind a 500', () => {
     expect(apiErrorFrom(new Error('connect ECONNREFUSED 127.0.0.1:5432'))).toEqual({
       status: 500,

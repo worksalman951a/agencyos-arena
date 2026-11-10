@@ -197,6 +197,12 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         icon: 'notifications',
         permission: 'notification.read',
       },
+      {
+        name: 'Preferences',
+        href: '/automation/preferences',
+        icon: 'settings',
+        permission: 'notification.preference',
+      },
     ],
   },
   {
@@ -205,6 +211,12 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     items: [
       { name: 'Users', href: '/admin/users', icon: 'users', permission: 'user.read' },
       { name: 'Roles', href: '/admin/roles', icon: 'roles', permission: 'role.read' },
+      {
+        name: 'Invitations',
+        href: '/admin/invitations',
+        icon: 'users',
+        permission: 'invitation.read',
+      },
       {
         name: 'Audit Log',
         href: '/admin/audit-logs',

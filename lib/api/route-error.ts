@@ -23,16 +23,19 @@ export function apiErrorFrom(error: unknown): ApiError {
   const coded = error as { statusCode?: number; message?: string } | null;
   const statusCode = coded?.statusCode;
 
-  if (statusCode === 400) {
-    const message =
-      typeof coded?.message === 'string' && coded.message.length > 0
-        ? coded.message
-        : 'Invalid request body';
-    return { status: 400, message };
-  }
-
   if (statusCode === 401 || statusCode === 403 || statusCode === 404) {
     return { status: statusCode, message: SAFE_MESSAGES[statusCode] };
+  }
+
+  // Other 4xx are client-facing by design: 400 validation, 409 conflict
+  // ("already a member"), 410 gone ("invitation has expired"), 429 throttled.
+  // They used to fall through to the generic 500 branch, which made an expired
+  // invitation look like a server crash.
+  if (statusCode && statusCode >= 400 && statusCode < 500) {
+    const fallback = statusCode === 400 ? 'Invalid request body' : 'Request failed';
+    const message =
+      typeof coded?.message === 'string' && coded.message.length > 0 ? coded.message : fallback;
+    return { status: statusCode, message };
   }
 
   // Anything unexpected is reported generically: internal messages can mention

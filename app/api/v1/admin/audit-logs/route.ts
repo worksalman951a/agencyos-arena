@@ -1,28 +1,30 @@
 /**
  * AgencyOS Admin Audit Log API
  *
- * GET /api/v1/admin/audit-logs - List audit logs (org-scoped)
+ * GET /api/v1/admin/audit-logs?action=&entityType=&entityId=&actorId=&page=&pageSize=
+ *   Organization-scoped, filterable, paginated audit trail.
  */
 
 import { NextResponse } from 'next/server';
 
 import { listAuditLogs } from '@/lib/services/admin/audit-log-service';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
-function errorResponse(message: string, status: number, issues?: unknown[]) {
-  const body: Record<string, unknown> = { error: message };
-  if (issues) body.issues = issues;
-  return NextResponse.json(body, { status });
-}
-
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const data = await listAuditLogs();
-    return NextResponse.json(data);
-  } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
+    const { searchParams } = new URL(request.url);
+    return NextResponse.json(
+      await listAuditLogs({
+        action: searchParams.get('action') ?? undefined,
+        entityType: searchParams.get('entityType') ?? undefined,
+        entityId: searchParams.get('entityId') ?? undefined,
+        actorId: searchParams.get('actorId') ?? undefined,
+        page: searchParams.get('page') ?? undefined,
+        pageSize: searchParams.get('pageSize') ?? undefined,
+      })
     );
+  } catch (err) {
+    const { status, message } = apiErrorFrom(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }

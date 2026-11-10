@@ -8,6 +8,7 @@ import { listWorkflowRules } from '@/lib/services/automation/workflow-service';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { NewWorkflowRuleForm } from './NewWorkflowRuleForm';
+import { RuleActions } from './RuleActions';
 
 export default async function WorkflowRulesPage() {
   const result = await loadPageData(() => listWorkflowRules());
@@ -33,7 +34,8 @@ export default async function WorkflowRulesPage() {
       <div className="rounded-md border bg-background p-6 max-w-3xl">
         <h2 className="text-lg font-semibold mb-4">Create Workflow Rule</h2>
         <p className="text-sm text-muted-foreground mb-4">
-          Define trigger-based automation rules. Conditions and actions are stored as JSON.
+          Rules run when an event is dispatched for a record in this organization. Each rule
+          executes at most once per record and status transition.
         </p>
         <NewWorkflowRuleForm />
       </div>
@@ -96,10 +98,11 @@ export default async function WorkflowRulesPage() {
                   <td className="py-4 text-right">
                     <Link
                       href={`/automation/rules/${w.id}`}
-                      className="text-sm text-accent hover:underline mr-2"
+                      className="text-sm text-accent hover:underline mr-3"
                     >
                       Edit
                     </Link>
+                    <RuleActions ruleId={w.id} enabled={w.enabled} />
                   </td>
                 </tr>
               ))
