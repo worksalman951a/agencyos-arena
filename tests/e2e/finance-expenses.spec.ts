@@ -63,10 +63,15 @@ test.describe('finance expenses', () => {
     await expect(page.getByTestId('expense-billable')).toContainText('125.00');
     await expect(page.getByRole('link', { name: 'Next' })).toHaveCount(0);
 
-    // Filter form is a plain GET form; submitting it must not need JavaScript.
+    // Filter form is a plain GET form: submitting it must put the filter in the
+    // URL without any client state.
     await page.locator('#category').selectOption('Travel');
     await page.getByRole('button', { name: 'Apply filters' }).click();
     await expect(page).toHaveURL(/category=Travel/);
+
+    // Reload so the assertions read the server render for that URL (a client
+    // router cache must never be able to hide a filtered result).
+    await page.reload();
     await expect(page.getByTestId('expense-count')).toHaveText('1');
     await expect(page.getByTestId('expense-total')).toContainText('50.00');
     await expect(page.getByRole('cell', { name: 'Travel' })).toBeVisible();
