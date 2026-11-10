@@ -428,42 +428,59 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
   // organization counter can never advance without an invoice and two
   // concurrent creates cannot receive the same number. Only ids/line items are
   // touched inside the transaction; the full record is re-read after commit.
-  const created = await prisma.$transaction(async (tx: PrismaTransactionClient) => {
-    const { number } = await allocateDocumentNumber(tx, organizationId, 'invoice');
+  const createInvoiceInTransaction = () =>
+    prisma.$transaction(async (tx: PrismaTransactionClient) => {
+      const { number } = await allocateDocumentNumber(tx, organizationId, 'invoice');
 
-    return tx.invoice.create({
-      data: {
-        organizationId,
-        number,
-        clientId: input.clientId ?? null,
-        title: input.title,
-        status: input.status,
-        subtotal,
-        tax,
-        total,
-        currency: input.currency,
-        dueDate: input.dueDate ? new Date(input.dueDate) : null,
-        notes: input.notes ?? null,
-        createdBy: userId,
-        updatedBy: userId,
-        items: {
-          create: lineItems.map((item) => {
-            const qtyCents = toCents(item.quantity);
-            const priceCents = toCents(item.unitPrice);
-            const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
-            return {
-              description: item.description,
-              quantity: Number(item.quantity),
-              unitPrice: Number(item.unitPrice),
-              taxRate: Number(item.taxRate),
-              amount: formatMoney(itemAmountCents),
-            };
-          }),
+      return tx.invoice.create({
+        data: {
+          organizationId,
+          number,
+          clientId: input.clientId ?? null,
+          title: input.title,
+          status: input.status,
+          subtotal,
+          tax,
+          total,
+          currency: input.currency,
+          dueDate: input.dueDate ? new Date(input.dueDate) : null,
+          notes: input.notes ?? null,
+          createdBy: userId,
+          updatedBy: userId,
+          items: {
+            create: lineItems.map((item) => {
+              const qtyCents = toCents(item.quantity);
+              const priceCents = toCents(item.unitPrice);
+              const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
+              return {
+                description: item.description,
+                quantity: Number(item.quantity),
+                unitPrice: Number(item.unitPrice),
+                taxRate: Number(item.taxRate),
+                amount: formatMoney(itemAmountCents),
+              };
+            }),
+          },
         },
-      },
-      select: { id: true },
+        select: { id: true },
+      });
     });
-  });
+
+  // The unique index on (organizationId, number) is the database guarantee. It
+  // can only fire if the stored numbers and the organization counter drifted
+  // apart externally (import, manual SQL), so retry with a freshly allocated
+  // number instead of failing the user's invoice.
+  let created: { id: string } | undefined;
+  for (let attempt = 1; attempt <= 3 && !created; attempt += 1) {
+    try {
+      created = await createInvoiceInTransaction();
+    } catch (error) {
+      if (!isUniqueViolation(error) || attempt === 3) throw error;
+    }
+  }
+  if (!created) {
+    throw codedError('Could not allocate a unique invoice number. Please retry.', 400);
+  }
 
   const invoice = await prisma.invoice.findUniqueOrThrow({
     where: { id: created.id },
@@ -632,6 +649,57 @@ export async function updateInvoice(
   return serializeInvoice(invoice as unknown as InvoiceDbRecord);
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === 'P2002';
+}
+
+/**
+ * Re-read the payment that won a race on the idempotency unique index.
+ *
+ * The read-then-insert check inside the transaction covers sequential retries;
+ * this is the last line of defence for two requests that both pass that check.
+ */
+async function replayRecordedPayment(
+  invoiceId: string,
+  organizationId: string,
+  idempotencyKey: string
+): Promise<RecordedPaymentOutcome | null> {
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, organizationId, deletedAt: null },
+    include: { payments: true },
+  });
+  if (!invoice) return null;
+
+  const payment = (invoice.payments ?? []).find(
+    (row: { idempotencyKey: string | null }) => row.idempotencyKey === idempotencyKey
+  );
+  if (!payment) return null;
+
+  const paidCents = (invoice.payments ?? []).reduce(
+    (sum: number, row: { amount: { toString: () => string } }) =>
+      sum + toCents(row.amount.toString()),
+    0
+  );
+  const totalCents = toCents(invoice.total);
+
+  return {
+    payment: {
+      id: payment.id,
+      invoiceId: payment.invoiceId,
+      amount: formatDecimalMoney(payment.amount),
+      method: payment.method,
+      reference: payment.reference,
+      paidAt: payment.paidAt,
+      recordedBy: payment.recordedBy,
+      createdAt: payment.createdAt,
+    },
+    invoiceStatus: invoice.status,
+    amountPaid: formatMoney(paidCents),
+    balance: formatMoney(Math.max(totalCents - paidCents, 0)),
+    duplicate: true,
+  } as RecordedPaymentOutcome;
+}
+
 /**
  * Record a payment against an invoice.
  *
@@ -662,8 +730,12 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
     throw codedError('Payment date is not a valid date', 400);
   }
 
-  const audited = await prisma.$transaction(
-    async (tx: PrismaTransactionClient): Promise<RecordedPaymentOutcome> => {
+  // Blank keys are keyless: the partial unique index skips NULLs, so storing
+  // '' for "no key" would either collide or weaken the guarantee.
+  const idempotencyKey = input.idempotencyKey?.trim() || null;
+
+  const recordPaymentInTransaction = () =>
+    prisma.$transaction(async (tx: PrismaTransactionClient): Promise<RecordedPaymentOutcome> => {
       // Serialise concurrent payments for this invoice.
       await tx.$queryRawUnsafe('SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE', invoiceId);
 
@@ -711,9 +783,9 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
       });
 
       // Retried submission: return the payment that was already recorded.
-      if (input.idempotencyKey) {
+      if (idempotencyKey) {
         const duplicate = await tx.payment.findFirst({
-          where: { invoiceId, idempotencyKey: input.idempotencyKey },
+          where: { invoiceId, idempotencyKey },
         });
         if (duplicate) {
           return {
@@ -748,7 +820,7 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
           reference: input.reference ?? null,
           paidAt,
           recordedBy: userId,
-          idempotencyKey: input.idempotencyKey ?? null,
+          idempotencyKey,
         },
       });
 
@@ -762,8 +834,21 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
         ...summary(newPaidCents, newStatus),
         duplicate: false,
       };
-    }
-  );
+    });
+
+  let audited: RecordedPaymentOutcome;
+  try {
+    audited = await recordPaymentInTransaction();
+  } catch (error) {
+    // Two concurrent retries with the same key: the loser hits the partial
+    // unique index. Replay the winner's payment instead of failing the request.
+    const replayed =
+      idempotencyKey && isUniqueViolation(error)
+        ? await replayRecordedPayment(invoiceId, organizationId, idempotencyKey)
+        : null;
+    if (!replayed) throw error;
+    audited = replayed;
+  }
 
   if (!audited.duplicate) {
     await createAuditLog({

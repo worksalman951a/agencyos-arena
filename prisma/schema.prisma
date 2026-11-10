@@ -496,6 +496,13 @@ model Invoice {
   payments     Payment[]
   creator      User?         @relation("CreatedInvoice", fields: [createdBy], references: [id], onDelete: SetNull)
   updater      User?         @relation("UpdatedInvoice", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  // Invoice numbers are unique per organization. The allocator already
+  // serialises on the organization row; this index is the database guarantee
+  // for numbers written outside the allocator (imports, manual SQL).
+  // Payment idempotency keys are additionally protected by the partial unique
+  // index created in migration 0015, which Prisma cannot express.
+  @@unique([organizationId, number])
 }
 
 model InvoiceItem {
