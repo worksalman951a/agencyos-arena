@@ -1,29 +1,50 @@
 /**
  * AgencyOS Finance Expenses List page.
  *
- * Server component: search, category/billable/date filters, sorting and
- * pagination are plain GET query parameters, so the page stays shareable and
- * needs no client state. Every figure is organization-scoped and reported in
- * the workspace currency — `ExpenseItem` has no per-row currency column, and
- * nothing here converts between currencies.
+ * Client component, matching the pattern used by the CRM lists: the URL is the
+ * single source of truth for the query (`?q=&category=&billable=&from=&to=&sort=&page=`),
+ * and the component asks the API for the page it needs. That keeps the list
+ * shareable, back/forward friendly and free of a stale server render when the
+ * filters change.
+ *
+ * The API scopes everything to the signed-in organization, applies the RBAC
+ * `expense.read` check and returns the filtered summary. `ExpenseItem` has no
+ * currency column, so amounts are labelled with the workspace currency and
+ * nothing is converted.
  */
 
+'use client';
+
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 
-import { PageStateNotice } from '@/components/server/page-state-notice';
 import { formatMinorUnitsAsCurrency } from '@/lib/currencies';
-import { loadPageData } from '@/lib/page-data';
-import { EXPENSE_SORT_OPTIONS, expenseListQuerySchema } from '@/lib/schemas/crm/expense.schema';
-import { searchExpenses, type ExpenseSort } from '@/lib/services/crm/expense-service';
+import { EXPENSE_SORT_OPTIONS } from '@/lib/schemas/crm/expense.schema';
 
-/**
- * The list is per-request data: filters, sorting and pagination live in the URL
- * and the rows are organization-scoped, so it must never be served from a route
- * cache (a cached shell would show the previous filter's rows).
- */
-export const dynamic = 'force-dynamic';
+interface ExpenseRow {
+  id: string;
+  category: string;
+  projectId: string | null;
+  amount: string;
+  expenseDate: string;
+  billable: boolean;
+  receiptUrl: string | null;
+  createdAt: string;
+}
 
-const SORT_LABELS: Record<ExpenseSort, string> = {
+interface ExpensesResponse {
+  expenses: ExpenseRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  summary: { count: number; totalAmount: string; billableAmount: string };
+  categories: string[];
+  currency: string;
+}
+
+const SORT_LABELS: Record<(typeof EXPENSE_SORT_OPTIONS)[number], string> = {
   date_desc: 'Newest first',
   date_asc: 'Oldest first',
   amount_desc: 'Amount: high to low',
@@ -31,67 +52,109 @@ const SORT_LABELS: Record<ExpenseSort, string> = {
   category_asc: 'Category A–Z',
 };
 
-type SearchParams = Record<string, string | string[] | undefined>;
-
-const first = (value: string | string[] | undefined) =>
-  Array.isArray(value) ? value[0] : (value ?? undefined);
-
 const money = (amount: string, currency: string) =>
   formatMinorUnitsAsCurrency(Math.round(Number(amount || 0) * 100), currency);
 
-export default async function ExpensesListPage({
-  searchParams,
-}: {
-  searchParams: Promise<SearchParams>;
-}) {
-  const raw = await searchParams;
-  const parsed = expenseListQuerySchema.safeParse({
-    q: first(raw.q),
-    category: first(raw.category),
-    billable: first(raw.billable),
-    from: first(raw.from),
-    to: first(raw.to),
-    sort: first(raw.sort),
-    page: first(raw.page),
-    pageSize: first(raw.pageSize),
-  });
-  const query = parsed.success ? parsed.data : {};
+export default function ExpensesListPage() {
+  // `useSearchParams()` needs a Suspense boundary so the route can be prerendered
+  // without blocking on the query string.
+  return (
+    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading expenses...</div>}>
+      <ExpensesListContent />
+    </Suspense>
+  );
+}
 
-  const result = await loadPageData(() =>
-    searchExpenses({
-      q: query.q,
-      category: query.category,
-      billable: query.billable === undefined ? undefined : query.billable === 'true',
-      from: query.from,
-      to: query.to,
-      sort: query.sort,
-      page: query.page,
-      pageSize: query.pageSize,
-    })
+function ExpensesListContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [data, setData] = useState<ExpensesResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const filters = {
+    q: searchParams.get('q') ?? '',
+    category: searchParams.get('category') ?? '',
+    billable: searchParams.get('billable') ?? '',
+    from: searchParams.get('from') ?? '',
+    to: searchParams.get('to') ?? '',
+    sort: searchParams.get('sort') ?? 'date_desc',
+    page: searchParams.get('page') ?? '1',
+    pageSize: searchParams.get('pageSize') ?? '20',
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const qs = new URLSearchParams();
+        if (filters.q) qs.set('q', filters.q);
+        if (filters.category) qs.set('category', filters.category);
+        if (filters.billable) qs.set('billable', filters.billable);
+        if (filters.from) qs.set('from', filters.from);
+        if (filters.to) qs.set('to', filters.to);
+        if (filters.sort) qs.set('sort', filters.sort);
+        if (filters.page) qs.set('page', filters.page);
+        if (filters.pageSize) qs.set('pageSize', filters.pageSize);
+
+        const res = await fetch(`/api/v1/finance/expenses?${qs.toString()}`, {
+          cache: 'no-store',
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+        });
+        if (!mounted) return;
+
+        const body = await res.json();
+        if (!mounted) return;
+
+        if (!res.ok) {
+          setError(body?.error ?? 'Unable to load expenses.');
+          return;
+        }
+        setData(body as ExpensesResponse);
+      } catch {
+        if (mounted) setError('Unable to load expenses.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [
+    filters.q,
+    filters.category,
+    filters.billable,
+    filters.from,
+    filters.to,
+    filters.sort,
+    filters.page,
+    filters.pageSize,
+  ]);
+
+  const isFiltered = Boolean(
+    filters.q || filters.category || filters.billable || filters.from || filters.to
   );
 
-  if (!result.ok) {
-    return <PageStateNotice reason={result.reason} />;
-  }
-
-  const data = result.data;
-  const { currency } = data;
-  const isFiltered = Boolean(query.q || query.category || query.billable || query.from || query.to);
-
-  // Named `nextQuery`, not `params`: `params` is reserved for the async Next.js
-  // request API and the infrastructure guard (rightly) flags synchronous use.
   const pageHref = (page: number) => {
-    const nextQuery = new URLSearchParams();
-    if (query.q) nextQuery.set('q', query.q);
-    if (query.category) nextQuery.set('category', query.category);
-    if (query.billable) nextQuery.set('billable', query.billable);
-    if (query.from) nextQuery.set('from', query.from);
-    if (query.to) nextQuery.set('to', query.to);
-    if (query.sort) nextQuery.set('sort', query.sort);
-    if (page > 1) nextQuery.set('page', String(page));
-    const qs = nextQuery.toString();
+    const next = new URLSearchParams();
+    if (filters.q) next.set('q', filters.q);
+    if (filters.category) next.set('category', filters.category);
+    if (filters.billable) next.set('billable', filters.billable);
+    if (filters.from) next.set('from', filters.from);
+    if (filters.to) next.set('to', filters.to);
+    if (filters.sort) next.set('sort', filters.sort);
+    if (page > 1) next.set('page', String(page));
+    const qs = next.toString();
     return qs ? `/finance/expenses?${qs}` : '/finance/expenses';
   };
+
+  const currency = data?.currency ?? 'USD';
 
   return (
     <div className="space-y-6 p-6">
@@ -114,6 +177,17 @@ export default async function ExpensesListPage({
         method="get"
         action="/finance/expenses"
         className="rounded-md border bg-background p-4 grid grid-cols-1 md:grid-cols-6 gap-3 items-end"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const formData = new FormData(event.currentTarget);
+          const next = new URLSearchParams();
+          for (const key of ['q', 'category', 'billable', 'from', 'to', 'sort']) {
+            const value = String(formData.get(key) ?? '').trim();
+            if (value) next.set(key, value);
+          }
+          const qs = next.toString();
+          router.push(qs ? `/finance/expenses?${qs}` : '/finance/expenses');
+        }}
       >
         <div className="md:col-span-2 space-y-1">
           <label className="text-xs font-medium text-muted-foreground" htmlFor="q">
@@ -123,7 +197,7 @@ export default async function ExpensesListPage({
             id="q"
             name="q"
             type="search"
-            defaultValue={query.q ?? ''}
+            defaultValue={filters.q}
             placeholder="Category or receipt"
             className="w-full border border-input rounded-md px-3 py-2 text-sm"
           />
@@ -135,11 +209,11 @@ export default async function ExpensesListPage({
           <select
             id="category"
             name="category"
-            defaultValue={query.category ?? ''}
+            defaultValue={filters.category}
             className="w-full border border-input rounded-md px-3 py-2 text-sm"
           >
             <option value="">All</option>
-            {data.categories.map((category) => (
+            {(data?.categories ?? []).map((category) => (
               <option key={category} value={category}>
                 {category}
               </option>
@@ -153,7 +227,7 @@ export default async function ExpensesListPage({
           <select
             id="billable"
             name="billable"
-            defaultValue={query.billable ?? ''}
+            defaultValue={filters.billable}
             className="w-full border border-input rounded-md px-3 py-2 text-sm"
           >
             <option value="">All</option>
@@ -169,7 +243,7 @@ export default async function ExpensesListPage({
             id="from"
             name="from"
             type="date"
-            defaultValue={query.from ?? ''}
+            defaultValue={filters.from}
             className="w-full border border-input rounded-md px-3 py-2 text-sm"
           />
         </div>
@@ -181,7 +255,7 @@ export default async function ExpensesListPage({
             id="to"
             name="to"
             type="date"
-            defaultValue={query.to ?? ''}
+            defaultValue={filters.to}
             className="w-full border border-input rounded-md px-3 py-2 text-sm"
           />
         </div>
@@ -192,7 +266,7 @@ export default async function ExpensesListPage({
           <select
             id="sort"
             name="sort"
-            defaultValue={query.sort ?? 'date_desc'}
+            defaultValue={filters.sort}
             className="w-full border border-input rounded-md px-3 py-2 text-sm"
           >
             {EXPENSE_SORT_OPTIONS.map((option) => (
@@ -220,25 +294,34 @@ export default async function ExpensesListPage({
         </div>
       </form>
 
+      {error ? (
+        <div
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800"
+        >
+          {error}
+        </div>
+      ) : null}
+
       <div className="rounded-md border bg-background p-6">
         <h2 className="text-lg font-semibold mb-4">Summary{isFiltered ? ' (filtered)' : ''}</h2>
         <dl className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
           <div className="border rounded-md p-3">
             <dt className="text-xs text-muted-foreground uppercase">Expenses</dt>
             <dd className="font-medium text-lg" data-testid="expense-count">
-              {data.summary.count}
+              {data?.summary.count ?? 0}
             </dd>
           </div>
           <div className="border rounded-md p-3">
             <dt className="text-xs text-muted-foreground uppercase">Total Amount</dt>
             <dd className="font-medium text-lg" data-testid="expense-total">
-              {money(data.summary.totalAmount, currency)}
+              {money(data?.summary.totalAmount ?? '0', currency)}
             </dd>
           </div>
           <div className="border rounded-md p-3">
             <dt className="text-xs text-muted-foreground uppercase">Billable</dt>
             <dd className="font-medium text-lg" data-testid="expense-billable">
-              {money(data.summary.billableAmount, currency)}
+              {money(data?.summary.billableAmount ?? '0', currency)}
             </dd>
           </div>
         </dl>
@@ -258,7 +341,13 @@ export default async function ExpensesListPage({
             </tr>
           </thead>
           <tbody>
-            {data.rows.length === 0 ? (
+            {loading && !data ? (
+              <tr>
+                <td colSpan={7} className="text-center py-8 text-muted-foreground">
+                  Loading expenses...
+                </td>
+              </tr>
+            ) : (data?.expenses.length ?? 0) === 0 ? (
               <tr>
                 <td colSpan={7} className="text-center py-8 text-muted-foreground">
                   {isFiltered
@@ -267,7 +356,7 @@ export default async function ExpensesListPage({
                 </td>
               </tr>
             ) : (
-              data.rows.map((expense) => (
+              data!.expenses.map((expense) => (
                 <tr key={expense.id} className="border-b border-border hover:bg-muted/50">
                   <td className="py-4 font-medium">{expense.category}</td>
                   <td className="py-4 text-sm text-muted-foreground">{expense.projectId ?? '—'}</td>
@@ -314,14 +403,14 @@ export default async function ExpensesListPage({
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm text-muted-foreground">
         <span>
-          {data.total === 0
+          {(data?.total ?? 0) === 0
             ? 'No expenses'
-            : `Showing ${(data.page - 1) * data.pageSize + 1}–${
-                (data.page - 1) * data.pageSize + data.rows.length
-              } of ${data.total}`}
+            : `Showing ${((data?.page ?? 1) - 1) * (data?.pageSize ?? 20) + 1}–${
+                ((data?.page ?? 1) - 1) * (data?.pageSize ?? 20) + (data?.expenses.length ?? 0)
+              } of ${data?.total ?? 0}`}
         </span>
         <div className="flex items-center gap-2">
-          {data.page > 1 ? (
+          {data && data.page > 1 ? (
             <Link
               href={pageHref(data.page - 1)}
               className="px-3 py-1.5 border rounded-md hover:bg-muted"
@@ -332,9 +421,9 @@ export default async function ExpensesListPage({
             <span className="px-3 py-1.5 border rounded-md opacity-50">Previous</span>
           )}
           <span>
-            Page {data.page} of {data.totalPages}
+            Page {data?.page ?? 1} of {data?.totalPages ?? 1}
           </span>
-          {data.page < data.totalPages ? (
+          {data && data.page < data.totalPages ? (
             <Link
               href={pageHref(data.page + 1)}
               className="px-3 py-1.5 border rounded-md hover:bg-muted"
