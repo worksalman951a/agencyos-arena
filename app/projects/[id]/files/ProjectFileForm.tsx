@@ -1,43 +1,46 @@
 'use client';
 
-import * as React from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useToast } from '@/components/ui/toast';
+import { toast } from 'sonner';
 
-/**
- * Attach an already-uploaded file asset to a project (Client Component).
- *
- * Replaces an in-Server-Component `onClick` handler, which Next.js cannot
- * serialise, so the form previously did nothing (or crashed on render).
- */
-export function ProjectFileForm({ projectId }: { projectId: string }) {
+interface ProjectTaskOption {
+  id: string;
+  title: string;
+}
+
+export function ProjectFileForm({
+  projectId,
+  tasks = [],
+}: {
+  projectId: string;
+  tasks?: ProjectTaskOption[];
+}) {
   const router = useRouter();
-  const { toast } = useToast();
-  const [pending, setPending] = React.useState(false);
-  const formRef = React.useRef<HTMLFormElement>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [taskId, setTaskId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const fileAssetId = String(formData.get('fileAssetId') ?? '').trim();
-    const taskId = String(formData.get('taskId') ?? '').trim();
-
-    if (!fileAssetId) {
-      toast({ title: 'File asset ID is required', variant: 'destructive' });
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!selectedFile) {
+      toast.error('Please select a file to upload.');
       return;
     }
 
-    setPending(true);
+    setSubmitting(true);
     try {
-      const res = await fetch('/api/v1/projects/files', {
+      const formData = new FormData();
+      formData.append('projectId', projectId);
+      if (taskId) {
+        formData.append('taskId', taskId);
+      }
+      formData.append('file', selectedFile);
+
+      const res = await fetch('/api/v1/projects/files/upload', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          fileAssetId,
-          ...(taskId ? { taskId } : {}),
-        }),
+        body: formData,
       });
 
       if (res.status === 401) {
@@ -47,65 +50,74 @@ export function ProjectFileForm({ projectId }: { projectId: string }) {
 
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        toast({
-          title: 'Could not attach file',
-          description: body.error ?? 'Please check the file asset ID.',
-          variant: 'destructive',
-        });
+        toast.error(body.error ?? 'Failed to upload file');
         return;
       }
 
-      toast({ title: 'File attached' });
-      formRef.current?.reset();
+      toast.success('File uploaded');
+      setSelectedFile(null);
+      setTaskId('');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
       router.refresh();
     } catch {
-      toast({
-        title: 'Could not attach file',
-        description: 'Network error.',
-        variant: 'destructive',
-      });
+      toast.error('Failed to upload file');
     } finally {
-      setPending(false);
+      setSubmitting(false);
     }
   }
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
-      <div className="space-y-2">
-        <label className="text-sm font-medium" htmlFor="file-asset-id">
-          File Asset ID
-        </label>
-        <input
-          id="file-asset-id"
-          type="text"
-          name="fileAssetId"
-          placeholder="File asset CUID (from upload)"
-          className="w-full border border-input rounded-md px-3 py-2 text-sm"
-          required
-        />
-        <p className="text-xs text-muted-foreground">
-          Enter the File Asset ID from a completed upload. Files are stored outside the web root and
-          served via signed URLs.
-        </p>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <label htmlFor="project-file-input" className="text-sm font-medium">
+            Select File
+          </label>
+          <input
+            ref={fileInputRef}
+            id="project-file-input"
+            name="file"
+            type="file"
+            required
+            disabled={submitting}
+            onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+            className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+          />
+          <p className="text-xs text-muted-foreground">
+            Max 10 MB. Stored outside web root and served via authenticated download.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="project-file-task" className="text-sm font-medium">
+            Task (optional)
+          </label>
+          <select
+            id="project-file-task"
+            name="taskId"
+            value={taskId}
+            onChange={(e) => setTaskId(e.target.value)}
+            disabled={submitting}
+            className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+          >
+            <option value="">Project-level file</option>
+            {tasks.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium" htmlFor="file-task-id">
-          Task ID (optional)
-        </label>
-        <input
-          id="file-task-id"
-          type="text"
-          name="taskId"
-          placeholder="Associate with a specific task"
-          className="w-full border border-input rounded-md px-3 py-2 text-sm"
-        />
-      </div>
+
       <button
         type="submit"
-        disabled={pending}
+        disabled={submitting || !selectedFile}
         className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90 disabled:opacity-50"
       >
-        {pending ? 'Attaching…' : 'Attach File'}
+        {submitting ? 'Uploading…' : 'Upload File'}
       </button>
     </form>
   );

@@ -25,16 +25,16 @@ export default function NewProjectTemplatePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
-          description: description || undefined,
+          description: description.trim() || null,
         }),
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(err.error || 'Failed to create template');
       }
 
-      const data = await res.json();
+      const data = (await res.json()) as { id: string };
       toast.success('Template created');
       router.push(`/projects/templates/${data.id}`);
     } catch (err) {
@@ -58,25 +58,31 @@ export default function NewProjectTemplatePage() {
 
       <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
         <div className="space-y-2">
-          <label className="text-sm font-medium">Template Name</label>
+          <label htmlFor="template-name" className="text-sm font-medium">
+            Template Name
+          </label>
           <input
+            id="template-name"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Website Redesign Template"
-            className="border border-input rounded-md px-3 py-2 text-sm"
+            className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
             required
           />
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium">Description</label>
+          <label htmlFor="template-description" className="text-sm font-medium">
+            Description
+          </label>
           <textarea
+            id="template-description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
             placeholder="Describe what this template includes..."
-            className="border border-input rounded-md px-3 py-2 text-sm"
+            className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
           />
         </div>
 

@@ -141,7 +141,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         name: 'Templates',
         href: '/projects/templates',
         icon: 'projectTemplates',
-        permission: 'template.read',
+        permission: 'project.template.read',
       },
       {
         name: 'Change Orders',

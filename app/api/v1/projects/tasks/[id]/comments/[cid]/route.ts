@@ -8,6 +8,8 @@
 import { NextResponse } from 'next/server';
 
 import { updateTaskComment, deleteTaskComment } from '@/lib/services/projects/task-comment-service';
+import { taskCommentUpdateSchema } from '@/lib/schemas/projects/task-comment.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -20,16 +22,24 @@ export async function PUT(
   { params }: { params: Promise<{ id: string; cid: string }> }
 ) {
   try {
-    const { cid } = await params;
-    const body = await request.json();
-    const comment = await updateTaskComment(cid, body);
+    const { id, cid } = await params;
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse('Invalid JSON body', 400);
+    }
+
+    const parsed = taskCommentUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return errorResponse('Invalid request body', 400, parsed.error.issues);
+    }
+
+    const comment = await updateTaskComment(cid, parsed.data, id);
     return NextResponse.json(comment);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -38,14 +48,11 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; cid: string }> }
 ) {
   try {
-    const { cid } = await params;
-    const result = await deleteTaskComment(cid);
+    const { id, cid } = await params;
+    const result = await deleteTaskComment(cid, id);
     return NextResponse.json(result);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

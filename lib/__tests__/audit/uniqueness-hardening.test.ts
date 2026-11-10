@@ -6,6 +6,7 @@
  * or creating an index before the duplicate guard) fails in the fast unit job.
  */
 
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -33,6 +34,25 @@ describe('uniqueness audit script', () => {
     expect(auditScript).toContain('"idempotencyKey" IS NOT NULL');
     expect(auditScript).toContain('btrim("idempotencyKey")');
     expect(auditScript).toContain('pg_indexes');
+  });
+
+  it('initializes Prisma 7 with the pg driver adapter instead of a bare constructor', () => {
+    expect(auditScript).toContain("require('@prisma/adapter-pg')");
+    expect(auditScript).toContain('new PrismaPg(');
+    expect(auditScript).toContain('new PrismaClient({ adapter })');
+    expect(auditScript).not.toMatch(/new PrismaClient\(\s*\)/);
+  });
+
+  it('fails clearly with exit code 2 when DATABASE_URL is unset instead of constructor error', () => {
+    const result = spawnSync(process.execPath, ['scripts/audit-uniqueness.mjs'], {
+      cwd: root,
+      env: { ...process.env, DATABASE_URL: '' },
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('DATABASE_URL environment variable is required');
+    expect(result.stderr).not.toContain('PrismaClient needs to be constructed');
   });
 });
 

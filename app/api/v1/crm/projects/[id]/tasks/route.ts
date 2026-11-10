@@ -1,18 +1,18 @@
 /**
- * AgencyOS CRM Project Tasks API
+ * AgencyOS CRM Projects API - Project Tasks
  *
+ * GET  /api/v1/crm/projects/[id]/tasks - List tasks for a project
  * POST /api/v1/crm/projects/[id]/tasks - Add a task to a project
  *
- * Organization scope is resolved from the authenticated session, never from the
- * request. A project belonging to another organization returns a non-disclosing
- * 404 (IDOR protection), and task creation requires the project.update
- * permission.
+ * Organization ID is resolved from the authenticated user's session,
+ * never accepted from the client.
  */
 
 import { NextResponse } from 'next/server';
 
-import { addProjectTask } from '@/lib/services/crm/project-service';
+import { getProject, addProjectTask } from '@/lib/services/crm/project-service';
 import { projectTaskSchema } from '@/lib/schemas/crm/project.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -20,23 +20,27 @@ function errorResponse(message: string, status: number, issues?: unknown[]) {
   return NextResponse.json(body, { status });
 }
 
-function errorStatus(err: unknown): number {
-  return (err as Error & { statusCode?: number }).statusCode ?? 500;
-}
-
-function errorMessage(status: number): string {
-  if (status === 401) return 'Unauthenticated';
-  if (status === 403) return 'Forbidden';
-  if (status === 400) return 'Invalid request body';
-  if (status === 404) return 'Not found';
-  return 'Internal server error';
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const project = await getProject(id);
+    return NextResponse.json(project.tasks);
+  } catch (err) {
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
+  }
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse('Invalid JSON body', 400);
+    }
 
-    const body = await request.json();
     const parsed = projectTaskSchema.safeParse(body);
     if (!parsed.success) {
       return errorResponse('Invalid request body', 400, parsed.error.issues);
@@ -45,7 +49,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const task = await addProjectTask(id, parsed.data);
     return NextResponse.json(task, { status: 201 });
   } catch (err) {
-    const statusCode = errorStatus(err);
-    return errorResponse(errorMessage(statusCode), statusCode);
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

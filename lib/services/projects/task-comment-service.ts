@@ -28,6 +28,19 @@ export interface TaskCommentResponse {
   comment: string;
   createdAt: Date;
   updatedAt: Date;
+  user?: { id: string; name: string | null; email: string | null };
+}
+
+export interface TaskCommentContext {
+  task: {
+    id: string;
+    title: string;
+    status: string;
+    projectId: string;
+    projectName: string;
+  };
+  currentUserId: string;
+  comments: TaskCommentResponse[];
 }
 
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
@@ -88,12 +101,27 @@ async function createAuditLog({
   });
 }
 
-export async function listTaskComments(taskId: string) {
+async function canModerateComment(
+  userId: string,
+  organizationId: string,
+  commentAuthorId: string
+): Promise<boolean> {
+  if (commentAuthorId === userId) return true;
+  const adminRole = await prisma.userRole.findFirst({
+    where: {
+      userId,
+      organizationId,
+      role: { name: 'Administrator', isSystem: true },
+    },
+  });
+  return Boolean(adminRole);
+}
+
+export async function listTaskComments(taskId: string): Promise<TaskCommentResponse[]> {
   const { userId, organizationId } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'task.comment.read');
 
-  // Verify task belongs to org
   const task = await prisma.task.findFirst({
     where: { id: taskId, organizationId },
   });
@@ -104,15 +132,15 @@ export async function listTaskComments(taskId: string) {
     throw error;
   }
 
-  const comments = await prisma.taskComment.findMany({
+  const comments = (await prisma.taskComment.findMany({
     where: { taskId, organizationId },
     include: {
       user: { select: { id: true, name: true, email: true } },
     },
     orderBy: { createdAt: 'asc' },
-  });
+  })) as TaskCommentRecord[];
 
-  return comments.map((c: TaskCommentRecord) => ({
+  return comments.map((c) => ({
     id: c.id,
     organizationId: c.organizationId,
     taskId: c.taskId,
@@ -124,17 +152,73 @@ export async function listTaskComments(taskId: string) {
   }));
 }
 
-export async function createTaskComment(input: TaskCommentCreateInput) {
+export async function getTaskCommentContext(taskId: string): Promise<TaskCommentContext> {
+  const { userId, organizationId } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'task.comment.read');
+
+  const task = (await prisma.task.findFirst({
+    where: { id: taskId, organizationId },
+    include: {
+      project: { select: { id: true, name: true } },
+    },
+  })) as {
+    id: string;
+    title: string;
+    status: string;
+    projectId: string;
+    project: { id: string; name: string };
+  } | null;
+
+  if (!task) {
+    const error = new Error('Task not found') as Error & { statusCode?: number };
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const comments = (await prisma.taskComment.findMany({
+    where: { taskId, organizationId },
+    include: {
+      user: { select: { id: true, name: true, email: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  })) as TaskCommentRecord[];
+
+  return {
+    task: {
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      projectId: task.projectId,
+      projectName: task.project.name,
+    },
+    currentUserId: userId,
+    comments: comments.map((c) => ({
+      id: c.id,
+      organizationId: c.organizationId,
+      taskId: c.taskId,
+      userId: c.userId,
+      comment: c.comment,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      user: c.user,
+    })),
+  };
+}
+
+export async function createTaskComment(
+  input: TaskCommentCreateInput
+): Promise<TaskCommentResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'task.comment.create');
 
-  // Verify task belongs to org
   const task = await prisma.task.findFirst({
     where: { id: input.taskId, organizationId },
+    include: { project: { select: { deletedAt: true } } },
   });
 
-  if (!task) {
+  if (!task || task.project?.deletedAt) {
     const error = new Error('Task not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;
@@ -144,10 +228,9 @@ export async function createTaskComment(input: TaskCommentCreateInput) {
     data: {
       organizationId,
       taskId: input.taskId,
-      // Author is the authenticated caller. `input.userId` is intentionally
-      // ignored so a client cannot attribute a comment to another user.
+      // Author is always the authenticated caller. `input.userId` is ignored.
       userId,
-      comment: input.comment,
+      comment: input.comment.trim(),
     },
     include: {
       user: { select: { id: true, name: true, email: true } },
@@ -179,13 +262,21 @@ export async function createTaskComment(input: TaskCommentCreateInput) {
   };
 }
 
-export async function updateTaskComment(id: string, input: TaskCommentUpdateInput) {
+export async function updateTaskComment(
+  id: string,
+  input: TaskCommentUpdateInput,
+  expectedTaskId?: string
+): Promise<TaskCommentResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'task.comment.update');
 
   const existing = await prisma.taskComment.findFirst({
-    where: { id, organizationId },
+    where: {
+      id,
+      organizationId,
+      ...(expectedTaskId ? { taskId: expectedTaskId } : {}),
+    },
   });
 
   if (!existing) {
@@ -194,10 +285,19 @@ export async function updateTaskComment(id: string, input: TaskCommentUpdateInpu
     throw error;
   }
 
+  if (!(await canModerateComment(userId, organizationId, existing.userId))) {
+    const error = new Error('Forbidden') as Error & { statusCode?: number };
+    error.statusCode = 403;
+    throw error;
+  }
+
   const comment = await prisma.taskComment.update({
     where: { id },
     data: {
-      comment: input.comment ?? existing.comment,
+      comment: input.comment !== undefined ? input.comment.trim() : existing.comment,
+    },
+    include: {
+      user: { select: { id: true, name: true, email: true } },
     },
   });
 
@@ -226,21 +326,35 @@ export async function updateTaskComment(id: string, input: TaskCommentUpdateInpu
     comment: comment.comment,
     createdAt: comment.createdAt,
     updatedAt: comment.updatedAt,
+    user: comment.user,
   };
 }
 
-export async function deleteTaskComment(id: string) {
+export async function deleteTaskComment(
+  id: string,
+  expectedTaskId?: string
+): Promise<{ id: string }> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'task.comment.delete');
 
   const existing = await prisma.taskComment.findFirst({
-    where: { id, organizationId },
+    where: {
+      id,
+      organizationId,
+      ...(expectedTaskId ? { taskId: expectedTaskId } : {}),
+    },
   });
 
   if (!existing) {
     const error = new Error('Not found') as Error & { statusCode?: number };
     error.statusCode = 404;
+    throw error;
+  }
+
+  if (!(await canModerateComment(userId, organizationId, existing.userId))) {
+    const error = new Error('Forbidden') as Error & { statusCode?: number };
+    error.statusCode = 403;
     throw error;
   }
 

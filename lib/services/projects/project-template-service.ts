@@ -16,6 +16,7 @@ interface ProjectTemplateRecord {
   description: string | null;
   createdAt: Date;
   updatedAt: Date;
+  _count?: { projects: number };
 }
 
 export interface ProjectTemplateResponse {
@@ -23,6 +24,7 @@ export interface ProjectTemplateResponse {
   organizationId: string;
   name: string;
   description: string | null;
+  projectCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -85,34 +87,41 @@ async function createAuditLog({
   });
 }
 
-export async function listProjectTemplates() {
-  const { userId, organizationId } = await getAuthorizedUser();
-
-  await requirePermission(userId, organizationId, 'project.template.read');
-
-  const templates = await prisma.projectTemplate.findMany({
-    where: { organizationId },
-    orderBy: { updatedAt: 'desc' },
-  });
-
-  return templates.map((t: ProjectTemplateRecord) => ({
+function serializeTemplate(t: ProjectTemplateRecord): ProjectTemplateResponse {
+  return {
     id: t.id,
     organizationId: t.organizationId,
     name: t.name,
     description: t.description,
+    projectCount: t._count?.projects ?? 0,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
-  }));
+  };
 }
 
-export async function getProjectTemplate(id: string) {
+export async function listProjectTemplates(): Promise<ProjectTemplateResponse[]> {
   const { userId, organizationId } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'project.template.read');
 
-  const template = await prisma.projectTemplate.findFirst({
+  const templates = (await prisma.projectTemplate.findMany({
+    where: { organizationId },
+    include: { _count: { select: { projects: true } } },
+    orderBy: { updatedAt: 'desc' },
+  })) as ProjectTemplateRecord[];
+
+  return templates.map(serializeTemplate);
+}
+
+export async function getProjectTemplate(id: string): Promise<ProjectTemplateResponse> {
+  const { userId, organizationId } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'project.template.read');
+
+  const template = (await prisma.projectTemplate.findFirst({
     where: { id, organizationId },
-  });
+    include: { _count: { select: { projects: true } } },
+  })) as ProjectTemplateRecord | null;
 
   if (!template) {
     const error = new Error('Not found') as Error & { statusCode?: number };
@@ -120,28 +129,31 @@ export async function getProjectTemplate(id: string) {
     throw error;
   }
 
-  return {
-    id: template.id,
-    organizationId: template.organizationId,
-    name: template.name,
-    description: template.description,
-    createdAt: template.createdAt,
-    updatedAt: template.updatedAt,
-  };
+  return serializeTemplate(template);
 }
 
-export async function createProjectTemplate(input: ProjectTemplateCreateInput) {
+export async function createProjectTemplate(
+  input: ProjectTemplateCreateInput
+): Promise<ProjectTemplateResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'project.template.create');
 
-  const template = await prisma.projectTemplate.create({
+  const trimmedName = input.name.trim();
+  if (!trimmedName) {
+    const error = new Error('Template name is required') as Error & { statusCode?: number };
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const template = (await prisma.projectTemplate.create({
     data: {
       organizationId,
-      name: input.name,
+      name: trimmedName,
       description: input.description ?? null,
     },
-  });
+    include: { _count: { select: { projects: true } } },
+  })) as ProjectTemplateRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -156,17 +168,13 @@ export async function createProjectTemplate(input: ProjectTemplateCreateInput) {
     organizationId,
   });
 
-  return {
-    id: template.id,
-    organizationId: template.organizationId,
-    name: template.name,
-    description: template.description,
-    createdAt: template.createdAt,
-    updatedAt: template.updatedAt,
-  };
+  return serializeTemplate(template);
 }
 
-export async function updateProjectTemplate(id: string, input: ProjectTemplateUpdateInput) {
+export async function updateProjectTemplate(
+  id: string,
+  input: ProjectTemplateUpdateInput
+): Promise<ProjectTemplateResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'project.template.update');
@@ -181,13 +189,21 @@ export async function updateProjectTemplate(id: string, input: ProjectTemplateUp
     throw error;
   }
 
-  const template = await prisma.projectTemplate.update({
+  const nextName = input.name !== undefined ? input.name.trim() : existing.name;
+  if (!nextName) {
+    const error = new Error('Template name is required') as Error & { statusCode?: number };
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const template = (await prisma.projectTemplate.update({
     where: { id },
     data: {
-      name: input.name ?? existing.name,
+      name: nextName,
       description: input.description !== undefined ? input.description : existing.description,
     },
-  });
+    include: { _count: { select: { projects: true } } },
+  })) as ProjectTemplateRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -206,17 +222,10 @@ export async function updateProjectTemplate(id: string, input: ProjectTemplateUp
     organizationId,
   });
 
-  return {
-    id: template.id,
-    organizationId: template.organizationId,
-    name: template.name,
-    description: template.description,
-    createdAt: template.createdAt,
-    updatedAt: template.updatedAt,
-  };
+  return serializeTemplate(template);
 }
 
-export async function deleteProjectTemplate(id: string) {
+export async function deleteProjectTemplate(id: string): Promise<{ id: string }> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'project.template.delete');

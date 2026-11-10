@@ -5,6 +5,7 @@ import { requirePermission, requireOrganization, type AuthorizedUser } from '@/l
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 import {
+  PROJECT_APPROVAL_STATUS_VALUES,
   ProjectApprovalCreateInput,
   ProjectApprovalUpdateInput,
 } from '@/lib/schemas/projects/project-approval.schema';
@@ -20,8 +21,9 @@ interface ProjectApprovalRecord {
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
-  contact: { id: string; firstName: string | null; lastName: string; email: string | null } | null;
-  creator: { id: string; name: string | null; email: string | null } | null;
+  contact?: { id: string; firstName: string | null; lastName: string; email: string | null } | null;
+  creator?: { id: string; name: string | null; email: string | null } | null;
+  project?: { id: string; name: string } | null;
 }
 
 export interface ProjectApprovalResponse {
@@ -35,7 +37,19 @@ export interface ProjectApprovalResponse {
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
+  contact?: { id: string; firstName: string | null; lastName: string; email: string | null } | null;
+  creator?: { id: string; name: string | null; email: string | null } | null;
+  project?: { id: string; name: string } | null;
 }
+
+const APPROVAL_STATUSES: readonly string[] = PROJECT_APPROVAL_STATUS_VALUES;
+
+const VALID_APPROVAL_TRANSITIONS: Record<string, readonly string[]> = {
+  pending: ['approved', 'changes_requested', 'rejected'],
+  changes_requested: ['pending', 'approved', 'rejected'],
+  rejected: ['pending', 'changes_requested'],
+  approved: [],
+};
 
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
   const cookieStore = await cookies();
@@ -95,32 +109,8 @@ async function createAuditLog({
   });
 }
 
-export async function listProjectApprovals(projectId: string) {
-  const { userId, organizationId } = await getAuthorizedUser();
-
-  await requirePermission(userId, organizationId, 'project.approval.read');
-
-  // Verify project belongs to org
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, organizationId },
-  });
-
-  if (!project) {
-    const error = new Error('Project not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
-  }
-
-  const approvals = await prisma.projectApproval.findMany({
-    where: { projectId, organizationId },
-    include: {
-      contact: { select: { id: true, firstName: true, lastName: true, email: true } },
-      creator: { select: { id: true, name: true, email: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  return approvals.map((a: ProjectApprovalRecord) => ({
+function serializeApproval(a: ProjectApprovalRecord): ProjectApprovalResponse {
+  return {
     id: a.id,
     organizationId: a.organizationId,
     projectId: a.projectId,
@@ -131,19 +121,82 @@ export async function listProjectApprovals(projectId: string) {
     createdBy: a.createdBy,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
-    contact: a.contact,
-    creator: a.creator,
-  }));
+    contact: a.contact ?? null,
+    creator: a.creator ?? null,
+    project: a.project ?? null,
+  };
 }
 
-export async function createProjectApproval(input: ProjectApprovalCreateInput) {
+export async function listProjectApprovals(projectId?: string): Promise<ProjectApprovalResponse[]> {
+  const { userId, organizationId } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'project.approval.read');
+
+  if (projectId) {
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, organizationId },
+    });
+
+    if (!project) {
+      const error = new Error('Project not found') as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
+  const approvals = (await prisma.projectApproval.findMany({
+    where: projectId ? { projectId, organizationId } : { organizationId },
+    include: {
+      contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+      creator: { select: { id: true, name: true, email: true } },
+      project: { select: { id: true, name: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  })) as ProjectApprovalRecord[];
+
+  return approvals.map(serializeApproval);
+}
+
+export async function getProjectApproval(id: string): Promise<ProjectApprovalResponse> {
+  const { userId, organizationId } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'project.approval.read');
+
+  const approval = (await prisma.projectApproval.findFirst({
+    where: { id, organizationId },
+    include: {
+      contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+      creator: { select: { id: true, name: true, email: true } },
+      project: { select: { id: true, name: true } },
+    },
+  })) as ProjectApprovalRecord | null;
+
+  if (!approval) {
+    const error = new Error('Not found') as Error & { statusCode?: number };
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return serializeApproval(approval);
+}
+
+export async function createProjectApproval(
+  input: ProjectApprovalCreateInput
+): Promise<ProjectApprovalResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'project.approval.create');
 
-  // Verify project belongs to org
+  if (!APPROVAL_STATUSES.includes(input.status)) {
+    const error = new Error(`Invalid approval status: ${input.status}`) as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 400;
+    throw error;
+  }
+
   const project = await prisma.project.findFirst({
-    where: { id: input.projectId, organizationId },
+    where: { id: input.projectId, organizationId, deletedAt: null },
   });
 
   if (!project) {
@@ -152,10 +205,9 @@ export async function createProjectApproval(input: ProjectApprovalCreateInput) {
     throw error;
   }
 
-  // Verify contact belongs to org if provided
   if (input.contactId) {
     const contact = await prisma.contact.findFirst({
-      where: { id: input.contactId, organizationId },
+      where: { id: input.contactId, organizationId, deletedAt: null },
     });
     if (!contact) {
       const error = new Error('Contact not found') as Error & { statusCode?: number };
@@ -164,20 +216,22 @@ export async function createProjectApproval(input: ProjectApprovalCreateInput) {
     }
   }
 
-  const approval = await prisma.projectApproval.create({
+  const approval = (await prisma.projectApproval.create({
     data: {
       organizationId,
       projectId: input.projectId,
       contactId: input.contactId ?? null,
       status: input.status,
       feedback: input.feedback ?? null,
-      ...(input.status === 'approved' ? { approvedAt: new Date() } : {}),
+      approvedAt: input.status === 'approved' ? new Date() : null,
       createdBy: userId,
     },
     include: {
       contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+      creator: { select: { id: true, name: true, email: true } },
+      project: { select: { id: true, name: true } },
     },
-  });
+  })) as ProjectApprovalRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -193,21 +247,13 @@ export async function createProjectApproval(input: ProjectApprovalCreateInput) {
     organizationId,
   });
 
-  return {
-    id: approval.id,
-    organizationId: approval.organizationId,
-    projectId: approval.projectId,
-    contactId: approval.contactId,
-    status: approval.status,
-    feedback: approval.feedback,
-    approvedAt: approval.approvedAt,
-    createdBy: approval.createdBy,
-    createdAt: approval.createdAt,
-    updatedAt: approval.updatedAt,
-  };
+  return serializeApproval(approval);
 }
 
-export async function updateProjectApproval(id: string, input: ProjectApprovalUpdateInput) {
+export async function updateProjectApproval(
+  id: string,
+  input: ProjectApprovalUpdateInput
+): Promise<ProjectApprovalResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'project.approval.update');
@@ -222,20 +268,57 @@ export async function updateProjectApproval(id: string, input: ProjectApprovalUp
     throw error;
   }
 
-  const approval = await prisma.projectApproval.update({
+  if (input.status !== undefined && !APPROVAL_STATUSES.includes(input.status)) {
+    const error = new Error(`Invalid approval status: ${input.status}`) as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (input.status !== undefined && input.status !== existing.status) {
+    const allowed = VALID_APPROVAL_TRANSITIONS[existing.status] ?? [];
+    if (!allowed.includes(input.status)) {
+      const error = new Error(
+        `Invalid status transition from ${existing.status} to ${input.status}`
+      ) as Error & { statusCode?: number };
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  if (input.contactId !== undefined && input.contactId !== null) {
+    const contact = await prisma.contact.findFirst({
+      where: { id: input.contactId, organizationId, deletedAt: null },
+    });
+    if (!contact) {
+      const error = new Error('Contact not found') as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
+  let nextApprovedAt = existing.approvedAt;
+  if (input.status === 'approved' && existing.status !== 'approved') {
+    nextApprovedAt = new Date();
+  } else if (input.status !== undefined && input.status !== 'approved') {
+    nextApprovedAt = null;
+  }
+
+  const approval = (await prisma.projectApproval.update({
     where: { id },
     data: {
       contactId: input.contactId !== undefined ? input.contactId : existing.contactId,
       status: input.status ?? existing.status,
       feedback: input.feedback !== undefined ? input.feedback : existing.feedback,
-      ...(input.status === 'approved' && existing.status !== 'approved'
-        ? { approvedAt: new Date() }
-        : {}),
+      approvedAt: nextApprovedAt,
     },
     include: {
       contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+      creator: { select: { id: true, name: true, email: true } },
+      project: { select: { id: true, name: true } },
     },
-  });
+  })) as ProjectApprovalRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -254,16 +337,5 @@ export async function updateProjectApproval(id: string, input: ProjectApprovalUp
     organizationId,
   });
 
-  return {
-    id: approval.id,
-    organizationId: approval.organizationId,
-    projectId: approval.projectId,
-    contactId: approval.contactId,
-    status: approval.status,
-    feedback: approval.feedback,
-    approvedAt: approval.approvedAt,
-    createdBy: approval.createdBy,
-    createdAt: approval.createdAt,
-    updatedAt: approval.updatedAt,
-  };
+  return serializeApproval(approval);
 }

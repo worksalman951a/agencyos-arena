@@ -1,16 +1,18 @@
 import { z } from 'zod';
 
+const userIdString = z.string().trim().min(1, 'Valid user ID is required').max(128);
+
 export const projectFileCreateSchema = z.object({
   projectId: z.string().cuid('Valid project ID is required'),
   taskId: z.string().cuid().optional().nullable(),
   fileAssetId: z.string().cuid('Valid file asset ID is required'),
-  userId: z.string().cuid().optional().nullable(),
+  userId: userIdString.optional().nullable(),
 });
 
 export const projectFileUpdateSchema = z
   .object({
     taskId: z.string().cuid().optional().nullable(),
-    userId: z.string().cuid().optional().nullable(),
+    userId: userIdString.optional().nullable(),
   })
   .partial()
   .strict()
