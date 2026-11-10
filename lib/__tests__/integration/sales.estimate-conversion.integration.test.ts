@@ -30,6 +30,8 @@ describeIfDb('Estimate conversion (real PostgreSQL)', () => {
   let userId = '';
   let organizationId = '';
   let contactId = '';
+  let foreignOrgId = '';
+  let foreignUserId = '';
 
   const auth = () => ({
     Cookie: `better-auth.session_token=${token}`,
@@ -50,8 +52,10 @@ describeIfDb('Estimate conversion (real PostgreSQL)', () => {
         ...overrides,
       }),
     });
-    expect(res.status, `estimate create failed: ${await res.text()}`).toBe(201);
-    return (await res.json()) as { id: string; number: string; status: string };
+    // Read the body once: the assertion message must not consume it.
+    const text = await res.text();
+    expect(res.status, `estimate create failed: ${text}`).toBe(201);
+    return JSON.parse(text) as { id: string; number: string; status: string };
   };
 
   const convert = async (estimateId: string, body: Record<string, unknown> = {}) => {
@@ -131,6 +135,52 @@ describeIfDb('Estimate conversion (real PostgreSQL)', () => {
       },
     });
     contactId = contact.id;
+
+    // A second tenant, so cross-organization access can be asserted for real.
+    const secondEmail = `estimate-convert-foreign-${Date.now()}@estimate-test.invalid`;
+    const foreignSignUp = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Origin: SERVER_URL,
+      },
+      body: JSON.stringify({ email: secondEmail, password: PASSWORD, name: 'Foreign Tenant' }),
+    });
+    expect(foreignSignUp.status).toBe(200);
+    const foreignSignIn = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Origin: SERVER_URL,
+      },
+      body: JSON.stringify({ email: secondEmail, password: PASSWORD }),
+    });
+    expect(foreignSignIn.status).toBe(200);
+    const foreignToken =
+      (foreignSignIn.headers.get('set-cookie') ?? '').match(
+        /better-auth\.session_token=([^;]+)/
+      )?.[1] ?? '';
+    expect(foreignToken).toBeTruthy();
+    const foreignBootstrap = await fetch(`${SERVER_URL}/api/auth/bootstrap-organization`, {
+      method: 'POST',
+      headers: {
+        Cookie: `better-auth.session_token=${foreignToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Origin: SERVER_URL,
+      },
+      body: JSON.stringify({ organizationName: 'Foreign Estimate Org' }),
+    });
+    expect(foreignBootstrap.status).toBe(200);
+    const foreignUser = await prisma.user.findUnique({ where: { email: secondEmail } });
+    foreignUserId = foreignUser!.id;
+    const foreignOrg = await prisma.organization.findFirstOrThrow({
+      where: { userRoles: { some: { userId: foreignUserId } } },
+      select: { id: true },
+    });
+    foreignOrgId = foreignOrg.id;
   });
 
   afterAll(async () => {
@@ -144,9 +194,16 @@ describeIfDb('Estimate conversion (real PostgreSQL)', () => {
       await prisma.role.deleteMany({ where: { organizationId } }).catch(() => {});
       await prisma.organization.delete({ where: { id: organizationId } }).catch(() => {});
     }
-    if (userId) {
-      await prisma.session.deleteMany({ where: { userId } }).catch(() => {});
-      await prisma.user.deleteMany({ where: { id: userId } }).catch(() => {});
+    if (foreignOrgId) {
+      await prisma.estimate.deleteMany({ where: { organizationId: foreignOrgId } }).catch(() => {});
+      await prisma.auditLog.deleteMany({ where: { organizationId: foreignOrgId } }).catch(() => {});
+      await prisma.userRole.deleteMany({ where: { organizationId: foreignOrgId } }).catch(() => {});
+      await prisma.role.deleteMany({ where: { organizationId: foreignOrgId } }).catch(() => {});
+      await prisma.organization.delete({ where: { id: foreignOrgId } }).catch(() => {});
+    }
+    for (const id of [userId, foreignUserId].filter(Boolean)) {
+      await prisma.session.deleteMany({ where: { userId: id } }).catch(() => {});
+      await prisma.user.deleteMany({ where: { id } }).catch(() => {});
     }
     await prisma.$disconnect();
   });
@@ -214,13 +271,9 @@ describeIfDb('Estimate conversion (real PostgreSQL)', () => {
   });
 
   it('answers 404 for an estimate in another organization', async () => {
-    const otherOrg = await prisma.organization.findFirstOrThrow({
-      where: { id: { not: organizationId } },
-      select: { id: true },
-    });
     const foreign = await prisma.estimate.create({
       data: {
-        organizationId: otherOrg.id,
+        organizationId: foreignOrgId,
         number: `FOREIGN-EST-${Date.now()}`,
         clientId: contactId,
         status: 'accepted',
@@ -231,7 +284,5 @@ describeIfDb('Estimate conversion (real PostgreSQL)', () => {
 
     const result = await convert(foreign.id);
     expect(result.status).toBe(404);
-
-    await prisma.estimate.delete({ where: { id: foreign.id } }).catch(() => {});
   });
 });

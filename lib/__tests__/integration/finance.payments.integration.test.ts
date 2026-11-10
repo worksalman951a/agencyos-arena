@@ -69,6 +69,8 @@ describeIfDb('Invoice payments (real PostgreSQL)', () => {
   let organizationId = '';
   let userId = '';
   let contactId = '';
+  let foreignOrgId = '';
+  let foreignUserId = '';
 
   const auth = () => ({
     Cookie: `better-auth.session_token=${token}`,
@@ -87,8 +89,10 @@ describeIfDb('Invoice payments (real PostgreSQL)', () => {
         lineItems: [{ description: 'Work', quantity: '1', unitPrice, taxRate: '0' }],
       }),
     });
-    expect(res.status, `invoice create failed: ${await res.text()}`).toBe(201);
-    return (await res.json()) as { id: string; number: string };
+    // Read the body once: the assertion message must not consume it.
+    const text = await res.text();
+    expect(res.status, `invoice create failed: ${text}`).toBe(201);
+    return JSON.parse(text) as { id: string; number: string };
   };
 
   const pay = async (invoiceId: string, body: Record<string, unknown>) => {
@@ -134,6 +138,15 @@ describeIfDb('Invoice payments (real PostgreSQL)', () => {
       },
     });
     contactId = contact.id;
+
+    // A second tenant, so cross-organization access can be asserted for real.
+    const second = await createUserWithOrg('payments-foreign');
+    foreignUserId = second.user.id;
+    const foreignOrg = await prisma.organization.findFirstOrThrow({
+      where: { userRoles: { some: { userId: foreignUserId } } },
+      select: { id: true },
+    });
+    foreignOrgId = foreignOrg.id;
   });
 
   afterAll(async () => {
@@ -147,9 +160,16 @@ describeIfDb('Invoice payments (real PostgreSQL)', () => {
       await prisma.role.deleteMany({ where: { organizationId } }).catch(() => {});
       await prisma.organization.delete({ where: { id: organizationId } }).catch(() => {});
     }
-    if (userId) {
-      await prisma.session.deleteMany({ where: { userId } }).catch(() => {});
-      await prisma.user.deleteMany({ where: { id: userId } }).catch(() => {});
+    if (foreignOrgId) {
+      await prisma.invoice.deleteMany({ where: { organizationId: foreignOrgId } }).catch(() => {});
+      await prisma.auditLog.deleteMany({ where: { organizationId: foreignOrgId } }).catch(() => {});
+      await prisma.userRole.deleteMany({ where: { organizationId: foreignOrgId } }).catch(() => {});
+      await prisma.role.deleteMany({ where: { organizationId: foreignOrgId } }).catch(() => {});
+      await prisma.organization.delete({ where: { id: foreignOrgId } }).catch(() => {});
+    }
+    for (const id of [userId, foreignUserId].filter(Boolean)) {
+      await prisma.session.deleteMany({ where: { userId: id } }).catch(() => {});
+      await prisma.user.deleteMany({ where: { id } }).catch(() => {});
     }
     await prisma.$disconnect();
   });
