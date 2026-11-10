@@ -85,26 +85,24 @@ test.describe('Auth HTTP smoke tests', () => {
     expect(body.user.id).toBeDefined();
   });
 
-  test('should reject duplicate registration through the Better Auth HTTP endpoint', async ({
-    request,
-  }) => {
+  test('answers a duplicate registration without creating a session', async ({ request }) => {
     const uniqueEmail = `e2e-dup-${Date.now()}@test-agencyos.invalid`;
-    // First registration must succeed, otherwise the assertion below would pass
-    // for the wrong reason (a refused request rather than a refused duplicate).
-    const first = await postAuth(request, '/api/auth/sign-up/email', {
-      email: uniqueEmail,
-      password: 'e2e-test-password-123',
-      name: 'E2E Dup Test',
-    });
+    const payload = { email: uniqueEmail, password: 'e2e-test-password-123', name: 'E2E Dup Test' };
+
+    // First registration must succeed, otherwise the assertions below would be
+    // about a refused request rather than about duplicate handling.
+    const first = await postAuth(request, '/api/auth/sign-up/email', payload);
     expect(first.ok(), `first registration failed (${first.status()})`).toBeTruthy();
 
-    // Second registration with same email should fail
-    const res = await postAuth(request, '/api/auth/sign-up/email', {
-      email: uniqueEmail,
-      password: 'e2e-test-password-123',
-      name: 'E2E Dup Test',
-    });
-    expect(res.ok()).toBeFalsy();
+    // The app runs Better Auth with `autoSignIn: false`, which makes an
+    // existing email answer with the same generic 200 as a new registration
+    // (account-enumeration protection). What must never happen is a second
+    // session or a second account — the DB side of that is covered by
+    // lib/__tests__/integration/auth.duplicate-signup.integration.test.ts.
+    const duplicate = await postAuth(request, '/api/auth/sign-up/email', payload);
+    expect(duplicate.status(), `duplicate sign-up answered ${duplicate.status()}`).toBe(200);
+    const body = (await duplicate.json()) as { token?: string | null };
+    expect(body.token ?? null).toBeNull();
   });
 
   test('should reject invalid login credentials through the Better Auth HTTP endpoint', async ({

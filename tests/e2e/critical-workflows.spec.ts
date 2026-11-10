@@ -180,7 +180,10 @@ test.describe('organization isolation', () => {
       { name: 'better-auth.session_token', value: intruder.sessionToken, url: appUrl },
     ]);
 
+    // The contact detail page is a client view: a record from another
+    // organization renders its "not found" state, never the record itself.
     await page.goto(`/crm/contacts/${contact.id}`);
-    await expect(page.getByRole('heading', { name: 'This record was not found' })).toBeVisible();
+    await expect(page.getByText('Contact not found.')).toBeVisible();
+    await expect(page.getByText(contact.lastName)).toHaveCount(0);
   });
 });
