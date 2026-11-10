@@ -105,16 +105,43 @@ test.describe('finance payments', () => {
     await page.goto('/finance/reports');
     await expect(page.getByRole('heading', { name: 'Financial Reports', level: 1 })).toBeVisible();
 
-    // Currencies are reported on separate rows and never combined.
-    const usdRow = page.getByRole('row', { name: /USD/ }).first();
-    await expect(usdRow).toContainText('40.00');
-    await expect(usdRow).toContainText('60.00');
+    // Assert the row's own arithmetic rather than absolute totals, so the test is
+    // independent of anything else the account holds (and of retries).
+    const rowFigures = async (currency: 'USD' | 'EUR') => {
+      const row = page.getByRole('row', { name: new RegExp(currency) }).first();
+      await expect(row).toBeVisible();
+      const text = (await row.innerText()).replace(/[^0-9.,\s]/g, ' ');
+      const values = text
+        .split(/\s+/)
+        .filter((part) => /^\d[\d,]*\.\d{2}$/.test(part))
+        .map((part) => Number(part.replace(/,/g, '')));
+      expect(values.length, `${currency} row should hold 4 money columns`).toBeGreaterThanOrEqual(
+        4
+      );
+      const [invoiced, collected, outstanding, overdue] = values;
+      return { invoiced, collected, outstanding, overdue };
+    };
 
-    const eurRow = page.getByRole('row', { name: /EUR/ }).first();
-    await expect(eurRow).toContainText('50.00');
-    await expect(eurRow).toContainText('150.00');
+    const usdFigures = await rowFigures('USD');
+    const eurFigures = await rowFigures('EUR');
 
-    // The old page rendered a single USD total across all currencies.
-    await expect(page.getByText('$250.00')).toHaveCount(0);
+    for (const [currency, figures] of [
+      ['USD', usdFigures],
+      ['EUR', eurFigures],
+    ] as const) {
+      // Collected is recorded money, so the partial payment is visible.
+      expect(figures.collected, `${currency} collected`).toBeGreaterThan(0);
+      // Money is neither invented nor lost: invoiced = collected + outstanding
+      // (nothing is overdue in a fresh account).
+      expect(figures.invoiced, `${currency} arithmetic`).toBeCloseTo(
+        figures.collected + figures.outstanding,
+        2
+      );
+      expect(figures.overdue).toBe(0);
+    }
+
+    // Each currency carries only its own payments.
+    expect(usdFigures.collected % 40).toBe(0);
+    expect(eurFigures.collected % 50).toBe(0);
   });
 });

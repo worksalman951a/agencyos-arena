@@ -147,7 +147,9 @@ function serializeExpense(expense: ExpenseRecord): ExpenseResponse {
     organizationId: expense.organizationId,
     projectId: expense.projectId,
     category: expense.category,
-    amount: expense.amount.toString(),
+    // Postgres hands back `100` for 100.00; keep one money format for the API
+    // and the UI (storage is untouched).
+    amount: Number(expense.amount.toString()).toFixed(2),
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
@@ -214,7 +216,8 @@ export async function searchExpenses(query: ExpenseListQuery = {}): Promise<Expe
   const [rows, totals, billableTotals] = await Promise.all([
     prisma.expenseItem.findMany({
       where: filters,
-      orderBy: SORT_ORDER[sort],
+      // Array form: the generated client rejects a bare object here.
+      orderBy: [SORT_ORDER[sort]],
       skip: (currentPage - 1) * pageSize,
       take: pageSize,
     }),
@@ -279,7 +282,9 @@ export async function getExpense(id: string) {
     organizationId: expense.organizationId,
     projectId: expense.projectId,
     category: expense.category,
-    amount: expense.amount.toString(),
+    // Postgres hands back `100` for 100.00; keep one money format for the API
+    // and the UI (storage is untouched).
+    amount: Number(expense.amount.toString()).toFixed(2),
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
@@ -325,7 +330,9 @@ export async function createExpense(input: ExpenseCreateInput) {
     after: {
       id: expense.id,
       category: expense.category,
-      amount: expense.amount.toString(),
+      // Postgres hands back `100` for 100.00; keep one money format for the API
+      // and the UI (storage is untouched).
+      amount: Number(expense.amount.toString()).toFixed(2),
       billable: expense.billable,
     },
     organizationId,
@@ -336,7 +343,9 @@ export async function createExpense(input: ExpenseCreateInput) {
     organizationId: expense.organizationId,
     projectId: expense.projectId,
     category: expense.category,
-    amount: expense.amount.toString(),
+    // Postgres hands back `100` for 100.00; keep one money format for the API
+    // and the UI (storage is untouched).
+    amount: Number(expense.amount.toString()).toFixed(2),
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
@@ -398,7 +407,9 @@ export async function updateExpense(id: string, input: ExpenseUpdateInput) {
     organizationId: expense.organizationId,
     projectId: expense.projectId,
     category: expense.category,
-    amount: expense.amount.toString(),
+    // Postgres hands back `100` for 100.00; keep one money format for the API
+    // and the UI (storage is untouched).
+    amount: Number(expense.amount.toString()).toFixed(2),
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,

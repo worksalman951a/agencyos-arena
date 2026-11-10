@@ -168,15 +168,12 @@ describe('searchExpenses', () => {
     ['category_asc', { category: 'asc', expenseDate: 'desc' }],
   ] as const)('sorts by %s', async (sort, orderBy) => {
     await searchExpenses({ sort });
-    expect(rowsQuery().orderBy).toEqual(orderBy);
+    expect(rowsQuery().orderBy).toEqual([orderBy]);
   });
 
   it('falls back to the newest-first order for an unknown sort', async () => {
     await searchExpenses({ sort: 'nonsense' as never });
-    expect(rowsQuery().orderBy).toEqual({
-      expenseDate: 'desc',
-      createdAt: 'desc',
-    });
+    expect(rowsQuery().orderBy).toEqual([{ expenseDate: 'desc', createdAt: 'desc' }]);
   });
 
   it('returns the summary, categories and the workspace currency', async () => {
