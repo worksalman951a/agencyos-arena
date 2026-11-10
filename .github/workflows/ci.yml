@@ -108,7 +108,7 @@ jobs:
             echo "ERROR: Next.js build failed" >&2
             exit 1
           fi
-          npm start &
+          npm start > server-output.log 2>&1 &
           SERVER_PID=$!
           SERVER_READY=0
           for i in $(seq 1 30); do
@@ -156,7 +156,7 @@ jobs:
         if: failure()
         run: |
           echo "## Test failure details" >> "$GITHUB_STEP_SUMMARY"
-          for f in build-output.log unit-test-output.log integration-test-output.log; do
+          for f in build-output.log server-output.log unit-test-output.log integration-test-output.log; do
             [ -f "$f" ] || continue
             {
               echo ""
@@ -166,7 +166,7 @@ jobs:
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           done
-          for f in build-output.log unit-test-output.log integration-test-output.log; do
+          for f in build-output.log server-output.log unit-test-output.log integration-test-output.log; do
             [ -f "$f" ] || continue
             tail -n 40 "$f" | sed -e 's/\x1b\[[0-9;]*m//g' | tr '\n' '|' | head -c 5000 > /tmp/tail.txt || true
             echo "::error file=.github/workflows/ci.yml,title=tail $f::$(cat /tmp/tail.txt)"
