@@ -1,16 +1,31 @@
 'use client';
 
+/**
+ * Toast store (shadcn/ui pattern).
+ *
+ * The state lives in this module, not inside the hook. Earlier the hook used a
+ * local `useReducer`, which meant every component that called `useToast()` had
+ * its own private list of toasts - and the single `<Toaster />` mounted in the
+ * layout rendered from *its* own (always empty) list. In practice no toast was
+ * ever displayed anywhere in the app.
+ *
+ * With a module-level store, `toast(...)` from any component is broadcast to
+ * every subscriber, so the one `<Toaster />` in the application shell shows
+ * messages raised from any page.
+ */
+
 import * as React from 'react';
 
 const TOAST_LIMIT = 5;
 
 type ToastActionElement = React.ReactNode;
 
-type ToasterToast = {
+export type ToasterToast = {
   id: string;
   title?: React.ReactNode;
   description?: React.ReactNode;
   action?: ToastActionElement;
+  variant?: 'default' | 'destructive' | null;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   [key: string]: unknown;
@@ -84,44 +99,78 @@ export function reducer(state: State, action: Action): State {
         ...state,
         toasts: state.toasts.filter((t) => t.id !== action.toastId),
       };
+
+    default:
+      return state;
   }
 }
 
-function useToast() {
-  const [state, dispatch] = React.useReducer(reducer, {
-    toasts: [],
-  });
+/** Module-level store shared by every hook instance. */
+let memoryState: State = { toasts: [] };
+const listeners = new Set<() => void>();
 
-  const toast = ({ ...props }: Omit<ToasterToast, 'id'>) => {
-    const id = genId();
+function dispatch(action: Action) {
+  memoryState = reducer(memoryState, action);
+  for (const listener of listeners) listener();
+}
 
-    const update = (props: ToasterToast) =>
-      dispatch({
-        type: actionTypes.ADD_TOAST,
-        toast: { ...props, id },
-      });
+/** Read the current snapshot; a new object is created on every change. */
+const getSnapshot = () => memoryState;
 
-    const dismiss = (toastId?: string) => dispatch({ type: actionTypes.DISMISS_TOAST, toastId });
+/**
+ * Server snapshot is a constant empty state: the store must not leak toasts
+ * between requests during SSR, and the initial client render has to match the
+ * server markup.
+ */
+const serverSnapshot: State = { toasts: [] };
+const getServerSnapshot = () => serverSnapshot;
 
-    update({
-      ...props,
-      id,
-      open: true,
-      onOpenChange: (open: boolean) => {
-        if (!open) dismiss();
-      },
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+type ToastInput = Omit<ToasterToast, 'id' | 'open' | 'onOpenChange'>;
+
+/** Raise a toast from anywhere (component or plain helper module). */
+export function toast(props: ToastInput) {
+  const id = genId();
+
+  const update = (next: ToasterToast) =>
+    dispatch({
+      type: actionTypes.ADD_TOAST,
+      toast: { ...next, id },
     });
 
-    return {
-      id: id,
-      dismiss,
-      update: (updateProps: Omit<ToasterToast, 'id'>) =>
-        dispatch({
-          type: actionTypes.ADD_TOAST,
-          toast: { ...updateProps, id },
-        }),
-    };
+  const dismiss = (toastId?: string) =>
+    dispatch({ type: actionTypes.DISMISS_TOAST, toastId: toastId ?? id });
+
+  update({
+    ...props,
+    id,
+    open: true,
+    onOpenChange: (open: boolean) => {
+      if (!open) dismiss();
+    },
+  });
+
+  return {
+    id,
+    dismiss,
+    update: (next: ToastInput) =>
+      dispatch({
+        type: actionTypes.ADD_TOAST,
+        toast: { ...next, id },
+      }),
   };
+}
+
+function useToast() {
+  // useSyncExternalStore subscribes to the module store, so the outlet and any
+  // component that raises a toast always observe the same list.
+  const state = React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   return {
     ...state,
@@ -130,9 +179,9 @@ function useToast() {
   };
 }
 
-export { useToast, type ToasterToast };
+export { useToast };
 
-/** Toast provider component */
+/** Toast provider component (kept for API compatibility; store is global) */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }

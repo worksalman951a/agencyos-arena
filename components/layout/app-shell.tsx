@@ -1,25 +1,40 @@
 'use client';
 
+/**
+ * AgencyOS application shell.
+ *
+ * The one and only layout frame for authenticated pages: sidebar + top nav +
+ * main content area + toast outlets. Every module layout renders this through
+ * the server-side ModuleShell wrapper, so navigation, active states, responsive
+ * behaviour (desktop collapse, mobile drawer) and toast rendering are identical
+ * everywhere. Modules must never render their own header/sidebar.
+ */
+
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
+import { Toaster as SonnerToaster } from 'sonner';
 import { signOut } from '@/lib/auth-client';
 import { Sidebar } from '@/components/layout/sidebar';
 import { TopNav } from '@/components/layout/top-nav';
+import { Toaster } from '@/components/ui/toaster';
 import { useTheme } from '@/components/providers/theme-provider';
 import { classNames } from '@/lib/utils';
+import type { NavSection } from '@/lib/navigation';
 
-interface AuthUser {
+interface ShellUser {
   id: string;
   name: string | null;
   email: string | null;
 }
 
-interface DashboardClientLayoutProps {
+interface AppShellProps {
   children: React.ReactNode;
-  user: AuthUser;
+  user: ShellUser;
+  /** Navigation already filtered for this user's permissions. */
+  sections: readonly NavSection[];
 }
 
-export function DashboardClientLayout({ children, user }: DashboardClientLayoutProps) {
+export function AppShell({ children, user, sections }: AppShellProps) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = React.useState(false);
   const { theme, setTheme } = useTheme();
@@ -28,6 +43,7 @@ export function DashboardClientLayout({ children, user }: DashboardClientLayoutP
   return (
     <div className="flex h-screen bg-canvas text-foreground">
       <Sidebar
+        sections={sections}
         isCollapsed={isSidebarCollapsed}
         setIsCollapsed={setIsSidebarCollapsed}
         isOpen={isMobileDrawerOpen}
@@ -62,6 +78,12 @@ export function DashboardClientLayout({ children, user }: DashboardClientLayoutP
           aria-hidden="true"
         />
       )}
+      {/* Two toast systems are in use across the app (the shadcn-style
+          useToast hook and `sonner`). Both outlets live here so a toast raised
+          on any page is actually rendered - previously the sonner outlet was
+          never mounted and ~20 pages' success/error messages were dropped. */}
+      <Toaster />
+      <SonnerToaster richColors closeButton position="top-right" />
     </div>
   );
 }

@@ -3,26 +3,37 @@
  * Displays a single invoice with line items, payments, and PDF export.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getInvoice } from '@/lib/services/crm/invoice-service';
+import { getCurrentPermissions } from '@/lib/current-user';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 import { ExportPdfButton } from '@/components/invoices/export-pdf-button';
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
+  const result = await loadPageData(() => getInvoice(id));
 
-  if (!result?.session || !result.user) {
-    redirect('/login');
+  if (!result.ok) {
+    return (
+      <div className="space-y-6 p-6">
+        <h1 className="text-2xl font-bold">Invoice</h1>
+        <PageStateNotice
+          reason={result.reason}
+          backHref="/finance/invoices"
+          backLabel="Back to invoices"
+        />
+      </div>
+    );
   }
 
-  const invoice = await getInvoice(id);
+  const invoice = result.data;
+
+  // Permission-aware actions: never offer an edit the service would reject.
+  const permissions = await getCurrentPermissions();
+  const canUpdate = permissions.has('invoice.update');
+  const isEditable = canUpdate && (invoice.status === 'draft' || invoice.status === 'sent');
 
   const clientName = invoice.client
     ? `${invoice.client.firstName ?? ''} ${invoice.client.lastName ?? ''}`.trim() ||
@@ -43,7 +54,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           >
             Back to Invoices
           </Link>
-          {invoice.status === 'draft' || invoice.status === 'sent' ? (
+          {isEditable ? (
             <Link
               href={`/finance/invoices/${invoice.id}/edit`}
               className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/80"

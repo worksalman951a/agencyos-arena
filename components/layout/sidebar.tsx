@@ -1,75 +1,103 @@
 'use client';
 
+/**
+ * AgencyOS application sidebar.
+ *
+ * Presentational only: the section list is resolved on the server (session +
+ * permissions) by components/server/module-shell.tsx and passed in, so the
+ * menu is permission-aware without shipping authorization logic to the
+ * browser. The sidebar itself is rendered once per request by the shared
+ * AppShell - no module has its own copy.
+ */
+
 import * as React from 'react';
 import NextLink from 'next/link';
 import { usePathname } from 'next/navigation';
 import { classNames } from '@/lib/utils';
+import { allNavItems, resolveActiveHref, type NavIconKey, type NavSection } from '@/lib/navigation';
 import {
-  LayoutDashboard,
-  Users,
-  Briefcase,
-  LayoutDashboard as PipelinesIcon,
-  Briefcase as LeadsIcon,
-  DollarSign,
-  FileText,
-  Receipt,
-  CreditCard,
-  Settings,
-  Mail,
-  ChevronLeft,
-  Menu,
-  X,
-  File,
-  Link as LinkIcon,
-  Clock,
-  Bell,
-  Shield,
-  ToggleRight,
   Activity,
+  BarChart3,
+  Bell,
+  Building2,
+  Calculator,
+  ChevronLeft,
+  Clock,
+  CreditCard,
+  File,
+  FileSignature,
+  FileText,
+  Flag,
+  FolderKanban,
+  GitBranch,
+  GitPullRequest,
+  LayoutDashboard,
+  LayoutTemplate,
+  Link2,
+  Menu,
+  Receipt,
+  ScrollText,
+  Settings,
+  ShieldCheck,
+  Target,
+  UserCog,
+  UserPlus,
+  Users,
+  Wallet,
+  Workflow,
+  X,
 } from 'lucide-react';
 
+/** Icon keys (serializable) → lucide components (client-only). */
+export const SIDEBAR_ICONS: Record<NavIconKey, React.ComponentType<{ className?: string }>> = {
+  dashboard: LayoutDashboard,
+  contacts: Users,
+  accounts: Building2,
+  pipelines: GitBranch,
+  pipelineStages: GitPullRequest,
+  leads: UserPlus,
+  opportunities: Target,
+  proposals: FileText,
+  quotations: Receipt,
+  invoices: CreditCard,
+  estimates: Calculator,
+  expenses: Wallet,
+  reports: BarChart3,
+  projects: FolderKanban,
+  projectTemplates: LayoutTemplate,
+  changeOrders: GitPullRequest,
+  timeEntries: Clock,
+  contracts: FileSignature,
+  documentTemplates: File,
+  sharedLinks: Link2,
+  workflows: Workflow,
+  notifications: Bell,
+  users: UserCog,
+  roles: ShieldCheck,
+  auditLog: ScrollText,
+  featureFlags: Flag,
+  health: Activity,
+  settings: Settings,
+};
+
 interface SidebarProps {
+  /** Sections already filtered for the current user's permissions. */
+  sections: readonly NavSection[];
   isCollapsed: boolean;
   setIsCollapsed: (collapsed: boolean) => void;
   isOpen?: boolean;
   setIsOpen?: (open: boolean) => void;
 }
 
-const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Contacts', href: '/crm/contacts', icon: Users },
-  { name: 'Accounts', href: '/crm/accounts', icon: Briefcase },
-  { name: 'Pipelines', href: '/crm/pipelines', icon: PipelinesIcon },
-  { name: 'Leads', href: '/crm/leads', icon: LeadsIcon },
-  { name: 'Opportunities', href: '/crm/opportunities', icon: DollarSign },
-  { name: 'Proposals', href: '/sales/proposals', icon: FileText },
-  { name: 'Quotations', href: '/sales/quotations', icon: Receipt },
-  { name: 'Invoices', href: '/finance/invoices', icon: CreditCard },
-  { name: 'Estimates', href: '/finance/estimates', icon: FileText },
-  { name: 'Expenses', href: '/finance/expenses', icon: Receipt },
-  { name: 'Reports', href: '/finance/reports', icon: DollarSign },
-  { name: 'Projects', href: '/projects', icon: Briefcase },
-  { name: 'Templates', href: '/projects/templates', icon: File },
-  { name: 'Change Orders', href: '/projects/change-orders', icon: LinkIcon },
-  { name: 'Time Entries', href: '/projects/time-entries', icon: Clock },
-  { name: 'Automation', href: '/automation/workflows', icon: Mail },
-  { name: 'Workflows', href: '/automation/rules', icon: Mail },
-  { name: 'Notifications', href: '/automation/notifications', icon: Bell },
-  { name: 'Settings', href: '/settings', icon: Settings },
-  { name: 'Admin', href: '/admin/audit-logs', icon: Settings },
-  { name: 'Audit Log', href: '/admin/audit-logs', icon: FileText },
-  { name: 'Users', href: '/admin/users', icon: Users },
-  { name: 'Roles', href: '/admin/roles', icon: Shield },
-  { name: 'Feature Flags', href: '/admin/feature-flags', icon: ToggleRight },
-  { name: 'Health', href: '/admin/health', icon: Activity },
-  { name: 'Documents', href: '/documents/contracts', icon: File },
-  { name: 'Contracts', href: '/documents/contracts', icon: FileText },
-  { name: 'Templates', href: '/documents/templates', icon: File },
-  { name: 'Shared Links', href: '/documents/links', icon: LinkIcon },
-];
-
-export function Sidebar({ isCollapsed, setIsCollapsed, isOpen = false, setIsOpen }: SidebarProps) {
+export function Sidebar({
+  sections,
+  isCollapsed,
+  setIsCollapsed,
+  isOpen = false,
+  setIsOpen,
+}: SidebarProps) {
   const pathname = usePathname();
+  const activeHref = resolveActiveHref(pathname ?? '', allNavItems(sections));
 
   // Close mobile drawer on Escape key
   React.useEffect(() => {
@@ -103,6 +131,7 @@ export function Sidebar({ isCollapsed, setIsCollapsed, isOpen = false, setIsOpen
 
   return (
     <aside
+      aria-label="Main navigation"
       className={classNames(
         'fixed inset-y-0 left-0 z-50 border-r border-border bg-background transition-all duration-300 ease-in-out',
         sidebarWidth,
@@ -139,41 +168,56 @@ export function Sidebar({ isCollapsed, setIsCollapsed, isOpen = false, setIsOpen
           )}
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-2 space-y-1">
-          {navigation.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <NextLink
-                key={`${item.name}|${item.href}`}
-                href={item.href}
-                onClick={() => setIsOpen?.(false)}
-                className={classNames(
-                  'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-                  isActive && expanded
-                    ? 'bg-accent text-accent-foreground'
-                    : isActive && !expanded
-                      ? 'text-accent-foreground'
-                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                )}
-                aria-label={item.name}
-              >
-                {/* Centered square active state for collapsed desktop only */}
-                <div
-                  className={classNames(
-                    'flex items-center justify-center w-8 h-8 shrink-0 rounded-md transition-colors',
-                    isActive && !expanded
-                      ? 'bg-accent text-accent-foreground'
-                      : isActive && expanded
-                        ? 'text-accent-foreground'
-                        : 'bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                  )}
-                >
-                  <item.icon className="w-5 h-5" />
-                </div>
-                {expanded && <span className="min-w-0">{item.name}</span>}
-              </NextLink>
-            );
-          })}
+        <nav className="flex-1 overflow-y-auto p-2 space-y-4">
+          {sections.map((section) => (
+            <div key={section.id}>
+              {expanded && (
+                <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {section.label}
+                </p>
+              )}
+              <ul className="space-y-1">
+                {section.items.map((item) => {
+                  const Icon = SIDEBAR_ICONS[item.icon];
+                  const isActive = activeHref === item.href;
+                  return (
+                    <li key={item.href}>
+                      <NextLink
+                        href={item.href}
+                        onClick={() => setIsOpen?.(false)}
+                        aria-current={isActive ? 'page' : undefined}
+                        title={expanded ? undefined : item.name}
+                        className={classNames(
+                          'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                          isActive && expanded
+                            ? 'bg-accent text-accent-foreground'
+                            : isActive && !expanded
+                              ? 'text-accent-foreground'
+                              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                        )}
+                        aria-label={item.name}
+                      >
+                        {/* Centered square active state for collapsed desktop only */}
+                        <div
+                          className={classNames(
+                            'flex items-center justify-center w-8 h-8 shrink-0 rounded-md transition-colors',
+                            isActive && !expanded
+                              ? 'bg-accent text-accent-foreground'
+                              : isActive && expanded
+                                ? 'text-accent-foreground'
+                                : 'bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                          )}
+                        >
+                          <Icon className="w-5 h-5" />
+                        </div>
+                        {expanded && <span className="min-w-0 truncate">{item.name}</span>}
+                      </NextLink>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
         </nav>
       </div>
     </aside>

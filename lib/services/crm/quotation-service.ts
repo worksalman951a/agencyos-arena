@@ -370,7 +370,11 @@ export async function listQuotations(input: QuotationQueryInput) {
   await requirePermission(userId, organizationId, 'quotation.read');
 
   const where = buildQuotationWhere(organizationId, input);
-  const [quotations, total] = await prisma.$transaction([
+  // Independent read-only statements: run concurrently on separate pooled
+  // connections. Deliberately not $transaction(): a transaction pins one pg
+  // client, Prisma 7 dispatches relation loads concurrently on it, and pg
+  // >= 8.22 deprecates overlapping client.query() (hard error in pg 9).
+  const [quotations, total] = await Promise.all([
     prisma.quotation.findMany({
       where,
       include: {
