@@ -24,6 +24,11 @@
  */
 
 import { prisma } from '@/lib/db';
+import {
+  formatDocumentNumber,
+  parseSequenceFromNumber,
+  SEQUENCE_WIDTH,
+} from '@/lib/services/settings/document-number-format';
 import { normalizeOrganizationSettings } from '@/lib/schemas/settings/organization.schema';
 
 export type DocumentKind = 'invoice' | 'proposal';
@@ -65,22 +70,13 @@ const KINDS: Record<DocumentKind, KindConfig> = {
   },
 };
 
-export const SEQUENCE_WIDTH = 4;
+export {
+  SEQUENCE_WIDTH,
+  formatDocumentNumber,
+  parseSequenceFromNumber,
+} from '@/lib/services/settings/document-number-format';
+
 const MAX_COLLISION_RETRIES = 5;
-
-/** `INV` + 2026 + 12 → `INV-2026-0012`. */
-export function formatDocumentNumber(prefix: string, sequence: number, year: number): string {
-  return `${prefix}-${year}-${String(sequence).padStart(SEQUENCE_WIDTH, '0')}`;
-}
-
-/** Parse the trailing sequence out of a document number, or null. */
-export function parseSequenceFromNumber(number: string | null | undefined): number | null {
-  if (!number) return null;
-  const match = /(\d+)\s*$/.exec(number.trim());
-  if (!match) return null;
-  const value = Number.parseInt(match[1], 10);
-  return Number.isFinite(value) ? value : null;
-}
 
 /**
  * Highest sequence already used for `prefix` in this organization.

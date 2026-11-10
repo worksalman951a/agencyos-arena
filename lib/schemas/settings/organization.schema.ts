@@ -29,50 +29,68 @@ const prefixSchema = z
   .regex(/^[A-Za-z0-9][A-Za-z0-9-]*$/, 'Use letters, numbers and dashes only')
   .transform((value) => value.toUpperCase());
 
+/**
+ * Optional text: `undefined` = untouched, `null`/`''` = clear, otherwise the
+ * trimmed value. The distinction matters — a transform that turns an absent key
+ * into `null` would make every partial save clear the fields it did not send.
+ */
 const optionalText = (max: number, message: string) =>
   z
-    .string()
-    .trim()
-    .max(max, message)
-    .nullable()
+    .union([z.string().trim().max(max, message), z.null()])
     .optional()
-    .transform((value) => (value === null || value === '' ? null : value));
+    .transform((value): string | null | undefined => {
+      if (value === undefined) return undefined;
+      if (value === null || value === '') return null;
+      return value;
+    });
 
 export const organizationSettingsSchema = z
   .object({
     // Branding
     brandName: optionalText(120, 'Brand name must be 120 characters or fewer'),
     brandColor: z
-      .string()
-      .trim()
-      .nullable()
+      .union([z.string().trim(), z.null()])
       .optional()
-      .transform((value) => (value === null || value === '' ? null : value))
-      .refine((value) => value === null || normalizeBrandColor(value) !== null, {
-        message: 'Brand colour must be a hex value such as #047857',
+      .superRefine((value, ctx) => {
+        if (typeof value === 'string' && value !== '' && !normalizeBrandColor(value)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Brand colour must be a hex value such as #047857',
+          });
+        }
       })
-      .transform((value) => (typeof value === 'string' ? normalizeBrandColor(value) : null)),
+      .transform((value): string | null | undefined => {
+        if (value === undefined) return undefined;
+        if (value === null || value === '') return null;
+        return normalizeBrandColor(value);
+      }),
     logoUrl: z
-      .string()
-      .trim()
-      .max(500, 'Logo URL must be 500 characters or fewer')
-      .nullable()
+      .union([z.string().trim().max(500, 'Logo URL must be 500 characters or fewer'), z.null()])
       .optional()
-      .transform((value) => (value === null || value === '' ? null : value))
-      .refine((value) => value === null || normalizeLogoUrl(value) !== null, {
-        message: 'Logo URL must be an absolute http(s) URL',
+      .superRefine((value, ctx) => {
+        if (typeof value === 'string' && value !== '' && !normalizeLogoUrl(value)) {
+          ctx.addIssue({ code: 'custom', message: 'Logo URL must be an absolute http(s) URL' });
+        }
+      })
+      .transform((value): string | null | undefined => {
+        if (value === undefined) return undefined;
+        if (value === null || value === '') return null;
+        return value;
       }),
 
     // Contact details
     contactEmail: z
-      .string()
-      .trim()
-      .max(200, 'Email must be 200 characters or fewer')
-      .nullable()
+      .union([z.string().trim().max(200, 'Email must be 200 characters or fewer'), z.null()])
       .optional()
-      .transform((value) => (value === null || value === '' ? null : value))
-      .refine((value) => value === null || z.email().safeParse(value).success, {
-        message: 'Enter a valid email address',
+      .superRefine((value, ctx) => {
+        if (typeof value === 'string' && value !== '' && !z.email().safeParse(value).success) {
+          ctx.addIssue({ code: 'custom', message: 'Enter a valid email address' });
+        }
+      })
+      .transform((value): string | null | undefined => {
+        if (value === undefined) return undefined;
+        if (value === null || value === '') return null;
+        return value;
       }),
     contactPhone: optionalText(50, 'Phone must be 50 characters or fewer'),
     address: optionalText(200, 'Address must be 200 characters or fewer'),
@@ -82,20 +100,19 @@ export const organizationSettingsSchema = z
 
     // Financial defaults
     defaultCurrency: z
-      .string()
-      .trim()
-      .nullable()
+      .union([z.string().trim(), z.null()])
       .optional()
-      .transform((value) => (value === null || value === '' ? null : value))
-      .refine((value) => value === null || value === undefined || isSupportedCurrency(value), {
-        message: 'Select a supported ISO currency code',
+      .superRefine((value, ctx) => {
+        if (typeof value === 'string' && value !== '' && !isSupportedCurrency(value)) {
+          ctx.addIssue({ code: 'custom', message: 'Select a supported ISO currency code' });
+        }
       })
-      .transform((value) => (typeof value === 'string' ? normalizeCurrencyCode(value) : null)),
-    dateFormat: z
-      .enum(DATE_FORMATS)
-      .nullable()
-      .optional()
-      .transform((value) => value ?? null),
+      .transform((value): string | null | undefined => {
+        if (value === undefined) return undefined;
+        if (value === null || value === '') return null;
+        return normalizeCurrencyCode(value);
+      }),
+    dateFormat: z.enum(DATE_FORMATS).nullable().optional(),
 
     // Invoice numbering
     invoiceNumberPrefix: prefixSchema.nullable().optional(),

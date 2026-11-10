@@ -55,14 +55,14 @@ export default function NewProjectPage() {
 
     const timer = setTimeout(() => {
       setContactsLoading(true);
-      const params = new URLSearchParams({
+      const contactParams = new URLSearchParams({
         pageSize: '100',
         sortBy: 'lastName',
         sortOrder: 'asc',
       });
-      if (contactQuery.trim()) params.set('search', contactQuery.trim());
+      if (contactQuery.trim()) contactParams.set('search', contactQuery.trim());
 
-      fetch(`/api/v1/crm/contacts?${params.toString()}`, { signal: controller.signal })
+      fetch(`/api/v1/crm/contacts?${contactParams.toString()}`, { signal: controller.signal })
         .then(async (res) => {
           if (!res.ok) {
             throw new Error(

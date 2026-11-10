@@ -403,9 +403,30 @@ it('Settings page is a real functional page (not Coming Soon)', () => {
   const src = readRel('app/settings/page.tsx');
   expect(src).not.toContain('ComingSoon');
   expect(src).not.toContain('Roadmap: Future Phase');
-  expect(src).toContain('Organization Settings');
-  expect(src).toContain('User Profile');
   expect(src).toContain("'use client'");
+
+  // The six sections required by the Phase 5 brief, each saved independently.
+  for (const heading of [
+    'Organization Information',
+    'Branding and Appearance',
+    'Currency and Financial Defaults',
+    'Invoice Preferences',
+    'Proposal Preferences',
+    'User Profile',
+  ]) {
+    expect(src, heading).toContain(heading);
+  }
+
+  // Currency is chosen from a searchable ISO list, not typed in by hand, and the
+  // next number shown is the one the server will actually allocate.
+  expect(src).toContain('Combobox');
+  expect(src).toContain('listCurrencies');
+  expect(src).toContain('nextNumbers.invoice.preview');
+  expect(src).toContain('nextNumbers.proposal.preview');
+
+  // Per-section saves hit the same validated endpoint.
+  expect(src).toContain("'/api/v1/settings/organization'");
+  expect(src).toContain("'/api/v1/settings/user'");
 });
 
 it('Future-only module routes use dynamic = force-dynamic', () => {
