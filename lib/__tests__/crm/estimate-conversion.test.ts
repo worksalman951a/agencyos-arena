@@ -66,7 +66,7 @@ const estimate = {
   updatedAt: new Date(),
 };
 
-const input = { invoiceTitle: 'Converted estimate', invoiceNumber: 'IGNORED-1', dueDate: null };
+const input = { invoiceTitle: 'Converted estimate', dueDate: null };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -112,8 +112,8 @@ describe('convertEstimateToInvoice', () => {
         notes: 'Scope agreed',
       }),
     });
-    // The client-supplied number is not written anywhere.
-    expect(JSON.stringify(mockInvoiceCreate.mock.calls)).not.toContain('IGNORED-1');
+    // The number is the allocator's, never a caller-supplied one.
+    expect(mockInvoiceCreate.mock.calls[0][0].data.number).toBe('INV-2026-0007');
     expect(mockEstimateUpdate).toHaveBeenCalledWith({
       where: { id: 'est-1' },
       data: { status: 'converted' },
