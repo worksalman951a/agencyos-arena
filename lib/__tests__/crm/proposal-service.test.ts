@@ -84,7 +84,6 @@ import type {
 
 const mockProposalFindMany = prisma.proposal.findMany as unknown as ReturnType<typeof vi.fn>;
 const mockProposalFindFirst = prisma.proposal.findFirst as unknown as ReturnType<typeof vi.fn>;
-const mockProposalFindUnique = prisma.proposal.findUnique as unknown as ReturnType<typeof vi.fn>;
 const mockProposalCreate = prisma.proposal.create as unknown as ReturnType<typeof vi.fn>;
 const mockAllocateNumber = allocateDocumentNumber as unknown as ReturnType<typeof vi.fn>;
 const mockProposalUpdate = prisma.proposal.update as unknown as ReturnType<typeof vi.fn>;
@@ -139,7 +138,11 @@ beforeEach(() => {
   let sequence = 0;
   mockAllocateNumber.mockImplementation(async () => {
     sequence += 1;
-    return `PRP-2026-${String(sequence).padStart(4, '0')}`;
+    return {
+      number: `PRP-2026-${String(sequence).padStart(4, '0')}`,
+      sequence,
+      prefix: 'PRP',
+    };
   });
 });
 

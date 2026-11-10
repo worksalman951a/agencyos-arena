@@ -42,13 +42,8 @@ export interface BrandContext {
   isCustomized: boolean;
 }
 
-/** Resolve branding for an organization id the caller has already authorized. */
-export async function getBrandingForOrganization(organizationId: string): Promise<BrandContext> {
-  const organization = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    select: { name: true, settings: true },
-  });
-
+/** Build the brand context from an organization row (or no organization). */
+function buildBrandContext(organization: { name: string; settings: unknown } | null): BrandContext {
   const settings = normalizeOrganizationSettings(organization?.settings);
   const brandColor = normalizeBrandColor(settings.brandColor);
   const theme = resolveBrandTheme(brandColor);
@@ -64,6 +59,21 @@ export async function getBrandingForOrganization(organizationId: string): Promis
   };
 }
 
+/** Default branding, used when the session has no organization to brand with. */
+export function getDefaultBranding(): BrandContext {
+  return buildBrandContext(null);
+}
+
+/** Resolve branding for an organization id the caller has already authorized. */
+export async function getBrandingForOrganization(organizationId: string): Promise<BrandContext> {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { name: true, settings: true },
+  });
+
+  return buildBrandContext(organization);
+}
+
 /**
  * Branding for the current request's session, or null when signed out.
  *
@@ -75,6 +85,15 @@ export const getBranding = cache(async (): Promise<BrandContext | null> => {
   const result = await auth.api.getSession({ headers: { cookie: cookieStore.toString() } });
   if (!result?.session || !result.user) return null;
 
-  const { organizationId } = await requireOrganization(result.user.id);
-  return getBrandingForOrganization(organizationId);
+  try {
+    const { organizationId } = await requireOrganization(result.user.id);
+    return await getBrandingForOrganization(organizationId);
+  } catch (error) {
+    // A session whose user has not been attached to an organization yet (for
+    // example straight after sign-up) must still be able to render the shell:
+    // branding falls back to the product defaults instead of failing the page.
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (statusCode === 401 || statusCode === 403) return getDefaultBranding();
+    throw error;
+  }
 });

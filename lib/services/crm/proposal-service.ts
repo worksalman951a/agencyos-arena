@@ -393,7 +393,7 @@ export async function createProposal(
   // Allocation and insertion share one transaction: the proposal counter cannot
   // advance without a proposal, and concurrent creates cannot collide.
   const proposal = await prisma.$transaction(async (tx: PrismaTransactionClient) => {
-    const number = await allocateDocumentNumber(tx, organizationId, 'proposal');
+    const { number } = await allocateDocumentNumber(tx, organizationId, 'proposal');
 
     return tx.proposal.create({
       data: {

@@ -136,7 +136,9 @@ beforeEach(() => {
   mockTransaction.mockImplementation((arg: unknown) =>
     typeof arg === 'function' ? (arg as (tx: unknown) => unknown)(prisma) : Promise.all(arg as [])
   );
-  mockAllocateNumber.mockResolvedValue('INV-2026-0001');
+  // Mirrors the allocator's real contract: it reserves a sequence and returns
+  // the formatted number alongside it.
+  mockAllocateNumber.mockResolvedValue({ number: 'INV-2026-0001', sequence: 1, prefix: 'INV' });
 });
 
 describe('Money math and validation', () => {
@@ -277,6 +279,10 @@ describe('createInvoice', () => {
     expect(mockInvoiceCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ number: 'INV-2026-0001' }) })
     );
+    // The stored column is the formatted string, never the allocator's result
+    // object (Prisma rejects an object value for `number` at runtime).
+    const createArgs = mockInvoiceCreate.mock.calls[0][0] as { data: { number: unknown } };
+    expect(typeof createArgs.data.number).toBe('string');
   });
 
   it('returns a complete response when the created row omits optional relations', async () => {

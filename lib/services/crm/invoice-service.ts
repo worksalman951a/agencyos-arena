@@ -402,7 +402,7 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
   // concurrent creates cannot receive the same number. Only ids/line items are
   // touched inside the transaction; the full record is re-read after commit.
   const created = await prisma.$transaction(async (tx: PrismaTransactionClient) => {
-    const number = await allocateDocumentNumber(tx, organizationId, 'invoice');
+    const { number } = await allocateDocumentNumber(tx, organizationId, 'invoice');
 
     return tx.invoice.create({
       data: {

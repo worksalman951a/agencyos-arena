@@ -331,6 +331,15 @@ describeIfDb('Organization settings and document numbering (real PostgreSQL)', (
     expect(lowered.body.nextNumbers.invoice.preview).toMatch(/^TST-\d{4}-0502$/);
 
     const next = await createInvoice(admin.token, 'After lowering the counter');
+    if (next.status !== 201) {
+      console.log('numbering diagnostics', JSON.stringify(next.body));
+      const numbers = await prisma.invoice.findMany({
+        where: { organizationId: admin.orgId },
+        select: { number: true },
+        orderBy: { number: 'asc' },
+      });
+      console.log('invoice numbers', JSON.stringify(numbers));
+    }
     expect(next.status).toBe(201);
     createdInvoiceIds.push(next.body.id);
     expect(next.body.number).toMatch(/^TST-\d{4}-0502$/);
