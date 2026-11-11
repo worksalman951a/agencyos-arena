@@ -107,10 +107,10 @@ async function activateThroughInvitePage(browser: Browser, fixture: PortalFixtur
 
   const acceptButton = page.getByTestId('accept-invitation');
   await Promise.race([
-    acceptButton.waitFor({ state: 'visible', timeout: 25_000 }).catch(() => undefined),
+    acceptButton.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => undefined),
     page
       .getByRole('alert')
-      .waitFor({ state: 'visible', timeout: 25_000 })
+      .waitFor({ state: 'visible', timeout: 20_000 })
       .catch(() => undefined),
   ]);
 
@@ -123,10 +123,10 @@ async function activateThroughInvitePage(browser: Browser, fixture: PortalFixtur
     await page.getByRole('button', { name: 'Sign in' }).click();
   }
 
-  await expect(acceptButton).toBeVisible({ timeout: 25_000 });
+  await expect(acceptButton).toBeVisible({ timeout: 20_000 });
   await acceptButton.click();
 
-  await expect(page).toHaveURL(/\/portal$/, { timeout: 25_000 });
+  await expect(page).toHaveURL(/\/portal$/, { timeout: 20_000 });
   return page;
 }
 
@@ -150,6 +150,11 @@ async function clientAccessIdFor(api: APIRequestContext, account: TestAccount): 
   expect(rows.length).toBeGreaterThan(0);
   return rows[rows.length - 1].id;
 }
+
+// Each journey provisions an agency, a client identity, a grant and then drives the
+// browser through activation/approval. That is several server renders, well past
+// Playwright's 30s default.
+test.describe.configure({ timeout: 120_000 });
 
 test.describe('Client portal end-to-end journeys', () => {
   test('a client activates from the invitation, logs in, and sees only the shared project', async ({
