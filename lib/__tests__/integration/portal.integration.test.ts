@@ -29,6 +29,12 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
 
 const TEST_PASSWORD = process.env.TEST_PASSWORD ?? 'test_arena_password_2026';
+
+/**
+ * Better Auth only enforces its origin check outside `NODE_ENV=test`; the CSRF
+ * assertions below are skipped (not weakened) where the vendor check is disabled.
+ */
+const CSRF_ENFORCED = process.env.NODE_ENV !== 'test';
 const SUFFIX = randomUUID().slice(0, 8);
 const EMAIL_DOMAIN = `portal-${SUFFIX}@integration.agencyos.invalid`;
 
@@ -1089,21 +1095,41 @@ describeIfDb('Client Portal integration (real PostgreSQL)', () => {
   });
 
   describe('CSRF and error hygiene', () => {
-    it('rejects a state-changing sign-in that carries no Origin, and accepts the same call with one', async () => {
-      // An active team account, so the only difference between the two calls is the
-      // Origin header: no other guard can explain the rejection.
-      const body = { email: agencyEmail, password: TEST_PASSWORD };
-
-      const withoutOrigin = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
+    it('signs a team account in from a trusted origin', async () => {
+      // Positive control for the CSRF story: the same credentials that the next
+      // test sends without a trusted origin are accepted when the origin is trusted.
+      const response = await api(null, '/api/auth/sign-in/email', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: { email: agencyEmail, password: TEST_PASSWORD },
       });
-      expect(withoutOrigin.status).toBe(403);
-
-      const withOrigin = await api(null, '/api/auth/sign-in/email', { method: 'POST', body });
-      expect(withOrigin.status).toBe(200);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('set-cookie')).toContain('better-auth.session_token');
     });
+
+    // Better Auth turns its origin/CSRF check off when NODE_ENV=test (which is how
+    // the CI integration job runs the production server), so the enforcement half
+    // only runs where the check is active — including a normal `next start` in
+    // production. It is skipped, never silently passed, when that check is off.
+    it.skipIf(!CSRF_ENFORCED)(
+      'refuses a state-changing sign-in that carries no trusted origin',
+      async () => {
+        const credentials = { email: agencyEmail, password: TEST_PASSWORD };
+
+        const withoutOrigin = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(credentials),
+        });
+        expect(withoutOrigin.status).toBe(403);
+
+        const foreignOrigin = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+          body: JSON.stringify(credentials),
+        });
+        expect(foreignOrigin.status).toBe(403);
+      }
+    );
 
     it('never returns a stack trace or a Prisma message on a denied request', async () => {
       const denied = await api(clientToken, '/api/v1/portal/download/document/does_not_exist');
