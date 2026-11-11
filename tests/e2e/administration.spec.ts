@@ -194,7 +194,7 @@ test.describe('workflow rules', () => {
     await expect(page.getByText('No executions yet.', { exact: false })).toBeVisible();
   });
 
-  test('dispatches an event, records the execution and shows it in the history', async ({
+  test('rejects caller-supplied workflow events until trusted producers are wired', async ({
     authedPage: page,
     api,
     account,
@@ -217,18 +217,17 @@ test.describe('workflow rules', () => {
       headers: authHeader(account),
       data: event,
     });
-    expect(first.status()).toBe(200);
+    expect(first.status()).toBe(410);
 
-    // The same event again must not execute twice.
+    // Replays are also rejected; nothing is recorded from the caller payload.
     const second = await api.post('/api/v1/automation/events', {
       headers: authHeader(account),
       data: event,
     });
-    expect(second.status()).toBe(200);
+    expect(second.status()).toBe(410);
 
     await page.goto(`/automation/rules/${rule.id}`);
-    await expect(page.getByRole('cell', { name: 'succeeded' })).toHaveCount(1);
-    await expect(page.getByRole('cell', { name: '1', exact: true })).toHaveCount(1);
+    await expect(page.getByText('No executions yet.', { exact: false })).toBeVisible();
   });
 });
 

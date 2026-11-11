@@ -26,6 +26,12 @@ const PUBLIC_ROUTES: Record<string, string> = {
     'Sign-up hand-off: authenticates the caller itself before creating the organization.',
 };
 
+/** Routes deliberately disabled until a trusted implementation exists. */
+const DISABLED_ROUTES: Record<string, string> = {
+  'api/v1/automation/events/route.ts':
+    'HTTP dispatch is disabled until trusted server-side event producers exist.',
+};
+
 /**
  * Service modules that intentionally do not authenticate: they run inside a
  * transaction opened by a guarded caller, or they are pure helpers.
@@ -51,10 +57,11 @@ describe('API route authorization', () => {
     (file) => file.endsWith('route.ts') && !file.includes('__tests__')
   );
   const publicRoutes = new Set(Object.keys(PUBLIC_ROUTES));
+  const disabledRoutes = new Set(Object.keys(DISABLED_ROUTES));
   const guardedRoutes = routes
     .map(relative)
     .map((file) => file.replace(/^app\//, ''))
-    .filter((file) => !publicRoutes.has(file));
+    .filter((file) => !publicRoutes.has(file) && !disabledRoutes.has(file));
 
   it('finds the API routes', () => {
     expect(routes.length).toBeGreaterThan(50);
@@ -81,6 +88,18 @@ describe('API route authorization', () => {
     for (const [route, reason] of Object.entries(PUBLIC_ROUTES)) {
       expect(fs.existsSync(path.join(APP_DIR, route)), `${route} should exist`).toBe(true);
       expect(reason.length).toBeGreaterThan(10);
+    }
+  });
+
+  it('keeps disabled routes inert and justified', () => {
+    for (const [route, reason] of Object.entries(DISABLED_ROUTES)) {
+      const file = path.join(APP_DIR, route);
+      expect(fs.existsSync(file), `${route} should exist`).toBe(true);
+      expect(reason.length).toBeGreaterThan(10);
+      const source = fs.readFileSync(file, 'utf8');
+      expect(source).toContain('status: 410');
+      expect(source).not.toContain('@/lib/db');
+      expect(source).not.toContain('@/lib/services/');
     }
   });
 });

@@ -42,7 +42,6 @@ const STATUS_WRITABLE_RECORDS: Record<string, string> = {
   Lead: 'lead',
   Opportunity: 'opportunity',
   Task: 'task',
-  Invoice: 'invoice',
   Project: 'project',
   Estimate: 'estimate',
   Proposal: 'proposal',
@@ -302,13 +301,15 @@ async function runAction(
 /**
  * Dispatch an event to every enabled rule in the organization.
  *
- * Must be called from an authorized context: it requires `workflow.read` in the
- * caller's organization. Records passed in are the record's own fields; they
- * are never fetched across organizations.
+ * This function is server-side only; callers must provide an event from a
+ * trusted domain-service origin. Until that origin and record-access contract
+ * are implemented, the HTTP route remains disabled. Dispatch itself requires
+ * `workflow.update` because actions can write records; this permission is
+ * defense-in-depth, not proof that the event payload is authentic.
  */
 export async function dispatchWorkflowEvent(event: WorkflowEvent): Promise<WorkflowEventResult> {
   const { userId, organizationId } = await getAuthorizedUser();
-  await requirePermission(userId, organizationId, 'workflow.read');
+  await requirePermission(userId, organizationId, 'workflow.update');
 
   const rules = await prisma.workflowRule.findMany({
     where: { organizationId, enabled: true, trigger: event.type },
