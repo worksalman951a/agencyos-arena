@@ -38,14 +38,14 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD ?? 'test_arena_password_2026';
 async function createAuthenticatedUser(email: string, name: string) {
   const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD, name }),
   });
   expect(signUpRes.status).toBe(200);
 
   const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
   expect(signInRes.status).toBe(200);
@@ -112,6 +112,7 @@ describeIfDb('Organization Bootstrap integration (real PostgreSQL)', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ organizationName: 'Test Org' }),
@@ -132,6 +133,7 @@ describeIfDb('Organization Bootstrap integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${token}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ organizationName: 'Bootstrap Test Org' }),
@@ -187,6 +189,7 @@ describeIfDb('Organization Bootstrap integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${token}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ organizationName: 'Idempotent Org' }),
@@ -200,6 +203,7 @@ describeIfDb('Organization Bootstrap integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${token}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ organizationName: 'Another Org' }),
@@ -218,6 +222,7 @@ describeIfDb('Organization Bootstrap integration (real PostgreSQL)', () => {
           headers: {
             Cookie: `better-auth.session_token=${token}`,
             'Content-Type': 'application/json',
+            Origin: SERVER_URL,
             Accept: 'application/json',
           },
           body: JSON.stringify({ organizationName: 'Concurrent Org A' }),
@@ -227,6 +232,7 @@ describeIfDb('Organization Bootstrap integration (real PostgreSQL)', () => {
           headers: {
             Cookie: `better-auth.session_token=${token}`,
             'Content-Type': 'application/json',
+            Origin: SERVER_URL,
             Accept: 'application/json',
           },
           body: JSON.stringify({ organizationName: 'Concurrent Org B' }),
@@ -260,6 +266,7 @@ describeIfDb('Organization Bootstrap integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${token}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ organizationName: '' }),

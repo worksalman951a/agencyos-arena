@@ -80,6 +80,7 @@ describeIfDb('Finance uniqueness constraints (real PostgreSQL)', () => {
   const auth = () => ({
     Cookie: `better-auth.session_token=${token}`,
     'Content-Type': 'application/json',
+    Origin: SERVER_URL,
     Accept: 'application/json',
   });
 

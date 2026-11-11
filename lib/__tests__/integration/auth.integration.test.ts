@@ -324,7 +324,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
 
     const res = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email,
         password: 'test-password-123',
@@ -351,7 +351,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
     // Register through the real API (no placeholder password hashes)
     const regRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email,
         password: 'test-password-123',
@@ -363,7 +363,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
     // Login through the real API - captures session cookie
     const loginRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email,
         password: 'test-password-123',
@@ -391,7 +391,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
     // Register and login through the real API
     await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email,
         password: 'test-password-123',
@@ -401,7 +401,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
 
     const loginRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email,
         password: 'test-password-123',
@@ -423,7 +423,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
   it('should reject invalid credentials through the Better Auth HTTP endpoint', async () => {
     const res = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email: 'nonexistent@test-agencyos.invalid',
         password: 'wrong-password',
@@ -439,7 +439,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
     // Register and login through the real API
     await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email,
         password: 'test-password-123',
@@ -449,7 +449,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
 
     const loginRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email,
         password: 'test-password-123',
@@ -469,7 +469,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
     // Logout using the authenticated session cookie
     const logoutRes = await authFetch('/api/auth/sign-out', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({}),
     });
     expect(logoutRes.status).toBe(200);
@@ -488,7 +488,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
     // Register and login through the real API
     await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email,
         password: 'test-password-123',
@@ -498,7 +498,7 @@ describeIfHttp('Authentication HTTP endpoints (real Next.js server)', () => {
 
     const loginRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         email,
         password: 'test-password-123',
