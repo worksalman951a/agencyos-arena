@@ -38,7 +38,7 @@ const builderSchema = z.object({
 
 type BuilderFormValues = z.infer<typeof builderSchema>;
 
-interface QuotationData {
+export interface QuotationData {
   id: string;
   title: string;
   status: string;
@@ -79,9 +79,31 @@ interface QuotationBuilderAppProps {
   initialOpportunities: OpportunityOption[];
   /** Organization default currency for new documents (settings). */
   defaultCurrency?: string;
+  /** Optional prefill values when creating from a Contact, Opportunity, or Proposal. */
+  prefill?: {
+    title?: string;
+    contactId?: string | null;
+    opportunityId?: string | null;
+    currency?: string;
+    validUntil?: string | null;
+    notes?: string | null;
+    items?: Array<{
+      id: string;
+      description: string;
+      quantity: string;
+      unitPrice: string;
+      taxRate: string;
+      sortOrder: number;
+    }>;
+  } | null;
 }
 
 const API_BASE = '/api/v1/crm/quotations';
+
+function toDateInputValue(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  return String(raw).slice(0, 10);
+}
 
 export function QuotationBuilderApp({
   isEdit,
@@ -90,12 +112,19 @@ export function QuotationBuilderApp({
   initialContacts,
   initialOpportunities,
   defaultCurrency = 'USD',
+  prefill = null,
 }: QuotationBuilderAppProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [showDiscardDialog, setShowDiscardDialog] = React.useState(false);
   const [contacts] = React.useState<ContactOption[]>(initialContacts);
   const [opportunities] = React.useState<OpportunityOption[]>(initialOpportunities);
+  const [savedStatus, setSavedStatus] = React.useState<string>(
+    existingQuotation?.status ?? 'draft'
+  );
+  const [savedNumber, setSavedNumber] = React.useState<string | null>(
+    existingQuotation?.number ?? null
+  );
 
   const initialInfo: DocumentInfo = React.useMemo(() => {
     if (existingQuotation) {
@@ -104,24 +133,24 @@ export function QuotationBuilderApp({
         contactId: existingQuotation.contactId,
         opportunityId: existingQuotation.opportunityId,
         currency: existingQuotation.currency,
-        validUntil: existingQuotation.validUntil,
+        validUntil: toDateInputValue(existingQuotation.validUntil),
         notes: existingQuotation.notes,
         status: existingQuotation.status,
       };
     }
     return {
-      title: '',
-      contactId: null,
-      opportunityId: null,
-      currency: defaultCurrency,
-      validUntil: null,
-      notes: null,
+      title: prefill?.title ?? '',
+      contactId: prefill?.contactId ?? null,
+      opportunityId: prefill?.opportunityId ?? null,
+      currency: prefill?.currency ?? defaultCurrency,
+      validUntil: toDateInputValue(prefill?.validUntil),
+      notes: prefill?.notes ?? null,
       status: 'draft',
     };
-  }, [existingQuotation, defaultCurrency]);
+  }, [existingQuotation, defaultCurrency, prefill]);
 
   const initialItems: LineItem[] = React.useMemo(() => {
-    if (existingQuotation?.items) {
+    if (existingQuotation?.items && existingQuotation.items.length > 0) {
       return existingQuotation.items.map((item) => {
         const it = item as Record<string, unknown>;
         return {
@@ -134,6 +163,9 @@ export function QuotationBuilderApp({
         };
       });
     }
+    if (prefill?.items && prefill.items.length > 0) {
+      return prefill.items;
+    }
     return [
       {
         id: crypto.randomUUID(),
@@ -144,7 +176,7 @@ export function QuotationBuilderApp({
         sortOrder: 0,
       },
     ];
-  }, [existingQuotation]);
+  }, [existingQuotation, prefill]);
 
   const builder = useBuilderState(initialInfo, initialItems);
 
@@ -166,14 +198,10 @@ export function QuotationBuilderApp({
     form.setValue('title', builder.documentInfo.title, { shouldDirty: true });
     form.setValue('contactId', builder.documentInfo.contactId, { shouldDirty: true });
     form.setValue('opportunityId', builder.documentInfo.opportunityId, { shouldDirty: true });
-    form.setValue('currency', builder.documentInfo.currency, {
-      shouldDirty: true,
-    });
+    form.setValue('currency', builder.documentInfo.currency, { shouldDirty: true });
     form.setValue('validUntil', builder.documentInfo.validUntil, { shouldDirty: true });
     form.setValue('notes', builder.documentInfo.notes, { shouldDirty: true });
-    form.setValue('status', builder.documentInfo.status, {
-      shouldDirty: true,
-    });
+    form.setValue('status', builder.documentInfo.status, { shouldDirty: true });
   }, [builder.documentInfo, form]);
 
   useUnsavedChanges(builder.isDirty, true);
@@ -182,6 +210,11 @@ export function QuotationBuilderApp({
     if (builder.isSaving) return;
 
     const formValues = form.getValues();
+
+    if (!formValues.title.trim()) {
+      builder.setError('Title is required');
+      return;
+    }
 
     if (builder.lineItems.length === 0) {
       builder.setError('At least one line item is required');
@@ -209,7 +242,7 @@ export function QuotationBuilderApp({
       const body = {
         opportunityId: formValues.opportunityId || null,
         contactId: formValues.contactId || null,
-        title: formValues.title,
+        title: formValues.title.trim(),
         status: formValues.status,
         currency: formValues.currency,
         validUntil: formValues.validUntil || null,
@@ -231,30 +264,44 @@ export function QuotationBuilderApp({
       }
 
       const saved = await res.json();
+      const normalizedValidUntil = toDateInputValue(saved.validUntil);
 
-      builder.markSaved();
+      const updatedItems: LineItem[] = (saved.items || []).map((item: Record<string, unknown>) => ({
+        id: String(item.id),
+        description: String(item.description),
+        quantity: String(item.quantity ?? '1'),
+        unitPrice: String(item.unitPrice ?? '0'),
+        taxRate: String(item.taxRate ?? '0'),
+        sortOrder: Number(item.sortOrder ?? 0),
+      }));
+
+      builder.setDocumentInfo({
+        title: saved.title,
+        contactId: saved.contactId ?? null,
+        opportunityId: saved.opportunityId ?? null,
+        currency: saved.currency,
+        validUntil: normalizedValidUntil,
+        notes: saved.notes ?? null,
+        status: saved.status,
+      });
+      builder.setLineItems(updatedItems);
+      setSavedStatus(saved.status);
+      if (saved.number) {
+        setSavedNumber(saved.number);
+      }
+
       form.reset({
         title: saved.title,
-        contactId: saved.contactId,
-        opportunityId: saved.opportunityId,
+        contactId: saved.contactId ?? null,
+        opportunityId: saved.opportunityId ?? null,
         currency: saved.currency,
-        validUntil: saved.validUntil,
-        notes: saved.notes,
+        validUntil: normalizedValidUntil,
+        notes: saved.notes ?? null,
         status: saved.status,
       });
 
-      const updatedItems: LineItem[] = (saved.items || []).map((item: Record<string, unknown>) => {
-        const it = item;
-        return {
-          id: String(it.id),
-          description: String(it.description),
-          quantity: String(it.quantity ?? '1'),
-          unitPrice: String(it.unitPrice ?? '0'),
-          taxRate: String(it.taxRate ?? '0'),
-          sortOrder: Number(it.sortOrder ?? 0),
-        };
-      });
-      builder.setLineItems(updatedItems);
+      // Mark clean AFTER updating line items and document info so isDirty stays false
+      builder.markSaved();
 
       toast({
         title: 'Saved',
@@ -295,7 +342,7 @@ export function QuotationBuilderApp({
 
   const previewData = {
     title: builder.documentInfo.title,
-    number: isEdit && existingQuotation ? existingQuotation.number : null,
+    number: isEdit ? savedNumber : null,
     contact: contacts.find((c) => c.id === builder.documentInfo.contactId),
     currency: builder.documentInfo.currency,
     validUntil: builder.documentInfo.validUntil,
@@ -303,8 +350,7 @@ export function QuotationBuilderApp({
     createdAt: existingQuotation?.createdAt ? new Date(existingQuotation.createdAt) : null,
   };
 
-  const isReadOnly =
-    isEdit && existingQuotation && !['draft', 'sent'].includes(existingQuotation.status);
+  const isReadOnly = Boolean(isEdit && !['draft', 'sent'].includes(savedStatus));
 
   const resolvedContact: { firstName?: string | null; lastName?: string | null } | null =
     previewData.contact ??
@@ -346,6 +392,7 @@ export function QuotationBuilderApp({
         saveLabel={isEdit ? 'Save Changes' : 'Create Quotation'}
         preview={
           <DocumentPreview
+            documentTypeLabel="Quotation"
             documentInfo={{
               ...previewData,
               contact: resolvedContact,
@@ -362,7 +409,9 @@ export function QuotationBuilderApp({
             currencies={builder.CURRENCIES}
             contacts={contacts}
             opportunities={opportunities}
-            loading={false}
+            loading={isReadOnly}
+            isEdit={isEdit}
+            savedStatus={savedStatus}
             onChange={(updates) => {
               builder.setDocumentInfo(updates);
               if (updates.title !== undefined)
@@ -372,17 +421,13 @@ export function QuotationBuilderApp({
               if (updates.opportunityId !== undefined)
                 form.setValue('opportunityId', updates.opportunityId, { shouldDirty: true });
               if (updates.currency !== undefined)
-                form.setValue('currency', updates.currency, {
-                  shouldDirty: true,
-                });
+                form.setValue('currency', updates.currency, { shouldDirty: true });
               if (updates.validUntil !== undefined)
                 form.setValue('validUntil', updates.validUntil, { shouldDirty: true });
               if (updates.notes !== undefined)
                 form.setValue('notes', updates.notes, { shouldDirty: true });
               if (updates.status !== undefined)
-                form.setValue('status', updates.status, {
-                  shouldDirty: true,
-                });
+                form.setValue('status', updates.status, { shouldDirty: true });
             }}
           />
 
@@ -396,18 +441,12 @@ export function QuotationBuilderApp({
             onContactSelect={(id) => {
               builder.setDocumentInfo({ contactId: id });
               form.setValue('contactId', id, { shouldDirty: true });
-              if (id) {
-                form.setValue('opportunityId', null, {
-                  shouldDirty: true,
-                });
-                builder.setDocumentInfo({ opportunityId: null });
-              }
             }}
             onOpportunitySelect={(id) => {
               builder.setDocumentInfo({ opportunityId: id });
               form.setValue('opportunityId', id, { shouldDirty: true });
             }}
-            loading={false}
+            loading={isReadOnly}
           />
 
           <LineItemEditor
@@ -423,7 +462,7 @@ export function QuotationBuilderApp({
 
           {isReadOnly && (
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive flex items-center gap-2 mb-4">
-              <span>This quotation is {existingQuotation.status} and cannot be edited.</span>
+              <span>This quotation is {savedStatus} and cannot be edited.</span>
             </div>
           )}
         </div>

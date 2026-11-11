@@ -1,10 +1,13 @@
 'use client';
 
 import * as React from 'react';
+import { BrandMark } from '@/components/brand/brand-mark';
+import { useBranding } from '@/components/providers/branding-provider';
 import { type LineItem, type BuilderTotals } from './use-builder-state';
 export type { BuilderTotals };
 
 interface DocumentPreviewProps {
+  documentTypeLabel?: 'Proposal' | 'Quotation';
   documentInfo: {
     title: string;
     number: string | null;
@@ -28,14 +31,25 @@ function formatCurrency(value: string, currency: string): string {
 
 function formatDate(value: string | null): string {
   if (!value) return '—';
-  return new Date(value).toLocaleDateString(undefined, {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '—';
+  return parsed.toLocaleDateString(undefined, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
   });
 }
 
-export function DocumentPreview({ documentInfo, items, totals, isLoading }: DocumentPreviewProps) {
+export function DocumentPreview({
+  documentTypeLabel = 'Proposal',
+  documentInfo,
+  items,
+  totals,
+  isLoading,
+}: DocumentPreviewProps) {
+  const branding = useBranding();
+  const brandName = branding?.brandName || 'AgencyOS';
+
   const contactName = documentInfo.contact
     ? [documentInfo.contact.firstName ?? '', documentInfo.contact.lastName ?? '']
         .join(' ')
@@ -55,7 +69,6 @@ export function DocumentPreview({ documentInfo, items, totals, isLoading }: Docu
 
       {/* A4 document preview */}
       <div className="flex flex-col items-center justify-center flex-1 min-h-0 bg-canvas p-4 sm:p-6 overflow-auto">
-        {/* A4 page: 210mm x 297mm, approx 794px x 1123px at 96dpi */}
         <div
           className="bg-white rounded-lg shadow-lg border border-border relative overflow-hidden max-w-[794px] w-full min-h-[1123px]"
           style={{
@@ -65,20 +78,28 @@ export function DocumentPreview({ documentInfo, items, totals, isLoading }: Docu
             boxSizing: 'border-box',
           }}
         >
+          {/* Organization Brand Header */}
+          <div className="mb-6 pb-4 border-b border-border flex items-center justify-between">
+            <BrandMark name={brandName} logoUrl={branding?.logoUrl ?? null} variant="document" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {documentTypeLabel}
+            </span>
+          </div>
+
           {/* Header */}
-          <div className="mb-12 border-b border-border pb-6">
+          <div className="mb-10 border-b border-border pb-6">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div className="flex-1">
                 <h1 className="text-2xl font-bold text-foreground mb-1">
-                  {documentInfo.title || 'Untitled Document'}
+                  {documentInfo.title || `Untitled ${documentTypeLabel}`}
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                  {`Proposal #${documentInfo.number ?? '—'} &bull; ${documentInfo.currency}`}
+                  {`${documentTypeLabel} #${documentInfo.number ?? '—'} • ${documentInfo.currency}`}
                 </p>
               </div>
               <div className="text-right">
                 <p className="text-sm font-medium text-foreground">
-                  {formatDate(documentInfo.validUntil)}
+                  Valid until: {formatDate(documentInfo.validUntil)}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Issued: {formatDate(documentInfo.createdAt?.toISOString() ?? null)}
@@ -90,12 +111,12 @@ export function DocumentPreview({ documentInfo, items, totals, isLoading }: Docu
           {/* Client info */}
           <div className="mb-10">
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              Client
+              Prepared For
             </h3>
             <div className="bg-muted/50 rounded-lg p-4">
               <p className="text-sm font-medium text-foreground">{contactName}</p>
               <p className="text-xs text-muted-foreground">
-                Via AgencyOS &bull; {documentInfo.currency}
+                {brandName} &bull; {documentInfo.currency}
               </p>
             </div>
           </div>
@@ -124,9 +145,7 @@ export function DocumentPreview({ documentInfo, items, totals, isLoading }: Docu
                     const qty = Number(item.quantity || 0);
                     const price = Number(item.unitPrice || 0);
                     const rate = Number(item.taxRate || 0);
-                    const amount = qty * price;
-                    const tax = amount * (rate / 100);
-                    const total = amount + tax;
+                    const preTaxAmount = (Math.round(qty * 100) * Math.round(price * 100)) / 10000;
 
                     return (
                       <tr key={item.id} className="border-b border-border">
@@ -137,7 +156,7 @@ export function DocumentPreview({ documentInfo, items, totals, isLoading }: Docu
                         </td>
                         <td className="py-3 px-4 text-sm text-right">{rate.toFixed(2)}%</td>
                         <td className="py-3 px-4 text-sm text-right font-medium">
-                          {formatCurrency(total.toFixed(2), documentInfo.currency)}
+                          {formatCurrency(preTaxAmount.toFixed(2), documentInfo.currency)}
                         </td>
                       </tr>
                     );
@@ -190,7 +209,7 @@ export function DocumentPreview({ documentInfo, items, totals, isLoading }: Docu
           {/* Footer */}
           <div className="mt-auto pt-8 border-t border-border">
             <p className="text-xs text-muted-foreground">
-              Generated by AgencyOS &bull; {new Date().getFullYear()}
+              Prepared by {brandName} &bull; {new Date().getFullYear()}
             </p>
           </div>
         </div>

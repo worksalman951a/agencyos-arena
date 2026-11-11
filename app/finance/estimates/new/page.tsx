@@ -1,19 +1,37 @@
 /**
  * AgencyOS New Estimate page.
- * Client component form for creating a new estimate.
+ * Client component form for creating a new estimate with real CRM Contact selection
+ * and optional pre-population from a Proposal, Quotation, or Contact.
  */
 
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
+interface ContactOption {
+  id: string;
+  firstName: string | null;
+  lastName: string;
+  email: string | null;
+}
+
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'PKR', 'INR', 'AED', 'SGD', 'JPY'];
+
+function suggestEstimateNumber(): string {
+  const year = new Date().getFullYear();
+  const suffix = String(Math.floor(1000 + Math.random() * 9000));
+  return `EST-${year}-${suffix}`;
+}
+
 export default function NewEstimatePage() {
   const router = useRouter();
+  const [contacts, setContacts] = useState<ContactOption[]>([]);
+  const [loadingInit, setLoadingInit] = useState(true);
   const [clientId, setClientId] = useState('');
-  const [number, setNumber] = useState('');
+  const [number, setNumber] = useState(suggestEstimateNumber);
   const [status, setStatus] = useState('draft');
   const [total, setTotal] = useState('');
   const [currency, setCurrency] = useState('USD');
@@ -21,8 +39,85 @@ export default function NewEstimatePage() {
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    let active = true;
+
+    async function init() {
+      const search = new URLSearchParams(window.location.search);
+      const qClientId = search.get('clientId');
+      const fromProposalId = search.get('fromProposalId');
+      const fromQuotationId = search.get('fromQuotationId');
+
+      try {
+        const [contactsRes, orgRes] = await Promise.all([
+          fetch('/api/v1/crm/contacts?pageSize=100').catch(() => null),
+          fetch('/api/v1/settings/organization').catch(() => null),
+        ]);
+
+        if (!active) return;
+
+        if (contactsRes?.ok) {
+          const data = (await contactsRes.json()) as { contacts?: ContactOption[] };
+          if (Array.isArray(data.contacts)) {
+            setContacts(data.contacts);
+          }
+        }
+
+        if (orgRes?.ok) {
+          const orgData = (await orgRes.json()) as {
+            settings?: { defaultCurrency?: string };
+          };
+          if (orgData.settings?.defaultCurrency) {
+            setCurrency(orgData.settings.defaultCurrency);
+          }
+        }
+
+        if (qClientId) {
+          setClientId(qClientId);
+        }
+
+        if (fromProposalId) {
+          const propRes = await fetch(`/api/v1/crm/proposals/${fromProposalId}`).catch(() => null);
+          if (active && propRes?.ok) {
+            const prop = await propRes.json();
+            if (prop.contactId) setClientId(prop.contactId);
+            if (prop.total) setTotal(String(prop.total));
+            if (prop.currency) setCurrency(prop.currency);
+            if (prop.validUntil) setValidUntil(String(prop.validUntil).slice(0, 10));
+            const summary = `Derived from Proposal #${prop.number}: ${prop.title}`;
+            setNotes(prop.notes ? `${summary}\n\n${prop.notes}` : summary);
+          }
+        } else if (fromQuotationId) {
+          const quotRes = await fetch(`/api/v1/crm/quotations/${fromQuotationId}`).catch(
+            () => null
+          );
+          if (active && quotRes?.ok) {
+            const quot = await quotRes.json();
+            if (quot.contactId) setClientId(quot.contactId);
+            if (quot.total) setTotal(String(quot.total));
+            if (quot.currency) setCurrency(quot.currency);
+            if (quot.validUntil) setValidUntil(String(quot.validUntil).slice(0, 10));
+            const summary = `Derived from Quotation #${quot.number}: ${quot.title}`;
+            setNotes(quot.notes ? `${summary}\n\n${quot.notes}` : summary);
+          }
+        }
+      } finally {
+        if (active) setLoadingInit(false);
+      }
+    }
+
+    void init();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!clientId) {
+      toast.error('Please select a client contact');
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch('/api/v1/finance/estimates', {
@@ -30,18 +125,18 @@ export default function NewEstimatePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clientId,
-          number,
+          number: number.trim(),
           status,
-          total,
-          currency,
+          total: total.trim(),
+          currency: currency.trim() || 'USD',
           validUntil: validUntil || undefined,
           notes: notes || undefined,
         }),
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to create estimate');
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || 'Failed to create estimate');
       }
 
       const data = await res.json();
@@ -66,27 +161,69 @@ export default function NewEstimatePage() {
         </Link>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
+      <form
+        onSubmit={handleSubmit}
+        className="space-y-6 max-w-2xl bg-card p-6 rounded-lg border border-border"
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium">Client ID</label>
-            <input
-              type="text"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              placeholder="Client contact CUID"
-              className="border border-input rounded-md px-3 py-2 text-sm"
-              required
-            />
+            <label htmlFor="estimate-client" className="block text-sm font-medium">
+              Client Contact <span className="text-destructive">*</span>
+            </label>
+            {contacts.length > 0 ? (
+              <select
+                id="estimate-client"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                disabled={loadingInit}
+                className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+                required
+              >
+                <option value="">Select a client contact…</option>
+                {contacts.map((c) => {
+                  const fullName = `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'Unnamed';
+                  return (
+                    <option key={c.id} value={c.id}>
+                      {c.email ? `${fullName} (${c.email})` : fullName}
+                    </option>
+                  );
+                })}
+              </select>
+            ) : (
+              <div className="space-y-1">
+                <input
+                  id="estimate-client"
+                  type="text"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  placeholder="Client contact ID"
+                  className="w-full border border-input rounded-md px-3 py-2 text-sm"
+                  required
+                />
+                {!loadingInit && (
+                  <p className="text-xs text-muted-foreground">
+                    No contacts found yet —{' '}
+                    <Link href="/crm/contacts/new" className="text-accent hover:underline">
+                      create a contact first
+                    </Link>
+                    .
+                  </p>
+                )}
+              </div>
+            )}
           </div>
+
           <div className="space-y-2">
-            <label className="text-sm font-medium">Estimate Number</label>
+            <label htmlFor="estimate-number" className="block text-sm font-medium">
+              Estimate Number <span className="text-destructive">*</span>
+            </label>
             <input
+              id="estimate-number"
               type="text"
               value={number}
               onChange={(e) => setNumber(e.target.value)}
-              placeholder="e.g. EST-001"
-              className="border border-input rounded-md px-3 py-2 text-sm"
+              placeholder="e.g. EST-2026-0001"
+              className="w-full border border-input rounded-md px-3 py-2 text-sm"
               required
             />
           </div>
@@ -94,69 +231,88 @@ export default function NewEstimatePage() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium">Status</label>
+            <label htmlFor="estimate-status" className="block text-sm font-medium">
+              Status
+            </label>
             <select
+              id="estimate-status"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              className="border border-input rounded-md px-3 py-2 text-sm bg-background"
+              className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
             >
               <option value="draft">Draft</option>
               <option value="sent">Sent</option>
               <option value="accepted">Accepted</option>
-              <option value="rejected">Rejected</option>
-              <option value="expired">Expired</option>
             </select>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium">Total</label>
+            <label htmlFor="estimate-total" className="block text-sm font-medium">
+              Total <span className="text-destructive">*</span>
+            </label>
             <input
-              type="text"
+              id="estimate-total"
+              type="number"
+              step="0.01"
+              min="0"
               value={total}
               onChange={(e) => setTotal(e.target.value)}
               placeholder="0.00"
-              className="border border-input rounded-md px-3 py-2 text-sm text-right"
+              className="w-full border border-input rounded-md px-3 py-2 text-sm text-right"
               required
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium">Currency</label>
-            <input
-              type="text"
+            <label htmlFor="estimate-currency" className="block text-sm font-medium">
+              Currency
+            </label>
+            <select
+              id="estimate-currency"
               value={currency}
               onChange={(e) => setCurrency(e.target.value)}
-              placeholder="USD"
-              className="border border-input rounded-md px-3 py-2 text-sm"
-            />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+            >
+              {(CURRENCIES.includes(currency) ? CURRENCIES : [currency, ...CURRENCIES]).map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium">Valid Until</label>
+            <label htmlFor="estimate-valid-until" className="block text-sm font-medium">
+              Valid Until
+            </label>
             <input
+              id="estimate-valid-until"
               type="date"
               value={validUntil}
               onChange={(e) => setValidUntil(e.target.value)}
-              className="border border-input rounded-md px-3 py-2 text-sm"
+              className="w-full border border-input rounded-md px-3 py-2 text-sm"
             />
           </div>
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium">Notes</label>
+          <label htmlFor="estimate-notes" className="block text-sm font-medium">
+            Notes
+          </label>
           <textarea
+            id="estimate-notes"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            placeholder="Terms, conditions, or special notes..."
-            className="border border-input rounded-md px-3 py-2 text-sm"
+            rows={4}
+            placeholder="Terms, conditions, or scope summary..."
+            className="w-full border border-input rounded-md px-3 py-2 text-sm"
           />
         </div>
 
         <button
           type="submit"
           disabled={loading}
-          className="px-6 py-3 bg-accent text-accent-foreground rounded-md text-sm font-medium disabled:opacity-50 hover:bg-accent/90"
+          className="px-6 py-2.5 bg-accent text-accent-foreground rounded-md text-sm font-medium disabled:opacity-50 hover:bg-accent/90"
         >
           {loading ? 'Creating...' : 'Create Estimate'}
         </button>

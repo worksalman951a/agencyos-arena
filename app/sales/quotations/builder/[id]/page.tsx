@@ -1,6 +1,12 @@
 /**
  * AgencyOS Sales Quotation Builder Edit page (dynamic route).
- * * Server component: validates auth, loads existing quotation by ID, * contacts and opportunities, then renders the Quotation builder in edit * mode with saved values and line items pre-populated. * * Route: /sales/quotations/builder/[id] */
+ *
+ * Server component: validates auth, loads existing quotation by ID,
+ * contacts and opportunities, then renders the Quotation builder in edit
+ * mode with saved values and line items pre-populated.
+ *
+ * Route: /sales/quotations/builder/[id]
+ */
 
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -26,9 +32,7 @@ interface BuilderEditPageProps {
   params: Promise<{ id: string }>;
 }
 
-export default async function QuotationBuilderEditPage({
-  params,
-}: BuilderEditPageProps) {
+export default async function QuotationBuilderEditPage({ params }: BuilderEditPageProps) {
   const { id } = await params;
 
   const cookieStore = await cookies();
@@ -41,47 +45,43 @@ export default async function QuotationBuilderEditPage({
   }
 
   // Load contacts, opportunities, and the existing quotation in parallel
-  const [contactsResult, opportunitiesResult, existingQuotation] =
-    await Promise.all([
-      listContacts({
-        page: 1,
-        pageSize: 100,
-        sortBy: 'createdAt',
-        sortOrder: 'desc',
-        includeDeleted: false,
-      }).catch(() => ({
-        contacts: [],
-        total: 0,
-        totalPages: 1,
-      })),
-      listOpportunities({
-        page: 1,
-        pageSize: 100,
-        sortBy: 'createdAt',
-        sortOrder: 'desc',
-        includeDeleted: false,
-      }).catch(() => ({
-        opportunities: [],
-        total: 0,
-        totalPages: 1,
-      })),
-      getQuotation(id).catch(() => null),
-    ]);
+  const [contactsResult, opportunitiesResult, existingQuotation] = await Promise.all([
+    listContacts({
+      page: 1,
+      pageSize: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+      includeDeleted: false,
+    }).catch(() => ({
+      contacts: [],
+      total: 0,
+      totalPages: 1,
+    })),
+    listOpportunities({
+      page: 1,
+      pageSize: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+      includeDeleted: false,
+    }).catch(() => ({
+      opportunities: [],
+      total: 0,
+      totalPages: 1,
+    })),
+    getQuotation(id).catch(() => null),
+  ]);
 
   if (!existingQuotation) {
     redirect('/sales/quotations');
   }
 
-  const rawContacts = Array.isArray(
-    (contactsResult as { contacts: unknown[] }).contacts
-  )
+  const rawContacts = Array.isArray((contactsResult as { contacts: unknown[] }).contacts)
     ? ((contactsResult as { contacts: unknown[] }).contacts as unknown[])
     : [];
   const rawOpportunities = Array.isArray(
     (opportunitiesResult as { opportunities: unknown[] }).opportunities
   )
-    ? ((opportunitiesResult as { opportunities: unknown[] })
-        .opportunities as unknown[])
+    ? ((opportunitiesResult as { opportunities: unknown[] }).opportunities as unknown[])
     : [];
 
   const contacts: ContactOption[] = rawContacts.map((c) => {
@@ -103,40 +103,19 @@ export default async function QuotationBuilderEditPage({
   });
 
   // Map QuotationResponse to local QuotationData shape
-  const existingQuotationData: {
-    id: string;
-    title: string;
-    status: string;
-    currency: string;
-    validUntil: string | null;
-    notes: string | null;
-    contactId: string | null;
-    opportunityId: string | null;
-    number: string;
-    createdAt: string | null;
-    items: Array<{
-      id: string;
-      description: string;
-      quantity: number | string;
-      unitPrice: number | string;
-      taxRate: number | string;
-      sortOrder: number;
-    }>;
-  } = {
+  const existingQuotationData = {
     id: existingQuotation.id,
     title: existingQuotation.title,
     status: existingQuotation.status,
     currency: existingQuotation.currency,
     validUntil: existingQuotation.validUntil
-      ? existingQuotation.validUntil.toISOString()
+      ? existingQuotation.validUntil.toISOString().slice(0, 10)
       : null,
     notes: existingQuotation.notes,
     contactId: existingQuotation.contactId,
     opportunityId: existingQuotation.opportunityId,
     number: existingQuotation.number,
-    createdAt: existingQuotation.createdAt
-      ? existingQuotation.createdAt.toISOString()
-      : null,
+    createdAt: existingQuotation.createdAt ? existingQuotation.createdAt.toISOString() : null,
     items: (existingQuotation.items || []).map((item) => {
       const it = item as unknown as Record<string, unknown>;
       return {
@@ -160,4 +139,3 @@ export default async function QuotationBuilderEditPage({
     />
   );
 }
-

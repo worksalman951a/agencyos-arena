@@ -121,7 +121,7 @@ export async function listDocuments() {
   const documents = await prisma.document.findMany({
     where: {
       organizationId,
-      OR: [{ folder: null }, { folder: { not: '__template__' } }],
+      OR: [{ folder: null }, { folder: { notIn: ['__template__', '__shared__'] } }],
     },
     include: {
       fileAsset: { select: { id: true, originalName: true, mimeType: true, size: true } },
