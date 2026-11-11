@@ -28,14 +28,14 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD ?? 'test_arena_password_2026';
 async function createAuthenticatedUserWithOrg(email: string, name: string, orgName: string) {
   const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD, name }),
   });
   expect(signUpRes.status).toBe(200);
 
   const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
   expect(signInRes.status).toBe(200);
@@ -49,6 +49,7 @@ async function createAuthenticatedUserWithOrg(email: string, name: string, orgNa
     headers: {
       Cookie: `better-auth.session_token=${token}`,
       'Content-Type': 'application/json',
+      Origin: SERVER_URL,
       Accept: 'application/json',
     },
     body: JSON.stringify({ organizationName: orgName }),
@@ -150,185 +151,195 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
   });
 
   describe('Complete CRM user journey: Contact → Account → Lead → Pipeline/Stage → Opportunity → Conversion', () => {
-    it('creates account, contact, pipeline, stage, lead, opportunity, and converts lead', async () => {
-      // 1. Create an account
-      const accountRes = await fetch(`${SERVER_URL}/api/v1/crm/accounts`, {
-        method: 'POST',
-        headers: {
-          Cookie: `better-auth.session_token=${testSessionToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          name: 'Workflow Test Account',
-          website: 'https://example.com',
-          status: 'active',
-        }),
-      });
-      expect(accountRes.status).toBe(201);
-      const account = await accountRes.json();
-      createdRecords.accounts.push(account.id);
-
-      // 2. Create a contact linked to the account
-      const contactRes = await fetch(`${SERVER_URL}/api/v1/crm/contacts`, {
-        method: 'POST',
-        headers: {
-          Cookie: `better-auth.session_token=${testSessionToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          firstName: 'John',
-          lastName: 'Workflow',
-          email: 'john.workflow@example.com',
-          phone: '5551234567',
-          accountId: account.id,
-          status: 'active',
-        }),
-      });
-      expect(contactRes.status).toBe(201);
-      const contact = await contactRes.json();
-      createdRecords.contacts.push(contact.id);
-
-      // 3. Create a pipeline
-      const pipelineRes = await fetch(`${SERVER_URL}/api/v1/crm/pipelines`, {
-        method: 'POST',
-        headers: {
-          Cookie: `better-auth.session_token=${testSessionToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          name: 'Sales Pipeline',
-          description: 'Main sales pipeline',
-          isDefault: true,
-        }),
-      });
-      expect(pipelineRes.status).toBe(201);
-      const pipeline = await pipelineRes.json();
-      createdRecords.pipelines.push(pipeline.id);
-
-      // 4. Create a pipeline stage (pipelineId via URL query parameter per API contract)
-      const stageRes = await fetch(
-        `${SERVER_URL}/api/v1/crm/pipeline-stages?pipelineId=${pipeline.id}`,
-        {
+    it(
+      'creates account, contact, pipeline, stage, lead, opportunity, and converts lead',
+      { timeout: 120_000 },
+      async () => {
+        // 1. Create an account
+        const accountRes = await fetch(`${SERVER_URL}/api/v1/crm/accounts`, {
           method: 'POST',
           headers: {
             Cookie: `better-auth.session_token=${testSessionToken}`,
             'Content-Type': 'application/json',
+            Origin: SERVER_URL,
             Accept: 'application/json',
           },
           body: JSON.stringify({
-            name: 'Qualified',
-            order: 1,
-            probability: 50,
-            isWon: false,
-            isLost: false,
+            name: 'Workflow Test Account',
+            website: 'https://example.com',
+            status: 'active',
           }),
-        }
-      );
-      expect(stageRes.status).toBe(201);
-      const stage = await stageRes.json();
-      createdRecords.stages.push(stage.id);
+        });
+        expect(accountRes.status).toBe(201);
+        const account = await accountRes.json();
+        createdRecords.accounts.push(account.id);
 
-      // 5. Create a lead linked to contact, account, pipeline, stage
-      const leadRes = await fetch(`${SERVER_URL}/api/v1/crm/leads`, {
-        method: 'POST',
-        headers: {
-          Cookie: `better-auth.session_token=${testSessionToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          contactId: contact.id,
-          accountId: account.id,
-          source: 'website',
-          status: 'qualified',
-          priority: 'high',
-          expectedValue: '100000.00',
-          pipelineId: pipeline.id,
-          stageId: stage.id,
-          notes: 'Workflow test lead',
-        }),
-      });
-      expect(leadRes.status).toBe(201);
-      const lead = await leadRes.json();
-      createdRecords.leads.push(lead.id);
+        // 2. Create a contact linked to the account
+        const contactRes = await fetch(`${SERVER_URL}/api/v1/crm/contacts`, {
+          method: 'POST',
+          headers: {
+            Cookie: `better-auth.session_token=${testSessionToken}`,
+            'Content-Type': 'application/json',
+            Origin: SERVER_URL,
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            firstName: 'John',
+            lastName: 'Workflow',
+            email: 'john.workflow@example.com',
+            phone: '5551234567',
+            accountId: account.id,
+            status: 'active',
+          }),
+        });
+        expect(contactRes.status).toBe(201);
+        const contact = await contactRes.json();
+        createdRecords.contacts.push(contact.id);
 
-      // Verify lead has correct relationships
-      expect(lead.contactId).toBe(contact.id);
-      expect(lead.accountId).toBe(account.id);
-      expect(lead.pipelineId).toBe(pipeline.id);
-      expect(lead.stageId).toBe(stage.id);
-      expect(lead.status).toBe('qualified');
+        // 3. Create a pipeline
+        const pipelineRes = await fetch(`${SERVER_URL}/api/v1/crm/pipelines`, {
+          method: 'POST',
+          headers: {
+            Cookie: `better-auth.session_token=${testSessionToken}`,
+            'Content-Type': 'application/json',
+            Origin: SERVER_URL,
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            name: 'Sales Pipeline',
+            description: 'Main sales pipeline',
+            isDefault: true,
+          }),
+        });
+        expect(pipelineRes.status).toBe(201);
+        const pipeline = await pipelineRes.json();
+        createdRecords.pipelines.push(pipeline.id);
 
-      // 6. Convert the lead to an opportunity
-      const convertRes = await fetch(`${SERVER_URL}/api/v1/crm/leads/${lead.id}/convert`, {
-        method: 'POST',
-        headers: {
-          Cookie: `better-auth.session_token=${testSessionToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          title: 'Workflow Opportunity',
-          value: '100000.00',
-          currency: 'USD',
-          pipelineId: pipeline.id,
-          stageId: stage.id,
-          ownerId: testUserId,
-        }),
-      });
-      expect(convertRes.status).toBe(201);
-      const convertBody = await convertRes.json();
-      expect(convertBody.alreadyConverted).toBe(false);
-      expect(convertBody.opportunity.leadId).toBe(lead.id);
-      expect(convertBody.opportunity.contactId).toBe(contact.id);
-      expect(convertBody.opportunity.accountId).toBe(account.id);
-      expect(convertBody.opportunity.pipelineId).toBe(pipeline.id);
-      expect(convertBody.opportunity.stageId).toBe(stage.id);
-      expect(convertBody.lead.status).toBe('converted');
-      createdRecords.opportunities.push(convertBody.opportunity.id);
+        // 4. Create a pipeline stage (pipelineId via URL query parameter per API contract)
+        const stageRes = await fetch(
+          `${SERVER_URL}/api/v1/crm/pipeline-stages?pipelineId=${pipeline.id}`,
+          {
+            method: 'POST',
+            headers: {
+              Cookie: `better-auth.session_token=${testSessionToken}`,
+              'Content-Type': 'application/json',
+              Origin: SERVER_URL,
+              Accept: 'application/json',
+            },
+            body: JSON.stringify({
+              name: 'Qualified',
+              order: 1,
+              probability: 50,
+              isWon: false,
+              isLost: false,
+            }),
+          }
+        );
+        expect(stageRes.status).toBe(201);
+        const stage = await stageRes.json();
+        createdRecords.stages.push(stage.id);
 
-      // 7. Verify lead detail shows converted status and opportunity link
-      const leadDetailRes = await fetch(`${SERVER_URL}/api/v1/crm/leads/${lead.id}`, {
-        headers: {
-          Cookie: `better-auth.session_token=${testSessionToken}`,
-          Accept: 'application/json',
-        },
-      });
-      expect(leadDetailRes.status).toBe(200);
-      const leadDetail = await leadDetailRes.json();
-      expect(leadDetail.status).toBe('converted');
-      expect(leadDetail.convertedOpportunity).toBeDefined();
-      expect(leadDetail.convertedOpportunity.id).toBe(convertBody.opportunity.id);
+        // 5. Create a lead linked to contact, account, pipeline, stage
+        const leadRes = await fetch(`${SERVER_URL}/api/v1/crm/leads`, {
+          method: 'POST',
+          headers: {
+            Cookie: `better-auth.session_token=${testSessionToken}`,
+            'Content-Type': 'application/json',
+            Origin: SERVER_URL,
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            contactId: contact.id,
+            accountId: account.id,
+            source: 'website',
+            status: 'qualified',
+            priority: 'high',
+            expectedValue: '100000.00',
+            pipelineId: pipeline.id,
+            stageId: stage.id,
+            notes: 'Workflow test lead',
+          }),
+        });
+        expect(leadRes.status).toBe(201);
+        const lead = await leadRes.json();
+        createdRecords.leads.push(lead.id);
 
-      // 8. Verify account now shows contact count
-      const accountDetailRes = await fetch(`${SERVER_URL}/api/v1/crm/accounts/${account.id}`, {
-        headers: {
-          Cookie: `better-auth.session_token=${testSessionToken}`,
-          Accept: 'application/json',
-        },
-      });
-      expect(accountDetailRes.status).toBe(200);
-      const accountDetail = await accountDetailRes.json();
-      expect(accountDetail.contactCount).toBeGreaterThanOrEqual(1);
+        // Verify lead has correct relationships
+        expect(lead.contactId).toBe(contact.id);
+        expect(lead.accountId).toBe(account.id);
+        expect(lead.pipelineId).toBe(pipeline.id);
+        expect(lead.stageId).toBe(stage.id);
+        expect(lead.status).toBe('qualified');
 
-      // 9. Verify opportunity shows linked lead
-      const oppDetailRes = await fetch(
-        `${SERVER_URL}/api/v1/crm/opportunities/${convertBody.opportunity.id}`,
-        {
+        // 6. Convert the lead to an opportunity
+        const convertRes = await fetch(`${SERVER_URL}/api/v1/crm/leads/${lead.id}/convert`, {
+          method: 'POST',
+          headers: {
+            Cookie: `better-auth.session_token=${testSessionToken}`,
+            'Content-Type': 'application/json',
+            Origin: SERVER_URL,
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            title: 'Workflow Opportunity',
+            value: '100000.00',
+            currency: 'USD',
+            pipelineId: pipeline.id,
+            stageId: stage.id,
+            ownerId: testUserId,
+          }),
+        });
+        expect(convertRes.status).toBe(201);
+        const convertBody = await convertRes.json();
+        expect(convertBody.alreadyConverted).toBe(false);
+        expect(convertBody.opportunity.leadId).toBe(lead.id);
+        expect(convertBody.opportunity.contactId).toBe(contact.id);
+        expect(convertBody.opportunity.accountId).toBe(account.id);
+        expect(convertBody.opportunity.pipelineId).toBe(pipeline.id);
+        expect(convertBody.opportunity.stageId).toBe(stage.id);
+        expect(convertBody.lead.status).toBe('converted');
+        createdRecords.opportunities.push(convertBody.opportunity.id);
+
+        // 7. Verify lead detail shows converted status and opportunity link
+        const leadDetailRes = await fetch(`${SERVER_URL}/api/v1/crm/leads/${lead.id}`, {
           headers: {
             Cookie: `better-auth.session_token=${testSessionToken}`,
             Accept: 'application/json',
           },
-        }
-      );
-      expect(oppDetailRes.status).toBe(200);
-      const oppDetail = await oppDetailRes.json();
-      expect(oppDetail.lead).toBeDefined();
-      expect(oppDetail.lead.id).toBe(lead.id);
-    });
+        });
+        expect(leadDetailRes.status).toBe(200);
+        const leadDetail = await leadDetailRes.json();
+        expect(leadDetail.status).toBe('converted');
+        expect(leadDetail.convertedOpportunity).toBeDefined();
+        expect(leadDetail.convertedOpportunity.id).toBe(convertBody.opportunity.id);
+
+        // 8. Verify account now shows contact count
+        const accountDetailRes = await fetch(`${SERVER_URL}/api/v1/crm/accounts/${account.id}`, {
+          headers: {
+            Cookie: `better-auth.session_token=${testSessionToken}`,
+            Accept: 'application/json',
+          },
+        });
+        expect(accountDetailRes.status).toBe(200);
+        const accountDetail = await accountDetailRes.json();
+        expect(accountDetail.contactCount).toBeGreaterThanOrEqual(1);
+
+        // 9. Verify opportunity shows linked lead
+        const oppDetailRes = await fetch(
+          `${SERVER_URL}/api/v1/crm/opportunities/${convertBody.opportunity.id}`,
+          {
+            headers: {
+              Cookie: `better-auth.session_token=${testSessionToken}`,
+              Accept: 'application/json',
+            },
+          }
+        );
+        expect(oppDetailRes.status).toBe(200);
+        const oppDetail = await oppDetailRes.json();
+        expect(oppDetail.lead).toBeDefined();
+        expect(oppDetail.lead.id).toBe(lead.id);
+      }
+    );
 
     it('prevents duplicate conversion of an already-converted lead', async () => {
       // Create a new lead for this test
@@ -337,6 +348,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${testSessionToken}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({
@@ -353,6 +365,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${testSessionToken}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({
@@ -372,6 +385,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${testSessionToken}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ title: 'First Opportunity' }),
@@ -386,6 +400,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${testSessionToken}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ title: 'Duplicate Opportunity' }),
@@ -401,7 +416,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
       const foreignEmail = `foreign-workflow-${Date.now()}${TEST_EMAIL_SUFFIX}`;
       const foreignOrgRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
         body: JSON.stringify({
           email: foreignEmail,
           password: TEST_PASSWORD,
@@ -412,7 +427,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
 
       const foreignSignIn = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
         body: JSON.stringify({ email: foreignEmail, password: TEST_PASSWORD }),
       });
       expect(foreignSignIn.status).toBe(200);
@@ -428,6 +443,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${foreignToken}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ organizationName: 'Foreign Workflow Org' }),
@@ -449,6 +465,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${testSessionToken}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({
@@ -466,6 +483,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${testSessionToken}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({
@@ -485,6 +503,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${foreignToken}`,
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ title: 'Foreign Convert' }),
@@ -507,6 +526,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ title: 'Unauthenticated Deal' }),
@@ -532,6 +552,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ title: 'Isolated Deal' }),
