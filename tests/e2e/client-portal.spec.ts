@@ -112,11 +112,30 @@ async function activateThroughInvitePage(
   // The address appears in the invitation copy and again in the sign-in hint.
   await expect(page.getByText(fixture.email).first()).toBeVisible();
 
-  await page.getByLabel('E-mail').fill(fixture.email);
-  await page.getByLabel('Password').fill(fixture.password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
-
   const acceptButton = page.getByTestId('accept-invitation');
+  const formError = page.locator('form [role="alert"]');
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await page.getByLabel('E-mail').fill(fixture.email);
+    await page.getByLabel('Password').fill(fixture.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+
+    const signedIn = await acceptButton
+      .waitFor({ state: 'visible', timeout: 20_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (signedIn) break;
+
+    // Better Auth rate-limits sign-in per IP; a deliberate 429 is not a product
+    // failure, so wait for the window and try once more.
+    const message = await formError
+      .first()
+      .textContent()
+      .catch(() => null);
+    if (!message) break;
+    await page.waitForTimeout(8_000);
+  }
+
   await expect(acceptButton).toBeVisible({ timeout: 30_000 });
   await acceptButton.click();
 
@@ -320,13 +339,29 @@ test.describe('Client portal end-to-end journeys', () => {
     expect(internal.status(), `internal note failed: ${await internal.text()}`).toBe(201);
 
     await page.goto(`/portal/projects/${fixture.projectId}`);
+    // The internal note must not be in the rendered conversation to begin with.
+    await expect(page.getByText('Internal: margin is thin on this one')).toHaveCount(0);
+
     await page.getByLabel('Comment').fill('Client feedback from the E2E journey.');
     await page.getByRole('button', { name: 'Post comment' }).click();
 
-    await expect(page.getByText('Client feedback from the E2E journey.')).toBeVisible({
-      timeout: 20_000,
-    });
-    await expect(page.getByText('Internal: margin is thin on this one')).toHaveCount(0);
+    // Assert the rendered comment list (a text assertion would also match the
+    // textarea's own value, which would hide a rejected post).
+    const conversation = page.getByTestId('project-comments');
+    const posted = await conversation
+      .getByText('Client feedback from the E2E journey.')
+      .waitFor({ timeout: 20_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!posted) {
+      const message = await page
+        .locator('form [role="alert"]')
+        .first()
+        .textContent()
+        .catch(() => null);
+      throw new Error(`the comment was not posted; form error=${JSON.stringify(message)}`);
+    }
+    await expect(conversation.getByText('Internal: margin is thin on this one')).toHaveCount(0);
 
     // The team does see both, in its own inbox.
     const inbox = await api.get(
