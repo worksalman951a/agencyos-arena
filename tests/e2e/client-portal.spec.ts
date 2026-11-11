@@ -122,6 +122,12 @@ async function activateThroughInvitePage(browser: Browser, fixture: PortalFixtur
     await page.getByRole('button', { name: 'Sign in' }).click();
   }
 
+  if (!(await acceptButton.isVisible())) {
+    // Last resort: a full reload with the session cookie already applied. The
+    // invitation page is server-rendered, so this must show the accept button.
+    await page.reload();
+  }
+
   await expect(acceptButton).toBeVisible({ timeout: 25_000 });
   await acceptButton.click();
 

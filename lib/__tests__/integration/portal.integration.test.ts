@@ -401,6 +401,22 @@ describeIfDb('Client Portal integration (real PostgreSQL)', () => {
       expect(view.text).not.toContain(agencyOrgId);
     });
 
+    it('renders the accept button on the invitation page for the invited signed-in account', async () => {
+      const email = `signed-in-invite-${EMAIL_DOMAIN}`;
+      const invite = await invitationTokenFor(email, await freshContact(email));
+      const inviteeToken = await signUp(email, 'Signed In Invitee');
+      emails.push(email);
+
+      const pageHtml = await api(inviteeToken, `/portal/invite/${invite.token}`, {
+        accept: 'text/html',
+      });
+
+      expect(pageHtml.status).toBe(200);
+      expect(pageHtml.text).toContain('data-testid="accept-invitation"');
+      // The signed-out sign-in form must be gone, otherwise the visitor is stuck.
+      expect(pageHtml.text).not.toContain('First time here? Create your password');
+    });
+
     it('rejects acceptance by a signed-in account with a different e-mail (403)', async () => {
       const invite = await invitationTokenFor(
         `mismatch-${EMAIL_DOMAIN}`,

@@ -25,8 +25,10 @@ export function AcceptInvitationButton({ token }: { token: string }) {
         return;
       }
 
-      router.push('/portal');
+      // The portal must render with the freshly created client identity, so the
+      // router cache is invalidated before navigating.
       router.refresh();
+      router.push('/portal');
     } catch {
       setError('Network error, please try again.');
     } finally {

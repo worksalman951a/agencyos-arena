@@ -47,8 +47,16 @@ export function PortalLoginForm({
         await signInEmail({ email, password });
       }
 
-      router.push(redirectTo);
-      router.refresh();
+      if (typeof window !== 'undefined' && window.location.pathname === redirectTo) {
+        // Already on the destination — the invitation page, which was rendered
+        // while this visitor was signed out. Reload so the server sees the new
+        // session cookie and renders the signed-in state (the accept button)
+        // instead of replaying the cached signed-out tree.
+        window.location.reload();
+      } else {
+        router.push(redirectTo);
+        router.refresh();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not sign in.');
     } finally {
