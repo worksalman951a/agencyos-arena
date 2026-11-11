@@ -82,7 +82,14 @@ async function seedInvitation(
   };
 }
 
-/** Activate a client through the UI: invite page → create password → accept. */
+/**
+ * Activate a client through the UI: invite page → create password → accept.
+ *
+ * The account may already exist (a Playwright retry of a test that got as far as
+ * signing up, or Better Auth's sign-up rate limiter answering 429), so if the
+ * create-password submit comes back with an alert the helper falls back to the
+ * sign-in half of the same form instead of failing.
+ */
 async function activateThroughInvitePage(browser: Browser, fixture: PortalFixture): Promise<Page> {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -91,16 +98,33 @@ async function activateThroughInvitePage(browser: Browser, fixture: PortalFixtur
   await expect(page.getByRole('heading', { name: 'Client portal invitation' })).toBeVisible();
   await expect(page.getByText(fixture.email)).toBeVisible();
 
-  // Create the password from the invitation page itself.
   await page.getByRole('button', { name: 'First time here? Create your password' }).click();
   await page.getByLabel('E-mail').fill(fixture.email);
   await page.getByLabel('Password').fill(fixture.password);
   await page.getByRole('button', { name: 'Create account' }).click();
 
-  await expect(page.getByTestId('accept-invitation')).toBeVisible({ timeout: 20_000 });
-  await page.getByTestId('accept-invitation').click();
+  const acceptButton = page.getByTestId('accept-invitation');
+  await Promise.race([
+    acceptButton.waitFor({ state: 'visible', timeout: 25_000 }).catch(() => undefined),
+    page
+      .getByRole('alert')
+      .waitFor({ state: 'visible', timeout: 25_000 })
+      .catch(() => undefined),
+  ]);
 
-  await expect(page).toHaveURL(/\/portal$/, { timeout: 20_000 });
+  if (!(await acceptButton.isVisible())) {
+    // Fall back to signing in with the password that was just created (or an
+    // earlier attempt's account) — same page, same e-mail binding.
+    await page.getByRole('button', { name: 'Already activated? Sign in' }).click();
+    await page.getByLabel('E-mail').fill(fixture.email);
+    await page.getByLabel('Password').fill(fixture.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+  }
+
+  await expect(acceptButton).toBeVisible({ timeout: 25_000 });
+  await acceptButton.click();
+
+  await expect(page).toHaveURL(/\/portal$/, { timeout: 25_000 });
   return page;
 }
 
@@ -300,7 +324,8 @@ test.describe('Client portal end-to-end journeys', () => {
   test('the team administers the portal from the admin surface', async ({ authedPage: page }) => {
     await page.goto('/admin/client-portal');
     await expect(page.getByRole('heading', { name: 'Client Portal', level: 1 })).toBeVisible();
-    await expect(page.getByLabel('Contact').first()).toBeVisible();
-    await expect(page.getByRole('button', { name: /send invitation/i })).toBeVisible();
+    await expect(page.getByLabel('CRM contact')).toBeVisible();
+    await expect(page.getByLabel('Access preset')).toBeVisible();
+    await expect(page.getByRole('button', { name: /create portal invitation/i })).toBeVisible();
   });
 });

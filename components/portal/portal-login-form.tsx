@@ -13,7 +13,18 @@ import { signInEmail, signUpEmail } from '@/lib/auth-client';
  * exists only after an invitation is accepted, so self-registration cannot
  * produce a client identity on its own.
  */
-export function PortalLoginForm({ initialEmail = '' }: { initialEmail?: string }) {
+export function PortalLoginForm({
+  initialEmail = '',
+  redirectTo = '/portal',
+}: {
+  initialEmail?: string;
+  /**
+   * Where to go after a successful sign-in/sign-up. The invitation page passes its
+   * own URL so an invitee who creates a password stays on the invitation and can
+   * accept it, instead of bouncing into a portal they do not have access to yet.
+   */
+  redirectTo?: string;
+}) {
   const router = useRouter();
   const [email, setEmail] = React.useState(initialEmail);
   const [password, setPassword] = React.useState('');
@@ -36,7 +47,7 @@ export function PortalLoginForm({ initialEmail = '' }: { initialEmail?: string }
         await signInEmail({ email, password });
       }
 
-      router.push('/portal');
+      router.push(redirectTo);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not sign in.');

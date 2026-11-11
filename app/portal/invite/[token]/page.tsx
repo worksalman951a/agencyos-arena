@@ -68,7 +68,10 @@ export default async function PortalInvitePage({ params }: { params: Promise<{ t
                 <p className="text-sm">
                   Sign in (or create a password) with {invitation!.email} to continue.
                 </p>
-                <PortalLoginForm initialEmail={invitation!.email} />
+                <PortalLoginForm
+                  initialEmail={invitation!.email}
+                  redirectTo={`/portal/invite/${token}`}
+                />
                 <p className="text-xs text-muted-foreground">
                   Use the same e-mail address the invitation was sent to.
                 </p>

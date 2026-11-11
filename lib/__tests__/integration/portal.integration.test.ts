@@ -115,6 +115,7 @@ async function signUpWithOrg(email: string, name: string, orgName: string) {
 
 describeIfDb('Client Portal integration (real PostgreSQL)', () => {
   // Agencies
+  let agencyEmail: string;
   let agencyToken: string;
   let agencyOrgId: string;
   let otherAgencyToken: string;
@@ -168,6 +169,7 @@ describeIfDb('Client Portal integration (real PostgreSQL)', () => {
     );
     agencyToken = agency.token;
     agencyOrgId = agency.organization.id;
+    agencyEmail = agency.user.email;
     createdOrgIds.push(agencyOrgId);
     emails.push(agency.user.email);
 
@@ -1087,13 +1089,20 @@ describeIfDb('Client Portal integration (real PostgreSQL)', () => {
   });
 
   describe('CSRF and error hygiene', () => {
-    it('rejects a state-changing invitation acceptance with no Origin', async () => {
-      const response = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
+    it('rejects a state-changing sign-in that carries no Origin, and accepts the same call with one', async () => {
+      // An active team account, so the only difference between the two calls is the
+      // Origin header: no other guard can explain the rejection.
+      const body = { email: agencyEmail, password: TEST_PASSWORD };
+
+      const withoutOrigin = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: clientEmail, password: TEST_PASSWORD }),
+        body: JSON.stringify(body),
       });
-      expect(response.status).toBe(403);
+      expect(withoutOrigin.status).toBe(403);
+
+      const withOrigin = await api(null, '/api/auth/sign-in/email', { method: 'POST', body });
+      expect(withOrigin.status).toBe(200);
     });
 
     it('never returns a stack trace or a Prisma message on a denied request', async () => {
