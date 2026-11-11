@@ -12,7 +12,7 @@
 
 import type { APIRequestContext, Browser, Page } from '@playwright/test';
 
-import { expect, requireDatabase, test } from './fixtures';
+import { ensurePortalInviteeAccount, expect, requireDatabase, test } from './fixtures';
 import type { TestAccount } from './fixtures';
 
 requireDatabase();
@@ -90,7 +90,20 @@ async function seedInvitation(
  * create-password submit comes back with an alert the helper falls back to the
  * sign-in half of the same form instead of failing.
  */
-async function activateThroughInvitePage(browser: Browser, fixture: PortalFixture): Promise<Page> {
+/**
+ * Sign in on the invitation page and accept it.
+ *
+ * The account itself is created through the API (`ensurePortalInviteeAccount`), so
+ * this journey is about the portal's sign-in + acceptance path rather than about
+ * Better Auth's sign-up rate limiter. The create-password path has its own test.
+ */
+async function activateThroughInvitePage(
+  browser: Browser,
+  api: APIRequestContext,
+  fixture: PortalFixture
+): Promise<Page> {
+  await ensurePortalInviteeAccount(api, fixture.email, fixture.password);
+
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -99,34 +112,15 @@ async function activateThroughInvitePage(browser: Browser, fixture: PortalFixtur
   // The address appears in the invitation copy and again in the sign-in hint.
   await expect(page.getByText(fixture.email).first()).toBeVisible();
 
-  await page.getByRole('button', { name: 'First time here? Create your password' }).click();
-  await page.getByLabel('Your name').fill('Portal Client');
   await page.getByLabel('E-mail').fill(fixture.email);
   await page.getByLabel('Password').fill(fixture.password);
-  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.getByRole('button', { name: 'Sign in' }).click();
 
   const acceptButton = page.getByTestId('accept-invitation');
-  await Promise.race([
-    acceptButton.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => undefined),
-    page
-      .getByRole('alert')
-      .waitFor({ state: 'visible', timeout: 20_000 })
-      .catch(() => undefined),
-  ]);
-
-  if (!(await acceptButton.isVisible())) {
-    // Fall back to signing in with the password that was just created (or an
-    // earlier attempt's account) — same page, same e-mail binding.
-    await page.getByRole('button', { name: 'Already activated? Sign in' }).click();
-    await page.getByLabel('E-mail').fill(fixture.email);
-    await page.getByLabel('Password').fill(fixture.password);
-    await page.getByRole('button', { name: 'Sign in' }).click();
-  }
-
-  await expect(acceptButton).toBeVisible({ timeout: 20_000 });
+  await expect(acceptButton).toBeVisible({ timeout: 30_000 });
   await acceptButton.click();
 
-  await expect(page).toHaveURL(/\/portal$/, { timeout: 20_000 });
+  await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
   return page;
 }
 
@@ -143,12 +137,19 @@ async function grantProject(
   expect(grant.status(), `grant failed: ${await grant.text()}`).toBe(201);
 }
 
-async function clientAccessIdFor(api: APIRequestContext, account: TestAccount): Promise<string> {
+async function clientAccessIdFor(
+  api: APIRequestContext,
+  account: TestAccount,
+  email: string
+): Promise<string> {
   const list = await api.get('/api/v1/admin/client-access', { headers: authHeader(account) });
   expect(list.status()).toBe(200);
-  const rows = ((await list.json()) as { data: Array<{ id: string }> }).data;
-  expect(rows.length).toBeGreaterThan(0);
-  return rows[rows.length - 1].id;
+  const rows = ((await list.json()) as { data: Array<{ id: string; email: string }> }).data;
+  // The worker owns one agency across its tests, so several client identities can
+  // exist; select the one belonging to this journey rather than "the last one".
+  const row = rows.find((candidate) => candidate.email === email);
+  expect(row, `no client access for ${email}`).toBeDefined();
+  return row!.id;
 }
 
 // Each journey provisions an agency, a client identity, a grant and then drives the
@@ -157,6 +158,51 @@ async function clientAccessIdFor(api: APIRequestContext, account: TestAccount): 
 test.describe.configure({ timeout: 120_000 });
 
 test.describe('Client portal end-to-end journeys', () => {
+  test('an invitee creates their password from the invitation page and accepts it', async ({
+    api,
+    account,
+    browser,
+  }) => {
+    const fixture = await seedInvitation(api, account);
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    await page.goto(fixture.acceptPath);
+    await page.getByRole('button', { name: 'First time here? Create your password' }).click();
+    await page.getByLabel('Your name').fill('Portal Signup');
+    await page.getByLabel('E-mail').fill(fixture.email);
+    await page.getByLabel('Password').fill(fixture.password);
+    await page.getByRole('button', { name: 'Create account' }).click();
+
+    // Either the invitation re-renders signed in (the happy path) or the form
+    // reports why it could not create the account — asserted below.
+    const acceptButton = page.getByTestId('accept-invitation');
+    await Promise.race([
+      acceptButton.waitFor({ state: 'visible', timeout: 45_000 }).catch(() => undefined),
+      page
+        .getByRole('alert')
+        .waitFor({ state: 'visible', timeout: 45_000 })
+        .catch(() => undefined),
+    ]);
+
+    const alertText = await page
+      .locator('[role="alert"]')
+      .first()
+      .textContent()
+      .catch(() => null);
+    expect(alertText, 'the invitation page reported an error instead of activating').toBeNull();
+
+    await expect(acceptButton).toBeVisible({ timeout: 30_000 });
+    await acceptButton.click();
+    await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
+
+    // The accepting identity is a client: no workspace, no team surfaces.
+    await page.goto('/admin/client-portal');
+    await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
+
+    await page.context().close();
+  });
+
   test('a client activates from the invitation, logs in, and sees only the shared project', async ({
     api,
     account,
@@ -165,8 +211,8 @@ test.describe('Client portal end-to-end journeys', () => {
     const fixture = await seedInvitation(api, account);
 
     // --- the team shares the project before the client activates
-    const page = await activateThroughInvitePage(browser, fixture);
-    const accessId = await clientAccessIdFor(api, account);
+    const page = await activateThroughInvitePage(browser, api, fixture);
+    const accessId = await clientAccessIdFor(api, account, fixture.email);
     await grantProject(api, account, accessId, fixture.projectId);
     await page.reload();
 
@@ -211,8 +257,8 @@ test.describe('Client portal end-to-end journeys', () => {
     browser,
   }) => {
     const fixture = await seedInvitation(api, account);
-    const page = await activateThroughInvitePage(browser, fixture);
-    const accessId = await clientAccessIdFor(api, account);
+    const page = await activateThroughInvitePage(browser, api, fixture);
+    const accessId = await clientAccessIdFor(api, account, fixture.email);
     await grantProject(api, account, accessId, fixture.projectId);
 
     const approval = await api.post('/api/v1/admin/client-approvals', {
@@ -257,8 +303,8 @@ test.describe('Client portal end-to-end journeys', () => {
     browser,
   }) => {
     const fixture = await seedInvitation(api, account);
-    const page = await activateThroughInvitePage(browser, fixture);
-    const accessId = await clientAccessIdFor(api, account);
+    const page = await activateThroughInvitePage(browser, api, fixture);
+    const accessId = await clientAccessIdFor(api, account, fixture.email);
     await grantProject(api, account, accessId, fixture.projectId);
 
     // Team-side internal note (never client-visible).
@@ -303,8 +349,8 @@ test.describe('Client portal end-to-end journeys', () => {
     browser,
   }) => {
     const fixture = await seedInvitation(api, account);
-    const page = await activateThroughInvitePage(browser, fixture);
-    const accessId = await clientAccessIdFor(api, account);
+    const page = await activateThroughInvitePage(browser, api, fixture);
+    const accessId = await clientAccessIdFor(api, account, fixture.email);
     await grantProject(api, account, accessId, fixture.projectId);
 
     await page.goto('/portal');

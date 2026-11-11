@@ -107,6 +107,28 @@ export async function createAccount(api: APIRequestContext, label: string): Prom
   return { email, password: E2E_PASSWORD, organizationName, sessionToken: sessionToken! };
 }
 
+/**
+ * Create a Better Auth user without a workspace.
+ *
+ * Used by the client-portal journeys, which need a portal *invitee* rather than a
+ * team account (no organization, no roles). Sign-up is rate limited per IP, so the
+ * same backoff as `createAccount` applies; an "already exists" answer is treated as
+ * success, which keeps retries of a journey idempotent.
+ */
+export async function ensurePortalInviteeAccount(
+  api: APIRequestContext,
+  email: string,
+  password: string
+): Promise<void> {
+  const response = await postWithRateLimitRetry(api, '/api/auth/sign-up/email', {
+    headers: { Origin: APP_URL, Accept: 'application/json' },
+    data: { email, password, name: `Portal ${email.split('@')[0]}` },
+  });
+  const status = response.status();
+  if (status === 200 || status === 422) return;
+  throw new Error(`portal invitee sign-up failed (${status}): ${await response.text()}`);
+}
+
 /** Attach the account's session cookie to a browser context. */
 export async function signInBrowser(
   context: BrowserContext,
