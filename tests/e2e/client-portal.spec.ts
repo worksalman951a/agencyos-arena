@@ -128,6 +128,21 @@ async function activateThroughInvitePage(browser: Browser, fixture: PortalFixtur
     await page.reload();
   }
 
+  // TEMPORARY DIAGNOSTIC: surface the page state in the CI annotation if the
+  // accept button still is not there.
+  if (!(await acceptButton.isVisible())) {
+    const alertText = await page
+      .locator('[role="alert"]')
+      .first()
+      .textContent()
+      .catch(() => null);
+    const body = (await page.content())
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .slice(0, 700);
+    throw new Error(`DIAG url=${page.url()} alert=${JSON.stringify(alertText)} body=${body}`);
+  }
+
   await expect(acceptButton).toBeVisible({ timeout: 25_000 });
   await acceptButton.click();
 
