@@ -121,7 +121,7 @@ export default async function ProposalDetailPage({ params }: { params: Promise<{
             </Link>
           )}
           <Link
-            href={`/projects/new?name=${encodeURIComponent(proposal.title)}`}
+            href={`/projects/new?name=${encodeURIComponent(proposal.title)}${proposal.contactId ? `&clientId=${encodeURIComponent(proposal.contactId)}` : ''}&budget=${encodeURIComponent(String(proposal.total))}`}
             className="px-3 py-2 border border-border bg-background text-foreground rounded-md text-sm font-medium hover:bg-muted/80"
           >
             Create Project

@@ -430,6 +430,34 @@ export default function ContactDetailPage() {
               </dd>
             </div>
           </dl>
+
+          {!isDeleted && (
+            <div className="mt-6 pt-5 border-t border-border">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                Sales &amp; Finance Documents
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href={`/sales/proposals/builder?contactId=${encodeURIComponent(contact.id)}`}
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-xs font-medium hover:bg-muted"
+                >
+                  + New Proposal
+                </Link>
+                <Link
+                  href={`/sales/quotations/builder?contactId=${encodeURIComponent(contact.id)}`}
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-xs font-medium hover:bg-muted"
+                >
+                  + New Quotation
+                </Link>
+                <Link
+                  href={`/finance/estimates/new?clientId=${encodeURIComponent(contact.id)}`}
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-xs font-medium hover:bg-muted"
+                >
+                  + New Estimate
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
