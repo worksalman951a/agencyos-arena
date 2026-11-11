@@ -209,6 +209,9 @@ test.describe('Client portal end-to-end journeys', () => {
       .catch(() => null);
     expect(alertText, 'the invitation page reported an error instead of activating').toBeNull();
 
+    // Re-open the invitation as the returning visitor this account now is: a fresh
+    // server render with the session cookie must show the accept button.
+    await page.goto(fixture.acceptPath);
     await expect(acceptButton).toBeVisible({ timeout: 30_000 });
     await acceptButton.click();
     await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
