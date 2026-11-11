@@ -215,7 +215,31 @@ jobs:
           CHECKPOINT_DISABLE: "1"
           PRISMA_HIDE_UPDATE_MESSAGE: "true"
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
-      - run: npx playwright install --with-deps chromium
+      - name: Record Playwright runner and browser metadata
+        run: |
+          {
+            echo "--- Runner OS ---"
+            cat /etc/os-release
+            echo "--- Node and package versions ---"
+            node --version
+            npm --version
+            node - <<'NODE'
+          for (const name of ['@playwright/test', 'playwright', 'playwright-core']) {
+            try {
+              const pkg = require(`./node_modules/${name}/package.json`);
+              console.log(`${name}: ${pkg.version}`);
+            } catch (error) {
+              console.log(`${name}: unavailable (${error.message})`);
+            }
+          }
+          const browserData = require('./node_modules/playwright-core/browsers.json');
+          console.log('managed Chromium:', browserData.browsers.filter(({ name }) => name.startsWith('chromium')));
+          NODE
+          } 2>&1 | tee playwright-runner-info.log
+      - name: Install Playwright Chromium and system dependencies
+        run: |
+          set -o pipefail
+          npx playwright install --with-deps chromium 2>&1 | tee playwright-install.log
       - run: npm run build
         env:
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
@@ -241,7 +265,7 @@ jobs:
             kill $SERVER_PID 2>/dev/null || true
             exit 1
           fi
-          set -o pipefail && npx playwright test 2>&1 | tee e2e-output.log
+          set -o pipefail && npx playwright test --add-reporter=json 2>&1 | tee e2e-output.log
           E2E_EXIT=$?
           kill $SERVER_PID 2>/dev/null || true
           exit $E2E_EXIT
@@ -252,22 +276,55 @@ jobs:
           APP_URL: "http://localhost:3001"
           TEST_SERVER_URL: "http://localhost:3001"
           PLAYWRIGHT_SKIP_WEBSERVER: "1"
+          PLAYWRIGHT_JSON_OUTPUT_FILE: "playwright-results.json"
           CI: "true"
           PORT: "3001"
+      - name: Report exact Playwright result counts
+        if: always()
+        run: |
+          if [ ! -f playwright-results.json ]; then
+            echo "Playwright did not produce a JSON report; browser tests did not start." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Playwright result counts::not run (no JSON report)"
+            exit 0
+          fi
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('playwright-results.json', 'utf8'));
+          let retriedTests = 0;
+          let retryAttempts = 0;
+          const visit = (suites) => {
+            for (const suite of suites ?? []) {
+              for (const spec of suite.specs ?? []) {
+                for (const test of spec.tests ?? []) {
+                  const retries = (test.results ?? []).filter((result) => result.retry > 0).length;
+                  if (retries > 0) retriedTests += 1;
+                  retryAttempts += retries;
+                }
+              }
+              visit(suite.suites);
+            }
+          };
+          visit(report.suites);
+          const stats = report.stats ?? {};
+          const summary = `passed=${stats.expected ?? 0}, failed=${stats.unexpected ?? 0}, skipped=${stats.skipped ?? 0}, flaky=${stats.flaky ?? 0}, retried_tests=${retriedTests}, retry_attempts=${retryAttempts}`;
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Playwright result counts\n\n${summary}\n`);
+          console.log(`::notice title=Playwright result counts::${summary}`);
+          NODE
       - name: Surface E2E failures
         if: failure()
         run: |
-          echo "## E2E failure details" >> "$GITHUB_STEP_SUMMARY"
-          for f in e2e-output.log e2e-server-output.log; do
+          echo "## E2E failure diagnostics" >> "$GITHUB_STEP_SUMMARY"
+          for f in playwright-runner-info.log playwright-install.log e2e-output.log e2e-server-output.log; do
             [ -f "$f" ] || continue
             {
               echo ""
-              echo "### $f"
-              echo '```'
-              grep -aE "✘|✓|Error:|expect|Timed out|failed" "$f" | sed -e 's/\x1b\[[0-9;]*m//g' | tail -80
+              echo "### $f (last 80 lines)"
+              echo '```text'
+              tail -n 80 "$f" | sed -e 's/\x1b\[[0-9;]*m//g'
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error file=.github/workflows/ci.yml,title=$f::$(tail -n 30 "$f" | sed -e 's/\x1b\[[0-9;]*m//g' | tr '\n' '|' | head -c 4000)"
+            diagnostic=$(tail -n 50 "$f" | sed -e 's/\x1b\[[0-9;]*m//g' | tr '\n' '|' | head -c 6000)
+            echo "::error file=.github/workflows/ci.yml,title=$f::$diagnostic"
           done
       - uses: actions/upload-artifact@v4
         if: always()
@@ -275,6 +332,9 @@ jobs:
           name: playwright-report
           path: |
             playwright-report
+            playwright-runner-info.log
+            playwright-install.log
+            playwright-results.json
             e2e-output.log
           if-no-files-found: ignore
 
