@@ -14,6 +14,7 @@ import {
   deleteTemplate,
 } from '@/lib/services/documents/template-service';
 import { templateUpdateSchema } from '@/lib/schemas/documents/template.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -27,11 +28,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const template = await getTemplate(id);
     return NextResponse.json(template);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -47,11 +45,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const template = await updateTemplate(id, parsed.data);
     return NextResponse.json(template);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -61,10 +56,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const result = await deleteTemplate(id);
     return NextResponse.json(result);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

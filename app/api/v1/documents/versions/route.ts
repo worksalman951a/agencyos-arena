@@ -1,9 +1,8 @@
 /**
  * AgencyOS Documents API - Versions
  *
- * POST   /api/v1/documents/versions/proposal - Create a proposal version snapshot
- * GET    /api/v1/documents/versions/proposal/[id] - List proposal versions
- * GET    /api/v1/documents/versions/document/[id] - List document versions
+ * POST   /api/v1/documents/versions - Create a proposal version snapshot
+ * GET    /api/v1/documents/versions - List proposal or document versions
  */
 
 import { NextResponse } from 'next/server';
@@ -13,6 +12,7 @@ import {
   listProposalVersions,
   listDocumentVersions,
 } from '@/lib/services/documents/version-service';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -42,11 +42,8 @@ export async function GET(request: Request) {
 
     return errorResponse('Invalid version type', 400);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -62,10 +59,7 @@ export async function POST(request: Request) {
     const version = await createProposalVersion(proposalId);
     return NextResponse.json(version, { status: 201 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

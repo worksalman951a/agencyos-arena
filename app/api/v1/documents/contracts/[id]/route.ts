@@ -4,7 +4,7 @@
  * GET    /api/v1/documents/contracts/[id] - Get contract by ID
  * PUT    /api/v1/documents/contracts/[id] - Update contract
  * DELETE /api/v1/documents/contracts/[id] - Delete contract
- * POST   /api/v1/documents/contracts/[id]/sign - Sign contract
+ * POST   /api/v1/documents/contracts/[id] - Sign contract
  */
 
 import { NextResponse } from 'next/server';
@@ -16,6 +16,7 @@ import {
   signContract,
 } from '@/lib/services/documents/contract-service';
 import { contractUpdateSchema, contractSignSchema } from '@/lib/schemas/documents/contract.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -29,11 +30,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const contract = await getContract(id);
     return NextResponse.json(contract);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -49,11 +47,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const contract = await updateContract(id, parsed.data);
     return NextResponse.json(contract);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -63,11 +58,8 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const result = await deleteContract(id);
     return NextResponse.json(result);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -80,13 +72,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return errorResponse('Invalid request body', 400, parsed.error.issues);
     }
 
-    const result = await signContract(id, parsed.data);
+    const ipAddress =
+      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+      request.headers.get('x-real-ip') ??
+      null;
+    const userAgent = request.headers.get('user-agent') ?? null;
+
+    const result = await signContract(id, parsed.data, ipAddress, userAgent);
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

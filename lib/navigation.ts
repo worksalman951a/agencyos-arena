@@ -171,7 +171,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         name: 'Templates',
         href: '/documents/templates',
         icon: 'documentTemplates',
-        permission: 'document.read',
+        permission: 'template.read',
       },
       {
         name: 'Shared Links',

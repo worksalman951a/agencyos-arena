@@ -27,8 +27,10 @@ const PUBLIC_PATHS = ['/', '/login', '/register', '/api/auth', '/api/health'];
 const PROTECTED_PATH_PREFIXES = [
   '/dashboard',
   '/crm',
+  '/sales',
   '/finance',
   '/projects',
+  '/documents',
   '/automation',
   '/admin',
   '/settings',

@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 
 import { listContracts, createContract } from '@/lib/services/documents/contract-service';
 import { contractCreateSchema } from '@/lib/schemas/documents/contract.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -21,11 +22,8 @@ export async function GET() {
     const data = await listContracts();
     return NextResponse.json(data);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -40,10 +38,7 @@ export async function POST(request: Request) {
     const contract = await createContract(parsed.data);
     return NextResponse.json(contract, { status: 201 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

@@ -118,6 +118,20 @@ const CRM_PERMISSION_CODES = [
   'role.delete',
   'feature_flag.read',
   'feature_flag.update',
+  'contract.create',
+  'contract.read',
+  'contract.update',
+  'contract.delete',
+  'contract.sign',
+  'document.create',
+  'document.read',
+  'document.update',
+  'document.delete',
+  'document.share',
+  'template.create',
+  'template.read',
+  'template.update',
+  'template.delete',
 ];
 
 /** Validate session and return the authenticated user */
