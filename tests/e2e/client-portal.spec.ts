@@ -96,7 +96,8 @@ async function activateThroughInvitePage(browser: Browser, fixture: PortalFixtur
 
   await page.goto(fixture.acceptPath);
   await expect(page.getByRole('heading', { name: 'Client portal invitation' })).toBeVisible();
-  await expect(page.getByText(fixture.email)).toBeVisible();
+  // The address appears in the invitation copy and again in the sign-in hint.
+  await expect(page.getByText(fixture.email).first()).toBeVisible();
 
   await page.getByRole('button', { name: 'First time here? Create your password' }).click();
   await page.getByLabel('E-mail').fill(fixture.email);
@@ -163,7 +164,7 @@ test.describe('Client portal end-to-end journeys', () => {
     await grantProject(api, account, accessId, fixture.projectId);
     await page.reload();
 
-    await expect(page.getByText(`Portal E2E Project`, { exact: false }).first()).toBeVisible({
+    await expect(page.getByRole('link', { name: /Portal E2E Project/ }).first()).toBeVisible({
       timeout: 20_000,
     });
     await expect(page.getByText('Portal E2E Hidden', { exact: false })).toHaveCount(0);
@@ -236,9 +237,10 @@ test.describe('Client portal end-to-end journeys', () => {
     await expect(page.getByTestId('approve-button')).toHaveCount(0);
     await expect(page.getByText('Approved from the E2E journey.')).toBeVisible();
 
-    // History shows both the request and the decision.
-    await expect(page.getByText(/requested/i).first()).toBeVisible();
-    await expect(page.getByText(/client/i).first()).toBeVisible();
+    // History shows both the request (by the team) and the decision (by the client).
+    const history = page.getByTestId('approval-history');
+    await expect(history.getByText(/requested/i)).toBeVisible();
+    await expect(history.getByText(/You\s+approved/i)).toBeVisible();
 
     await page.context().close();
   });
@@ -321,7 +323,18 @@ test.describe('Client portal end-to-end journeys', () => {
     await page.context().close();
   });
 
-  test('the team administers the portal from the admin surface', async ({ authedPage: page }) => {
+  test('the team administers the portal from the admin surface', async ({
+    authedPage: page,
+    api,
+    account,
+  }) => {
+    // The invite form is only rendered once the agency has a CRM contact to invite.
+    const contact = await api.post('/api/v1/crm/contacts', {
+      headers: authHeader(account),
+      data: { firstName: 'Admin', lastName: `Surface${suffix()}` },
+    });
+    expect(contact.status(), `contact create failed: ${await contact.text()}`).toBe(201);
+
     await page.goto('/admin/client-portal');
     await expect(page.getByRole('heading', { name: 'Client Portal', level: 1 })).toBeVisible();
     await expect(page.getByLabel('CRM contact')).toBeVisible();
