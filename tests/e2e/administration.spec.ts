@@ -72,31 +72,6 @@ async function createRuleThroughUi(page: Page, name: string) {
 }
 
 test.describe('notifications', () => {
-  test('shows a created notification as unread, marks it read and persists', async ({
-    authedPage: page,
-    api,
-    account,
-  }) => {
-    await createNotification(api, account, {
-      type: 'e2e_notice',
-      payload: { title: 'Review the proposal' },
-    });
-
-    await page.goto('/automation/notifications');
-    await expect(page.getByRole('heading', { name: 'Notifications', level: 1 })).toBeVisible();
-    await expect(page.getByTestId('unread-count')).toContainText('1 unread of 1');
-    await expect(page.getByRole('cell', { name: 'Unread' })).toHaveCount(1);
-
-    await page.getByRole('button', { name: 'Mark Read' }).click();
-    await expect(page.getByRole('cell', { name: 'Read' })).toHaveCount(1);
-    await expect(page.getByTestId('unread-count')).toContainText('0 unread of 1');
-
-    // Persistence: the read state is in the database, not component state.
-    await page.reload();
-    await expect(page.getByRole('cell', { name: 'Read' })).toHaveCount(1);
-    await expect(page.getByTestId('unread-count')).toContainText('0 unread of 1');
-  });
-
   test('renders an explicit empty state with no notifications', async ({ authedPage: page }) => {
     await page.goto('/automation/notifications');
     await expect(page.getByRole('heading', { name: 'Notifications', level: 1 })).toBeVisible();
@@ -140,6 +115,31 @@ test.describe('notifications', () => {
 
     await page.goto('/automation/notifications');
     await expect(page.getByText('No notifications found.')).toBeVisible();
+  });
+
+  test('shows a created notification as unread, marks it read and persists', async ({
+    authedPage: page,
+    api,
+    account,
+  }) => {
+    await createNotification(api, account, {
+      type: 'e2e_notice',
+      payload: { title: 'Review the proposal' },
+    });
+
+    await page.goto('/automation/notifications');
+    await expect(page.getByRole('heading', { name: 'Notifications', level: 1 })).toBeVisible();
+    await expect(page.getByTestId('unread-count')).toContainText('1 unread of 1');
+    await expect(page.getByRole('cell', { name: 'Unread' })).toHaveCount(1);
+
+    await page.getByRole('button', { name: 'Mark Read' }).click();
+    await expect(page.getByRole('cell', { name: 'Read' })).toHaveCount(1);
+    await expect(page.getByTestId('unread-count')).toContainText('0 unread of 1');
+
+    // Persistence: the read state is in the database, not component state.
+    await page.reload();
+    await expect(page.getByRole('cell', { name: 'Read' })).toHaveCount(1);
+    await expect(page.getByTestId('unread-count')).toContainText('0 unread of 1');
   });
 });
 
@@ -246,7 +246,7 @@ test.describe('administration', () => {
       .getByRole('link', { name: 'Edit' })
       .click();
     await expect(page.getByRole('heading', { name: 'Edit Member', level: 1 })).toBeVisible();
-    await expect(page.getByText(account.email)).toBeVisible();
+    await expect(page.getByRole('main').getByText(account.email)).toBeVisible();
     // The role selector is populated from the organization's real roles.
     await expect(page.locator('#roleId')).toContainText('Administrator');
 

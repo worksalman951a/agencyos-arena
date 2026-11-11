@@ -386,7 +386,11 @@ export function QuotationBuilderApp({
       <BuilderLayout
         isMobile={false}
         showPreview={true}
-        isDirty={builder.isDirty}
+        isDirty={
+          isEdit
+            ? builder.isDirty
+            : Boolean(builder.isDirty || builder.documentInfo.title || builder.lineItems.length > 0)
+        }
         onSave={saveDraft}
         isSaving={builder.isSaving}
         saveLabel={isEdit ? 'Save Changes' : 'Create Quotation'}

@@ -21,7 +21,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
 // Public paths that don't require authentication
-const PUBLIC_PATHS = ['/', '/login', '/register', '/api/auth', '/api/health'];
+const PUBLIC_PATHS = ['/', '/login', '/register', '/invite', '/share', '/api/auth', '/api/health'];
 
 // Paths that require authentication (protected app routes)
 const PROTECTED_PATH_PREFIXES = [

@@ -6,18 +6,24 @@ import { z } from 'zod';
  * from the authenticated user's session context.
  */
 
-const baseTemplateSchema = z.object({
-  name: z.string().min(1, 'Template name is required').max(200),
-  type: z.string().min(1, 'Template type is required').max(50),
-  content: z.string().optional().nullable(),
-  variables: z.record(z.string(), z.string()).optional().nullable(),
-  isDefault: z.boolean().default(false),
-});
+export const templateCreateSchema = z
+  .object({
+    name: z.string().min(1, 'Template name is required').max(200),
+    type: z.string().min(1, 'Template type is required').max(50),
+    content: z.string().optional().nullable(),
+    variables: z.record(z.string(), z.string()).optional().nullable(),
+    isDefault: z.boolean().default(false),
+  })
+  .strict();
 
-export const templateCreateSchema = baseTemplateSchema.strict();
-
-export const templateUpdateSchema = baseTemplateSchema
-  .partial()
+export const templateUpdateSchema = z
+  .object({
+    name: z.string().min(1, 'Template name is required').max(200).optional(),
+    type: z.string().min(1, 'Template type is required').max(50).optional(),
+    content: z.string().optional().nullable(),
+    variables: z.record(z.string(), z.string()).optional().nullable(),
+    isDefault: z.boolean().optional(),
+  })
   .strict()
   .refine(
     (data) =>
