@@ -218,6 +218,12 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         permission: 'invitation.read',
       },
       {
+        name: 'Client Portal',
+        href: '/admin/client-portal',
+        icon: 'users',
+        permission: 'client.access.read',
+      },
+      {
         name: 'Audit Log',
         href: '/admin/audit-logs',
         icon: 'auditLog',

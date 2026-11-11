@@ -27,7 +27,16 @@ function routePatterns(): string[] {
     .filter((file) => file.endsWith('page.tsx'))
     .map((file) => {
       const rel = path.relative(path.join(ROOT, 'app'), file).split(path.sep).join('/');
-      return '/' + rel.replace(/\/page\.tsx$/, '').replace(/^page\.tsx$/, '');
+      return (
+        '/' +
+        rel
+          .replace(/\/page\.tsx$/, '')
+          .replace(/^page\.tsx$/, '')
+          // Route groups - `(workspace)` - are not part of the URL.
+          .split('/')
+          .filter((segment) => segment && !(segment.startsWith('(') && segment.endsWith(')')))
+          .join('/')
+      );
     });
 }
 

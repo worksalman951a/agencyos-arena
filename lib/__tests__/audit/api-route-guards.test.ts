@@ -24,6 +24,8 @@ const PUBLIC_ROUTES: Record<string, string> = {
     'Public share links: the unguessable token is the credential.',
   'api/auth/bootstrap-organization/route.ts':
     'Sign-up hand-off: authenticates the caller itself before creating the organization.',
+  'api/v1/portal/invitations/[token]/route.ts':
+    'Client invitation lookup: the unguessable token is the credential and only the invitee-facing fields are returned.',
 };
 
 /** Routes deliberately disabled until a trusted implementation exists. */
@@ -38,8 +40,17 @@ const DISABLED_ROUTES: Record<string, string> = {
  */
 const UNGUARDED_SERVICES = new Set(['lib/services/settings/document-numbering.ts']);
 
+/**
+ * Accepted authorization entry points.
+ *
+ * `requirePortalAccess` / `requireInternalActor` are the client-portal
+ * equivalents of `getAuthorizedUser`: the first resolves a *client* identity and
+ * its grants, the second resolves a team member and rejects client identities.
+ * Listing them here keeps the audit honest — a service must still use one of
+ * these, it cannot simply reach Prisma.
+ */
 const GUARD_PATTERN =
-  /requirePermission|requireOrganization|getAuthorizedUser|auth\.api\.getSession|getSessionUser|assertAuthenticated/;
+  /requirePermission|requireOrganization|getAuthorizedUser|auth\.api\.getSession|getSessionUser|assertAuthenticated|requirePortalAccess|requireInternalActor|getPortalAccessOrNull/;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
