@@ -7,6 +7,7 @@
  */
 
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 
 import { ApprovalResponseForm } from '@/components/portal/approval-response-form';
 import { CommentForm } from '@/components/portal/comment-form';
@@ -42,11 +43,13 @@ export default async function PortalApprovalDetailPage({
   });
 
   if (!result.ok) {
+    // A record the client may not see answers HTTP 404, indistinguishable from a
+    // record that does not exist. Only an inactive access gets an explanation.
+    if (result.reason === 'not-found') notFound();
+
     return (
       <div role="alert" className="rounded-md border p-4 text-sm">
-        {result.reason === 'not-found'
-          ? 'This approval request is not available to you.'
-          : 'This approval request could not be loaded right now.'}
+        This approval request could not be loaded right now.
         <div className="mt-2">
           <Link href="/portal/approvals" className="text-accent hover:underline">
             Back to approvals

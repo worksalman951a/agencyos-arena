@@ -36,58 +36,58 @@ export default async function PortalDocumentsPage() {
         <p className="text-sm text-muted-foreground">Nothing has been shared with you yet.</p>
       ) : (
         <ul className="space-y-3">
-          {documents.map((document) => (
+          {documents.map((shared) => (
             <li
-              key={`${document.type}:${document.id}`}
+              key={`${shared.type}:${shared.id}`}
               className="rounded-lg border bg-background p-4"
-              data-testid={`shared-${document.type}-${document.id}`}
+              data-testid={`shared-${shared.type}-${shared.id}`}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    {document.type}
-                    {document.subtitle ? ` · ${document.subtitle}` : ''}
+                    {shared.type}
+                    {shared.subtitle ? ` · ${shared.subtitle}` : ''}
                   </p>
-                  <h3 className="text-lg font-semibold">{document.title}</h3>
+                  <h3 className="text-lg font-semibold">{shared.title}</h3>
                 </div>
                 <div className="text-right text-sm">
-                  {document.status ? (
+                  {shared.status ? (
                     <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs uppercase text-muted-foreground">
-                      {document.status}
+                      {shared.status}
                     </span>
                   ) : null}
                 </div>
               </div>
 
-              {document.total ? (
+              {shared.total ? (
                 <p className="mt-2 text-sm font-medium">
-                  {formatMoney(document.total, document.currency)}
+                  {formatMoney(shared.total, shared.currency)}
                 </p>
               ) : null}
 
-              {document.validUntil ? (
+              {shared.validUntil ? (
                 <p className="text-xs text-muted-foreground">
-                  Valid until {document.validUntil.toLocaleDateString()}
+                  Valid until {shared.validUntil.toLocaleDateString()}
                 </p>
               ) : null}
 
-              {document.signedAt ? (
+              {shared.signedAt ? (
                 <p className="text-xs text-muted-foreground">
-                  Signed {document.signedAt.toLocaleDateString()}
-                  {document.signatureReference ? ` · reference ${document.signatureReference}` : ''}
+                  Signed {shared.signedAt.toLocaleDateString()}
+                  {shared.signatureReference ? ` · reference ${shared.signatureReference}` : ''}
                 </p>
               ) : null}
 
-              {document.downloadable ? (
+              {shared.downloadable ? (
                 <a
                   className="mt-2 inline-block text-sm text-accent hover:underline"
-                  href={`/api/v1/portal/download/document/${document.id}`}
+                  href={`/api/v1/portal/download/document/${shared.id}`}
                 >
-                  Download document
+                  Download shared
                 </a>
               ) : null}
 
-              {document.items.length > 0 ? (
+              {shared.items.length > 0 ? (
                 <table className="mt-3 w-full text-left text-sm">
                   <thead>
                     <tr className="border-b text-xs uppercase text-muted-foreground">
@@ -98,8 +98,8 @@ export default async function PortalDocumentsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {document.items.map((item, index) => (
-                      <tr key={`${document.id}-item-${index}`} className="border-b last:border-0">
+                    {shared.items.map((item, index) => (
+                      <tr key={`${shared.id}-item-${index}`} className="border-b last:border-0">
                         <td className="py-1">{item.description}</td>
                         <td className="py-1 text-right">{item.quantity}</td>
                         <td className="py-1 text-right">{item.unitPrice}</td>

@@ -7,6 +7,7 @@
  */
 
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 
 import { getPortalProject } from '@/lib/services/portal/portal-workspace-service';
 import { loadPortalPageData } from '@/lib/portal/page-data';
@@ -18,11 +19,13 @@ export default async function PortalProjectPage({ params }: { params: Promise<{ 
   const result = await loadPortalPageData(() => getPortalProject(id));
 
   if (!result.ok) {
+    // A record the client may not see answers HTTP 404, indistinguishable from a
+    // record that does not exist. Only an inactive access gets an explanation.
+    if (result.reason === 'not-found') notFound();
+
     return (
       <div role="alert" className="rounded-md border p-4 text-sm">
-        {result.reason === 'not-found'
-          ? 'This project is not available to you.'
-          : 'This project could not be loaded right now.'}
+        This project could not be loaded right now.
         <div className="mt-2">
           <Link href="/portal/projects" className="text-accent hover:underline">
             Back to projects
