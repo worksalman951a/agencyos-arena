@@ -8,13 +8,19 @@ import {
   allocateDocumentNumber,
   type PrismaTransactionClient,
 } from '@/lib/services/settings/document-numbering';
-import {
+import type {
   InvoiceCreateInput,
   InvoiceUpdateInput,
   InvoiceQueryInput,
   InvoiceLineItemInput,
   InvoicePaymentInput,
 } from '@/lib/schemas/crm/invoice.schema';
+import {
+  INVOICE_INITIAL_STATUSES,
+  INVOICE_EDITABLE_STATUSES,
+  INVOICE_MANUAL_UPDATE_STATUSES,
+  INVOICE_STATUS_TRANSITIONS,
+} from '@/lib/schemas/crm/invoice-status';
 
 /** Invoice serialization */
 export interface InvoiceResponse {
@@ -64,14 +70,8 @@ export interface InvoicePaymentResponse {
   createdAt: Date;
 }
 
-const EDITABLE_STATUSES = ['draft', 'sent'];
-
-const VALID_TRANSITIONS: Record<string, string[]> = {
-  draft: ['sent', 'paid', 'voided'],
-  sent: ['paid', 'voided'],
-  paid: [],
-  voided: [],
-};
+const EDITABLE_STATUSES: readonly string[] = INVOICE_EDITABLE_STATUSES;
+const VALID_TRANSITIONS: Partial<Record<string, readonly string[]>> = INVOICE_STATUS_TRANSITIONS;
 
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
   const cookieStore = await cookies();
@@ -411,6 +411,11 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
 
   await requirePermission(userId, organizationId, 'invoice.create');
 
+  // Keep the service boundary safe even when called without the HTTP schema.
+  if (!(INVOICE_INITIAL_STATUSES as readonly string[]).includes(input.status)) {
+    throw codedError(`Invalid initial invoice status: ${input.status}`, 400);
+  }
+
   if (input.clientId) {
     const client = await prisma.contact.findFirst({
       where: { id: input.clientId, organizationId },
@@ -521,6 +526,15 @@ export async function updateInvoice(
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'invoice.update');
+
+  // Do not let direct service callers mark an invoice paid or overdue. Payment
+  // recording owns the paid transition; overdue requires a trusted aging job.
+  if (
+    input.status !== undefined &&
+    !(INVOICE_MANUAL_UPDATE_STATUSES as readonly string[]).includes(input.status)
+  ) {
+    throw codedError(`Invalid manually-updatable invoice status: ${input.status}`, 400);
+  }
 
   const existing = await prisma.invoice.findFirst({
     where: { id, organizationId },

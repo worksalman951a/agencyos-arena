@@ -28,7 +28,8 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_SKIP_WEBSERVER
     ? undefined
     : {
-        command: 'npm run dev',
+        // Port 3000 is reserved by a separate project; keep the app server on 3001.
+        command: 'npm run dev -- --port 3001',
         url: APP_URL,
         reuseExistingServer: !process.env.CI,
         timeout: 120000,

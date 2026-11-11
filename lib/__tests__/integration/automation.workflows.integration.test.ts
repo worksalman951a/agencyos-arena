@@ -129,102 +129,33 @@ describeIfDb('automation workflows (integration)', () => {
     expect(second.status).toBe(400);
   });
 
-  it('executes a matching rule once per record even when the event is dispatched twice', async () => {
+  it('rejects caller-supplied event payloads until trusted server-side producers exist', async () => {
     const create = await jsonFetch('/api/v1/automation/workflows', {
       method: 'POST',
       headers: authHeaders(account.token),
       body: JSON.stringify({
-        name: 'Notify on created',
+        name: 'Must not run from HTTP',
         trigger: 'record.created',
         conditions: {},
-        actions: { list: [{ type: 'notify_user', userId: '$.ownerId', title: 'New record' }] },
+        actions: { list: [{ type: 'log', message: 'must not run' }] },
       }),
     });
     expect(create.status).toBe(201);
     const ruleId = (create.body as { id: string }).id;
 
-    const event = {
-      type: 'record.created',
-      recordType: 'Task',
-      recordId: `task-${Date.now()}`,
-      record: { ownerId: account.userId, status: 'open' },
-    };
-
-    const first = await jsonFetch('/api/v1/automation/events', {
-      method: 'POST',
-      headers: authHeaders(account.token),
-      body: JSON.stringify(event),
-    });
-    expect(first.status).toBe(200);
-    const firstBody = first.body as {
-      matched: number;
-      executed: number;
-      executions: Array<{ status: string; ruleId: string }>;
-    };
-    const executedForRule = firstBody.executions.filter((e) => e.ruleId === ruleId);
-    expect(executedForRule).toHaveLength(1);
-    expect(executedForRule[0].status).toBe('succeeded');
-
-    // Same event again: the dedupe key makes it a no-op for this rule.
-    const second = await jsonFetch('/api/v1/automation/events', {
-      method: 'POST',
-      headers: authHeaders(account.token),
-      body: JSON.stringify(event),
-    });
-    expect(second.status).toBe(200);
-    const secondBody = second.body as { executions: Array<{ ruleId: string }> };
-    expect(secondBody.executions.filter((e) => e.ruleId === ruleId)).toHaveLength(0);
-
-    const executions = await prisma.workflowExecution.count({ where: { ruleId } });
-    expect(executions).toBe(1);
-
-    // The notification was created exactly once as well.
-    const notifications = await prisma.notification.count({
-      where: { organizationId: account.organizationId, userId: account.userId, type: 'workflow' },
-    });
-    expect(notifications).toBe(1);
-
-    const history = await jsonFetch(`/api/v1/automation/workflows/${ruleId}/executions`, {
-      headers: authHeaders(account.token),
-    });
-    expect(history.status).toBe(200);
-    expect((history.body as unknown[]).length).toBe(1);
-  });
-
-  it('does not execute disabled rules', async () => {
-    const create = await jsonFetch('/api/v1/automation/workflows', {
-      method: 'POST',
-      headers: authHeaders(account.token),
-      body: JSON.stringify({
-        name: 'Disabled rule',
-        trigger: 'record.updated',
-        conditions: {},
-        actions: { list: [{ type: 'log', message: 'never' }] },
-        enabled: true,
-      }),
-    });
-    const ruleId = (create.body as { id: string }).id;
-
-    const disable = await jsonFetch(`/api/v1/automation/workflows/${ruleId}`, {
-      method: 'PATCH',
-      headers: authHeaders(account.token),
-      body: JSON.stringify({ enabled: false }),
-    });
-    expect(disable.status).toBe(200);
-
     const dispatch = await jsonFetch('/api/v1/automation/events', {
       method: 'POST',
       headers: authHeaders(account.token),
       body: JSON.stringify({
-        type: 'record.updated',
+        type: 'record.created',
         recordType: 'Task',
-        recordId: `task-${Date.now()}`,
-        record: {},
+        recordId: `forged-task-${Date.now()}`,
+        record: { ownerId: account.userId, status: 'open' },
       }),
     });
-    expect(dispatch.status).toBe(200);
-    const body = dispatch.body as { executions: Array<{ ruleId: string }> };
-    expect(body.executions.filter((e) => e.ruleId === ruleId)).toHaveLength(0);
+
+    expect(dispatch.status).toBe(410);
+    expect(await prisma.workflowExecution.count({ where: { ruleId } })).toBe(0);
   });
 
   it('scopes execution history to the requested rule', async () => {
@@ -255,21 +186,21 @@ describeIfDb('automation workflows (integration)', () => {
       body: JSON.stringify({
         name: 'Delete with history',
         trigger: 'record.created',
-        conditions: {},
         actions: { list: [{ type: 'log', message: 'x' }] },
       }),
     });
+    expect(create.status).toBe(201);
     const ruleId = (create.body as { id: string }).id;
 
-    await jsonFetch('/api/v1/automation/events', {
-      method: 'POST',
-      headers: authHeaders(account.token),
-      body: JSON.stringify({
-        type: 'record.created',
+    await prisma.workflowExecution.create({
+      data: {
+        organizationId: account.organizationId,
+        ruleId,
         recordType: 'Task',
         recordId: `task-${Date.now()}`,
-        record: {},
-      }),
+        status: 'succeeded',
+        resultLog: { eventType: 'record.created' },
+      },
     });
     expect(await prisma.workflowExecution.count({ where: { ruleId } })).toBe(1);
 
@@ -369,7 +300,8 @@ describeIfDb('automation workflows (integration)', () => {
     });
     expect(create.status).toBe(201);
 
-    // Dispatch an event in *this* organization that names the foreign record id.
+    // Even a valid session cannot submit an HTTP event naming another tenant's
+    // record while no trusted server-side event producer is configured.
     const dispatch = await jsonFetch('/api/v1/automation/events', {
       method: 'POST',
       headers: authHeaders(account.token),
@@ -380,16 +312,7 @@ describeIfDb('automation workflows (integration)', () => {
         record: {},
       }),
     });
-    expect(dispatch.status).toBe(200);
-
-    // The action must be skipped, and the foreign row untouched.
-    const executions = (
-      dispatch.body as {
-        executions: Array<{ resultLog?: { actions?: Array<{ status: string }> } }>;
-      }
-    ).executions;
-    const statuses = executions.flatMap((e) => e.resultLog?.actions ?? []).map((a) => a.status);
-    expect(statuses).toContain('skipped');
+    expect(dispatch.status).toBe(410);
 
     const reloaded = await prisma.task.findUnique({ where: { id: foreignTask.id } });
     expect(reloaded?.status).toBe('open');

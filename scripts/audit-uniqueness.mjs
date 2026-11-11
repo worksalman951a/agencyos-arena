@@ -22,14 +22,17 @@
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { PrismaClient } = require('@prisma/client');
-const { PrismaPg } = require('@prisma/adapter-pg');
 
 function createPrismaClient() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('DATABASE_URL environment variable is required to run the uniqueness audit.');
   }
+
+  // Defer generated-client imports until after the environment guard. This lets
+  // the audit fail with a clear configuration error even before `prisma generate`.
+  const { PrismaClient } = require('@prisma/client');
+  const { PrismaPg } = require('@prisma/adapter-pg');
 
   const adapter = new PrismaPg({
     connectionString,
