@@ -93,6 +93,8 @@ async function seedInvitation(
 async function activateThroughInvitePage(browser: Browser, fixture: PortalFixture): Promise<Page> {
   const context = await browser.newContext();
   const page = await context.newPage();
+  // TEMPORARY DIAGNOSTIC: collected and reported if activation does not complete.
+  const notes: string[] = [];
 
   await page.goto(fixture.acceptPath);
   await expect(page.getByRole('heading', { name: 'Client portal invitation' })).toBeVisible();
@@ -114,33 +116,52 @@ async function activateThroughInvitePage(browser: Browser, fixture: PortalFixtur
   ]);
 
   if (!(await acceptButton.isVisible())) {
+    notes.push(
+      `after-signup-alert=${JSON.stringify(
+        await page
+          .locator('[role="alert"]')
+          .first()
+          .textContent()
+          .catch(() => null)
+      )}`
+    );
     // Fall back to signing in with the password that was just created (or an
     // earlier attempt's account) — same page, same e-mail binding.
     await page.getByRole('button', { name: 'Already activated? Sign in' }).click();
     await page.getByLabel('E-mail').fill(fixture.email);
     await page.getByLabel('Password').fill(fixture.password);
     await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.waitForTimeout(4000);
+    notes.push(
+      `after-signin-alert=${JSON.stringify(
+        await page
+          .locator('[role="alert"]')
+          .first()
+          .textContent()
+          .catch(() => null)
+      )}`
+    );
   }
+
+  notes.push(`cookies=${JSON.stringify(await context.cookies())}`);
 
   if (!(await acceptButton.isVisible())) {
     // Last resort: a full reload with the session cookie already applied. The
     // invitation page is server-rendered, so this must show the accept button.
     await page.reload();
+    await page.waitForTimeout(2000);
   }
 
-  // TEMPORARY DIAGNOSTIC: surface the page state in the CI annotation if the
-  // accept button still is not there.
   if (!(await acceptButton.isVisible())) {
-    const alertText = await page
-      .locator('[role="alert"]')
-      .first()
-      .textContent()
-      .catch(() => null);
     const body = (await page.content())
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
-      .slice(0, 700);
-    throw new Error(`DIAG url=${page.url()} alert=${JSON.stringify(alertText)} body=${body}`);
+      .slice(0, 500);
+    throw new Error(
+      `DIAG url=${page.url()} ${notes.join(' | ')} cookiesAfterReload=${JSON.stringify(
+        await context.cookies()
+      )} body=${body}`
+    );
   }
 
   await expect(acceptButton).toBeVisible({ timeout: 25_000 });
