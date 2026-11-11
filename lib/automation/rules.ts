@@ -29,6 +29,40 @@ export const WORKFLOW_TRIGGERS = [
 
 export type WorkflowTrigger = (typeof WORKFLOW_TRIGGERS)[number];
 
+/** Business records with trusted event producers in this phase. */
+export const WORKFLOW_RECORD_TYPES = [
+  'Lead',
+  'Opportunity',
+  'Project',
+  'Task',
+  'Estimate',
+  'Invoice',
+  'Proposal',
+  'Quotation',
+] as const;
+
+export type WorkflowRecordType = (typeof WORKFLOW_RECORD_TYPES)[number];
+
+/** Internal producer input: record snapshots and tenant/actor data are never accepted. */
+export const workflowProducerEventSchema = z
+  .object({
+    type: z.enum(WORKFLOW_TRIGGERS),
+    recordType: z.enum(WORKFLOW_RECORD_TYPES),
+    recordId: z.string().trim().min(1).max(120),
+    previousStatus: z.string().max(60).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (event) =>
+      event.type === 'record.status_changed'
+        ? event.previousStatus !== undefined
+        : event.previousStatus === undefined,
+    {
+      message: 'previousStatus is required only for record.status_changed events',
+      path: ['previousStatus'],
+    }
+  );
+
 export const WORKFLOW_OPERATORS = [
   'eq',
   'neq',
@@ -165,13 +199,15 @@ export type WorkflowRuleUpdateInput = z.infer<typeof workflowRuleUpdateSchema>;
 export interface WorkflowEvent {
   /** e.g. `record.created` */
   type: WorkflowTrigger;
-  /** e.g. `Task`, `Invoice` */
-  recordType: string;
+  /** A supported domain record, loaded by the server-side producer. */
+  recordType: WorkflowRecordType;
   recordId: string;
-  /** The record as a plain object (Prisma row, serialized). */
+  /** The organization-scoped record loaded from PostgreSQL, never caller input. */
   record: Record<string, unknown>;
-  /** For `record.status_changed`: the status before the change. */
+  /** For `record.status_changed`: the status before the business mutation. */
   previousStatus?: string | null;
+  /** Stable fingerprint of the persisted record version that produced this event. */
+  eventVersion?: string;
 }
 
 /** Read a dot path such as `owner.id` from a record. */
@@ -299,12 +335,24 @@ export function matchesWorkflowRule(
 /**
  * Stable dedupe key for an event.
  *
- * Same rule + same record + same trigger + same status transition is the same
- * piece of work no matter how many times it is dispatched (retries, a
- * double-submit, two workers seeing the same event).
+ * Same rule + record + trigger + persisted event version + status transition
+ * is the same piece of work across duplicate deliveries and retries. A later
+ * record update is a distinct event; a record.created version remains tied to
+ * its immutable creation timestamp.
  */
 export function workflowDedupeKey(event: WorkflowEvent): string {
-  const from = event.previousStatus ?? '';
-  const to = String(readField(event.record, 'status') ?? '');
-  return [event.type, from, to].join(':');
+  const from = event.previousStatus ?? null;
+  const to = readField(event.record, 'status') ?? null;
+
+  // The persisted record version distinguishes separate updates to the same
+  // record, while a repeated producer call for the same DB version remains
+  // idempotent. JSON tuple encoding avoids delimiter-collision ambiguity.
+  return JSON.stringify([
+    event.type,
+    event.recordType,
+    event.recordId,
+    event.eventVersion ?? null,
+    from,
+    to,
+  ]);
 }

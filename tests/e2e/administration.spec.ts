@@ -194,7 +194,7 @@ test.describe('workflow rules', () => {
     await expect(page.getByText('No executions yet.', { exact: false })).toBeVisible();
   });
 
-  test('rejects caller-supplied workflow events until trusted producers are wired', async ({
+  test('keeps caller-supplied event dispatch disabled after internal producers are wired', async ({
     authedPage: page,
     api,
     account,

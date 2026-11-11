@@ -56,11 +56,20 @@ vi.mock('@/lib/permissions', () => ({
   requireOrganization: vi.fn(),
 }));
 
+vi.mock('@/lib/services/automation/run-workflow-service', () => ({
+  emitWorkflowEvent: vi.fn(async () => ({})),
+  emitWorkflowEvents: vi.fn(async () => []),
+}));
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 import { requirePermission, requireOrganization } from '@/lib/permissions';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import { convertLead } from '@/lib/services/crm/lead-conversion-service';
 
 const mockLeadFindUnique = prisma.lead.findUnique as unknown as ReturnType<typeof vi.fn>;
@@ -77,6 +86,8 @@ const mockGetSession = auth.api.getSession as unknown as ReturnType<typeof vi.fn
 const mockCookies = cookies as unknown as ReturnType<typeof vi.fn>;
 const mockRequirePermission = requirePermission as unknown as ReturnType<typeof vi.fn>;
 const mockRequireOrganization = requireOrganization as unknown as ReturnType<typeof vi.fn>;
+const mockEmitWorkflowEvent = emitWorkflowEvent as unknown as ReturnType<typeof vi.fn>;
+const mockEmitWorkflowEvents = emitWorkflowEvents as unknown as ReturnType<typeof vi.fn>;
 
 const orgId = 'org_123';
 const userId = 'user_123';
@@ -169,6 +180,7 @@ describe('Lead conversion - convertLead', () => {
     });
 
     expect(result.alreadyConverted).toBe(false);
+    expect(result).not.toHaveProperty('previousLeadStatus');
     expect(result.opportunity.id).toBe(oppId);
     expect(result.opportunity.title).toBe('Converted Deal');
     expect(result.opportunity.leadId).toBe(leadId);
@@ -187,6 +199,20 @@ describe('Lead conversion - convertLead', () => {
       where: { id: leadId },
       data: { status: 'converted' },
     });
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledExactlyOnceWith({
+      type: 'record.created',
+      recordType: 'Opportunity',
+      recordId: oppId,
+    });
+    expect(mockEmitWorkflowEvents).toHaveBeenCalledExactlyOnceWith([
+      { type: 'record.updated', recordType: 'Lead', recordId: leadId },
+      {
+        type: 'record.status_changed',
+        recordType: 'Lead',
+        recordId: leadId,
+        previousStatus: 'new',
+      },
+    ]);
     expect(mockAuditLogCreate).toHaveBeenCalledTimes(2);
   });
 
@@ -224,6 +250,8 @@ describe('Lead conversion - convertLead', () => {
     expect(result.opportunity.title).toBe('Existing Deal');
     expect(mockOppCreate).not.toHaveBeenCalled();
     expect(mockLeadUpdate).not.toHaveBeenCalled();
+    expect(mockEmitWorkflowEvent).not.toHaveBeenCalled();
+    expect(mockEmitWorkflowEvents).not.toHaveBeenCalled();
   });
 
   it('throws 401 when unauthenticated', async () => {

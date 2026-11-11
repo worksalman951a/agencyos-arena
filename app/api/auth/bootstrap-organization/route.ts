@@ -105,6 +105,7 @@ const CRM_PERMISSION_CODES = [
   'workflow.read',
   'workflow.create',
   'workflow.update',
+  'workflow.execute',
   'workflow.delete',
   'invitation.read',
   'invitation.create',

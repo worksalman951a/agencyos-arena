@@ -1,6 +1,10 @@
 'use server';
 
 import { prisma } from '@/lib/db';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -476,6 +480,8 @@ export async function createProject(input: ProjectCreateInput): Promise<ProjectR
     organizationId,
   });
 
+  await emitWorkflowEvent({ type: 'record.created', recordType: 'Project', recordId: project.id });
+
   return serializeProject(project as unknown as ProjectDbRecord);
 }
 
@@ -569,6 +575,20 @@ export async function updateProject(
     organizationId,
   });
 
+  await emitWorkflowEvents([
+    { type: 'record.updated', recordType: 'Project', recordId: project.id },
+    ...(existing.status !== project.status
+      ? [
+          {
+            type: 'record.status_changed',
+            recordType: 'Project',
+            recordId: project.id,
+            previousStatus: existing.status,
+          },
+        ]
+      : []),
+  ]);
+
   return serializeProject(project as unknown as ProjectDbRecord);
 }
 
@@ -648,6 +668,8 @@ export async function addProjectTask(
     after: { id: task.id, title: task.title, status: task.status, projectId },
     organizationId,
   });
+
+  await emitWorkflowEvent({ type: 'record.created', recordType: 'Task', recordId: task.id });
 
   return serializeTask(task as unknown as ProjectDbRecord['tasks'][number]);
 }
@@ -781,6 +803,20 @@ export async function updateProjectTask(
     },
     organizationId,
   });
+
+  await emitWorkflowEvents([
+    { type: 'record.updated', recordType: 'Task', recordId: task.id },
+    ...(existing.status !== task.status
+      ? [
+          {
+            type: 'record.status_changed',
+            recordType: 'Task',
+            recordId: task.id,
+            previousStatus: existing.status,
+          },
+        ]
+      : []),
+  ]);
 
   return serializeTask(task as unknown as ProjectDbRecord['tasks'][number]);
 }

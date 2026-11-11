@@ -100,6 +100,7 @@ describe('Bootstrap document permission codes', () => {
       'project.read',
       'project.update',
       'project.delete',
+      'workflow.execute',
     ];
 
     for (const code of allCodes) {

@@ -1,6 +1,10 @@
 'use server';
 
 import { prisma } from '@/lib/db';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -172,6 +176,8 @@ interface RecordedPaymentOutcome {
     createdAt: Date;
   };
   invoiceStatus: string;
+  /** Status before this successful payment changed the invoice. */
+  previousInvoiceStatus: string;
   /** Total recorded against the invoice, as decimal money. */
   amountPaid: string;
   /** Remaining balance, never negative. */
@@ -515,6 +521,8 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
     organizationId,
   });
 
+  await emitWorkflowEvent({ type: 'record.created', recordType: 'Invoice', recordId: invoice.id });
+
   return serializeInvoice(invoice as unknown as InvoiceDbRecord);
 }
 
@@ -660,6 +668,20 @@ export async function updateInvoice(
     organizationId,
   });
 
+  await emitWorkflowEvents([
+    { type: 'record.updated', recordType: 'Invoice', recordId: invoice.id },
+    ...(existing.status !== invoice.status
+      ? [
+          {
+            type: 'record.status_changed',
+            recordType: 'Invoice',
+            recordId: invoice.id,
+            previousStatus: existing.status,
+          },
+        ]
+      : []),
+  ]);
+
   return serializeInvoice(invoice as unknown as InvoiceDbRecord);
 }
 
@@ -708,6 +730,7 @@ async function replayRecordedPayment(
       createdAt: payment.createdAt,
     },
     invoiceStatus: invoice.status,
+    previousInvoiceStatus: invoice.status,
     amountPaid: formatMoney(paidCents),
     balance: formatMoney(Math.max(totalCents - paidCents, 0)),
     duplicate: true,
@@ -790,8 +813,9 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
         createdAt: payment.createdAt,
       });
 
-      const summary = (paid: number, status: string) => ({
+      const summary = (paid: number, status: string, previousStatus: string) => ({
         invoiceStatus: status,
+        previousInvoiceStatus: previousStatus,
         amountPaid: formatMoney(paid),
         balance: formatMoney(Math.max(totalCents - paid, 0)),
       });
@@ -804,7 +828,7 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
         if (duplicate) {
           return {
             payment: serialize(duplicate as (typeof payments)[number]),
-            ...summary(paidCents, invoice.status),
+            ...summary(paidCents, invoice.status, invoice.status),
             duplicate: true,
           };
         }
@@ -845,7 +869,7 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
 
       return {
         payment: serialize(payment as unknown as (typeof payments)[number]),
-        ...summary(newPaidCents, newStatus),
+        ...summary(newPaidCents, newStatus, invoice.status),
         duplicate: false,
       };
     });
@@ -881,7 +905,25 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
     });
   }
 
-  return audited;
+  if (!audited.duplicate) {
+    await emitWorkflowEvents([
+      { type: 'record.updated', recordType: 'Invoice', recordId: invoiceId },
+      ...(audited.previousInvoiceStatus !== audited.invoiceStatus
+        ? [
+            {
+              type: 'record.status_changed',
+              recordType: 'Invoice',
+              recordId: invoiceId,
+              previousStatus: audited.previousInvoiceStatus,
+            },
+          ]
+        : []),
+    ]);
+  }
+
+  const publicOutcome = { ...audited };
+  delete (publicOutcome as Partial<RecordedPaymentOutcome>).previousInvoiceStatus;
+  return publicOutcome as Omit<RecordedPaymentOutcome, 'previousInvoiceStatus'>;
 }
 
 export async function deleteInvoice(id: string) {

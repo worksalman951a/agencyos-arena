@@ -92,6 +92,11 @@ vi.mock('@/lib/auth-server', () => ({
 }));
 vi.mock('next/headers', () => ({ cookies: mocks.cookies }));
 
+vi.mock('@/lib/services/automation/run-workflow-service', () => ({
+  emitWorkflowEvent: vi.fn(async () => ({})),
+  emitWorkflowEvents: vi.fn(async () => []),
+}));
+
 import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';

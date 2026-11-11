@@ -62,6 +62,11 @@ vi.mock('@/lib/services/settings/document-numbering', () => ({
   allocateDocumentNumber: vi.fn(),
 }));
 
+vi.mock('@/lib/services/automation/run-workflow-service', () => ({
+  emitWorkflowEvent: vi.fn(async () => ({})),
+  emitWorkflowEvents: vi.fn(async () => []),
+}));
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth-server';

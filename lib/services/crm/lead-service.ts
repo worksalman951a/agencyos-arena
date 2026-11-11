@@ -1,6 +1,10 @@
 'use server';
 
 import { prisma } from '@/lib/db';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -70,6 +74,14 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
     email: result.user.email ?? '',
     role: user.role ?? 'employee',
   };
+}
+
+function rejectManualLeadConversion(): never {
+  const error = new Error('Lead conversion must use the lead conversion service') as Error & {
+    statusCode?: number;
+  };
+  error.statusCode = 400;
+  throw error;
 }
 
 /** Create an audit log entry with sensitive values redacted */
@@ -347,6 +359,8 @@ export async function createLead(input: LeadCreateInput, overrideDuplicate = fal
 
   await requirePermission(userId, organizationId, 'lead.create');
 
+  if (input.status === 'converted') rejectManualLeadConversion();
+
   // Validate owner membership if an owner is assigned
   if (input.ownerId) {
     const isMember = await validateOwner(organizationId, input.ownerId);
@@ -471,6 +485,8 @@ export async function createLead(input: LeadCreateInput, overrideDuplicate = fal
     organizationId,
   });
 
+  await emitWorkflowEvent({ type: 'record.created', recordType: 'Lead', recordId: lead.id });
+
   return serializeLead(lead, false, null);
 }
 
@@ -489,6 +505,13 @@ export async function updateLead(id: string, input: LeadUpdateInput, overrideDup
     const error = new Error('Not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;
+  }
+
+  if (
+    (input.status === 'converted' && existing.status !== 'converted') ||
+    (existing.status === 'converted' && input.status !== undefined && input.status !== 'converted')
+  ) {
+    rejectManualLeadConversion();
   }
 
   // Validate owner membership if owner is being changed
@@ -642,6 +665,20 @@ export async function updateLead(id: string, input: LeadUpdateInput, overrideDup
     metadata: isDuplicate ? { duplicateOverride: true, duplicateId } : null,
     organizationId,
   });
+
+  await emitWorkflowEvents([
+    { type: 'record.updated', recordType: 'Lead', recordId: lead.id },
+    ...(existing.status !== lead.status
+      ? [
+          {
+            type: 'record.status_changed',
+            recordType: 'Lead',
+            recordId: lead.id,
+            previousStatus: existing.status,
+          },
+        ]
+      : []),
+  ]);
 
   return serializeLead(lead, false, null);
 }

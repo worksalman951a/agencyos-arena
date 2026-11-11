@@ -60,6 +60,11 @@ vi.mock('@/lib/permissions', () => ({
   requireOrganization: vi.fn(),
 }));
 
+vi.mock('@/lib/services/automation/run-workflow-service', () => ({
+  emitWorkflowEvent: vi.fn(async () => ({})),
+  emitWorkflowEvents: vi.fn(async () => []),
+}));
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth-server';
@@ -87,7 +92,9 @@ const mockLeadCount = prisma.lead.count as unknown as ReturnType<typeof vi.fn>;
 const mockContactFindFirst = prisma.contact.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockAccountFindFirst = prisma.agencyAccount.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockPipelineFindFirst = prisma.pipeline.findFirst as unknown as ReturnType<typeof vi.fn>;
-const mockPipelineStageFindFirst = prisma.pipelineStage.findFirst as unknown as ReturnType<typeof vi.fn>;
+const mockPipelineStageFindFirst = prisma.pipelineStage.findFirst as unknown as ReturnType<
+  typeof vi.fn
+>;
 const mockUserRoleFindFirst = prisma.userRole.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockAuditLogCreate = prisma.auditLog.create as unknown as ReturnType<typeof vi.fn>;
 const mockTransaction = prisma.$transaction as unknown as ReturnType<typeof vi.fn>;
@@ -434,13 +441,20 @@ describe('Lead service - createLead', () => {
     expect(result.source).toBe('website');
   });
 
+  it('does not allow direct creation with converted status', async () => {
+    await expect(createLead({ ...createInput, status: 'converted' })).rejects.toMatchObject({
+      statusCode: 400,
+      message: 'Lead conversion must use the lead conversion service',
+    });
+
+    expect(mockLeadCreate).not.toHaveBeenCalled();
+  });
+
   it('throws 409 when duplicate lead detected', async () => {
     mockContactFindFirst.mockResolvedValue({ id: 'contact_1', organizationId: orgId });
     mockLeadFindFirst.mockResolvedValue({ id: 'existing_lead', organizationId: orgId });
 
-    await expect(
-      createLead({ ...createInput, contactId: 'contact_1' })
-    ).rejects.toMatchObject({
+    await expect(createLead({ ...createInput, contactId: 'contact_1' })).rejects.toMatchObject({
       statusCode: 409,
     });
   });
@@ -556,6 +570,39 @@ describe('Lead service - updateLead', () => {
     expect(result.source).toBe('referral');
     expect(mockAuditLogCreate).toHaveBeenCalled();
   });
+
+  it.each([
+    { existingStatus: 'new', requestedStatus: 'converted' },
+    { existingStatus: 'converted', requestedStatus: 'qualified' },
+  ])(
+    'routes Lead transitions into or out of converted through the conversion service',
+    async ({ existingStatus, requestedStatus }) => {
+      mockLeadFindFirst.mockResolvedValue({
+        id: leadId,
+        organizationId: orgId,
+        source: 'website',
+        status: existingStatus,
+        priority: 'medium',
+        contactId: null,
+        accountId: null,
+        ownerId: null,
+        pipelineId: null,
+        stageId: null,
+        notes: null,
+        deletedAt: null,
+      });
+
+      await expect(
+        updateLead(leadId, { status: requestedStatus } as LeadUpdateInput)
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: 'Lead conversion must use the lead conversion service',
+      });
+
+      expect(mockLeadUpdate).not.toHaveBeenCalled();
+      expect(mockAuditLogCreate).not.toHaveBeenCalled();
+    }
+  );
 
   it('throws non-disclosing 404 for cross-org update', async () => {
     mockLeadFindFirst.mockResolvedValue(null);
@@ -717,9 +764,9 @@ describe('Lead service - createLead org isolation regression', () => {
   it('validates cross-org stage when stageId is provided without pipelineId', async () => {
     mockPipelineStageFindFirst.mockResolvedValue(null);
 
-    await expect(
-      createLead({ ...createInput, stageId: 'foreign_stage' })
-    ).rejects.toMatchObject({ statusCode: 404 });
+    await expect(createLead({ ...createInput, stageId: 'foreign_stage' })).rejects.toMatchObject({
+      statusCode: 404,
+    });
   });
 
   it('allows stage from same org pipeline when pipelineId is provided', async () => {
@@ -743,7 +790,11 @@ describe('Lead service - createLead org isolation regression', () => {
     });
     mockAuditLogCreate.mockResolvedValue({ id: 'audit_1' });
 
-    const result = await createLead({ ...createInput, pipelineId: 'pipeline_1', stageId: 'stage_1' });
+    const result = await createLead({
+      ...createInput,
+      pipelineId: 'pipeline_1',
+      stageId: 'stage_1',
+    });
     expect(result.id).toBe('new_lead');
     expect(mockPipelineStageFindFirst).toHaveBeenCalledWith({
       where: {
@@ -776,9 +827,9 @@ describe('Lead service - updateLead org isolation regression', () => {
     mockLeadFindFirst.mockResolvedValue(existingLead);
     mockPipelineStageFindFirst.mockResolvedValue(null);
 
-    await expect(
-      updateLead('lead_1', { stageId: 'foreign_stage' })
-    ).rejects.toMatchObject({ statusCode: 404 });
+    await expect(updateLead('lead_1', { stageId: 'foreign_stage' })).rejects.toMatchObject({
+      statusCode: 404,
+    });
   });
 
   it('allows stage from same org when pipelineId is derived from existing lead', async () => {

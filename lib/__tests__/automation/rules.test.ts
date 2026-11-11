@@ -17,6 +17,7 @@ import {
   workflowActionsSchema,
   workflowConditionSchema,
   workflowDedupeKey,
+  workflowProducerEventSchema,
   workflowRuleCreateSchema,
   WORKFLOW_ACTION_TYPES,
   WORKFLOW_TRIGGERS,
@@ -48,6 +49,31 @@ describe('workflow vocabulary', () => {
       actions: { list: [{ type: 'log', message: 'x' }] },
     });
     expect(unknown.success).toBe(false);
+  });
+
+  it('accepts only server producer references, never caller-supplied snapshots', () => {
+    expect(
+      workflowProducerEventSchema.safeParse({
+        type: 'record.created',
+        recordType: 'Lead',
+        recordId: 'lead-1',
+      }).success
+    ).toBe(true);
+    expect(
+      workflowProducerEventSchema.safeParse({
+        type: 'record.created',
+        recordType: 'Lead',
+        recordId: 'lead-1',
+        record: { status: 'forged' },
+      }).success
+    ).toBe(false);
+    expect(
+      workflowProducerEventSchema.safeParse({
+        type: 'record.status_changed',
+        recordType: 'Task',
+        recordId: 'task-1',
+      }).success
+    ).toBe(false);
   });
 
   it('rejects actions that cannot execute yet', () => {
@@ -189,21 +215,32 @@ describe('workflowDedupeKey', () => {
     expect(workflowDedupeKey(event)).toBe(workflowDedupeKey(createdEvent()));
   });
 
-  it('differs across transitions of the same record', () => {
+  it('differs across transitions and successive updates of the same record', () => {
     const from = workflowDedupeKey({
       type: 'record.status_changed',
       recordType: 'Task',
       recordId: 't1',
       record: { status: 'done' },
       previousStatus: 'open',
+      eventVersion: 'v1',
     });
-    const to = workflowDedupeKey({
+    const differentTransition = workflowDedupeKey({
       type: 'record.status_changed',
       recordType: 'Task',
       recordId: 't1',
       record: { status: 'done' },
       previousStatus: 'in_progress',
+      eventVersion: 'v1',
     });
-    expect(from).not.toBe(to);
+    const laterUpdate = workflowDedupeKey({
+      type: 'record.status_changed',
+      recordType: 'Task',
+      recordId: 't1',
+      record: { status: 'done' },
+      previousStatus: 'open',
+      eventVersion: 'v2',
+    });
+    expect(from).not.toBe(differentTransition);
+    expect(from).not.toBe(laterUpdate);
   });
 });
