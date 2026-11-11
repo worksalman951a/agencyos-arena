@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 
 import { getEstimate, updateEstimate, deleteEstimate } from '@/lib/services/crm/estimate-service';
 import { estimateUpdateSchema } from '@/lib/schemas/crm/estimate.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -23,11 +24,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const estimate = await getEstimate(id);
     return NextResponse.json(estimate);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -43,11 +41,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const estimate = await updateEstimate(id, parsed.data);
     return NextResponse.json(estimate);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -57,10 +52,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const result = await deleteEstimate(id);
     return NextResponse.json(result);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

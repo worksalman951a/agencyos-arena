@@ -17,9 +17,9 @@ interface DocumentRecord {
   version: number;
   createdAt: Date;
   updatedAt: Date;
-  fileAsset: { id: string; originalName: string; mimeType: string; size: number } | null;
-  versions: Array<{ version: number }>;
-  links: Array<{ expiresAt: Date }>;
+  fileAsset?: { id: string; originalName: string; mimeType: string; size: number } | null;
+  versions?: Array<{ version: number }>;
+  links?: Array<{ expiresAt: Date }>;
 }
 
 export interface DocumentResponse {
@@ -35,6 +35,12 @@ export interface DocumentResponse {
   updatedAt: Date;
 }
 
+function codedError(message: string, statusCode: number): Error & { statusCode: number } {
+  const error = new Error(message) as Error & { statusCode: number };
+  error.statusCode = statusCode;
+  return error;
+}
+
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
@@ -42,9 +48,7 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
   });
 
   if (!result?.session || !result.user) {
-    const error = new Error('Unauthenticated') as Error & { statusCode?: number };
-    error.statusCode = 401;
-    throw error;
+    throw codedError('Unauthenticated', 401);
   }
 
   const user = result.user as { role?: string; organizationId?: string };
@@ -55,6 +59,16 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
     email: result.user.email ?? '',
     role: user.role ?? 'employee',
   };
+}
+
+async function validateFileAssetOrg(organizationId: string, fileAssetId: string) {
+  const asset = await prisma.fileAsset.findFirst({
+    where: { id: fileAssetId, organizationId },
+    select: { id: true },
+  });
+  if (!asset) {
+    throw codedError('Not found', 404);
+  }
 }
 
 async function createAuditLog({
@@ -105,7 +119,10 @@ export async function listDocuments() {
   await requirePermission(userId, organizationId, 'document.read');
 
   const documents = await prisma.document.findMany({
-    where: { organizationId },
+    where: {
+      organizationId,
+      OR: [{ folder: null }, { folder: { notIn: ['__template__', '__shared__'] } }],
+    },
     include: {
       fileAsset: { select: { id: true, originalName: true, mimeType: true, size: true } },
       _count: { select: { versions: true, links: true } },
@@ -142,9 +159,7 @@ export async function getDocument(id: string) {
   });
 
   if (!document) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
   }
 
   return {
@@ -165,6 +180,10 @@ export async function createDocument(input: DocumentCreateInput) {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'document.create');
+
+  if (input.fileAssetId) {
+    await validateFileAssetOrg(organizationId, input.fileAssetId);
+  }
 
   const document = await prisma.document.create({
     data: {
@@ -216,9 +235,11 @@ export async function updateDocument(id: string, input: DocumentUpdateInput) {
   });
 
   if (!existing) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
+  }
+
+  if (input.fileAssetId !== undefined && input.fileAssetId !== null) {
+    await validateFileAssetOrg(organizationId, input.fileAssetId);
   }
 
   const document = await prisma.document.update({
@@ -278,9 +299,7 @@ export async function deleteDocument(id: string) {
   });
 
   if (!existing) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
   }
 
   await prisma.document.delete({

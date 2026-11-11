@@ -85,9 +85,16 @@ export function ClientSelector({
             ) : filteredContacts.length === 0 ? (
               <div className="py-4 text-center text-xs text-muted-foreground">
                 No contacts found.{' '}
-                <Button asChild size="sm" variant="link" onClick={() => onContactSelect(null)}>
-                  Clear selection
-                </Button>
+                {selectedContactId && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="link"
+                    onClick={() => onContactSelect(null)}
+                  >
+                    Clear selection
+                  </Button>
+                )}
               </div>
             ) : (
               <div className="max-h-60 overflow-y-auto border border-border rounded-lg">
@@ -98,6 +105,7 @@ export function ClientSelector({
                   const isSelected = contact.id === selectedContactId;
                   return (
                     <button
+                      type="button"
                       key={contact.id}
                       onClick={() => onContactSelect(contact.id)}
                       className={`
@@ -163,6 +171,7 @@ export function ClientSelector({
                   const isSelected = opp.id === selectedOpportunityId;
                   return (
                     <button
+                      type="button"
                       key={opp.id}
                       onClick={() => onOpportunitySelect(opp.id)}
                       className={`

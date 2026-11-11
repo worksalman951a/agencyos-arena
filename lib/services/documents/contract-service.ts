@@ -10,6 +10,15 @@ import {
   ContractSignInput,
 } from '@/lib/schemas/documents/contract.schema';
 
+export interface SignatureAuditEntry {
+  id: string;
+  signerName: string;
+  signerEmail: string;
+  signedAt: Date;
+  signatureMethod: string;
+  signatureReference: string | null;
+}
+
 interface ContractRecord {
   id: string;
   organizationId: string;
@@ -22,9 +31,10 @@ interface ContractRecord {
   signedBy: string | null;
   createdAt: Date;
   updatedAt: Date;
-  proposal: { id: string; number: string; title: string; status: string } | null;
-  project: { id: string; name: string; status: string } | null;
-  signer: { id: string; name: string | null; email: string | null } | null;
+  proposal?: { id: string; number: string; title: string; status: string } | null;
+  project?: { id: string; name: string; status: string } | null;
+  signer?: { id: string; name: string | null; email: string | null } | null;
+  signatures?: SignatureAuditEntry[];
 }
 
 export interface ContractResponse {
@@ -42,9 +52,63 @@ export interface ContractResponse {
   proposal: { id: string; number: string; title: string; status: string } | null;
   project: { id: string; name: string; status: string } | null;
   signer: { id: string; name: string | null; email: string | null } | null;
+  signatures?: SignatureAuditEntry[];
 }
 
-const CONTRACT_STATUSES = ['draft', 'sent', 'signed', 'voided'];
+const EDITABLE_CONTRACT_STATUSES = ['draft', 'sent'];
+
+const VALID_CONTRACT_TRANSITIONS: Record<string, string[]> = {
+  draft: ['sent', 'voided'],
+  sent: ['voided'],
+  signed: [], // immutable
+  voided: [], // immutable
+};
+
+function codedError(message: string, statusCode: number): Error & { statusCode: number } {
+  const error = new Error(message) as Error & { statusCode: number };
+  error.statusCode = statusCode;
+  return error;
+}
+
+function serializeContract(c: ContractRecord): ContractResponse {
+  return {
+    id: c.id,
+    organizationId: c.organizationId,
+    proposalId: c.proposalId,
+    projectId: c.projectId,
+    title: c.title,
+    status: c.status,
+    signatureReference: c.signatureReference,
+    signedAt: c.signedAt,
+    signedBy: c.signedBy,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+    proposal: c.proposal
+      ? {
+          id: c.proposal.id,
+          number: c.proposal.number,
+          title: c.proposal.title,
+          status: c.proposal.status,
+        }
+      : null,
+    project: c.project
+      ? { id: c.project.id, name: c.project.name, status: c.project.status }
+      : null,
+    signer: c.signer ? { id: c.signer.id, name: c.signer.name, email: c.signer.email } : null,
+    ...(c.signatures
+      ? {
+          signatures: c.signatures.map((s) => ({
+            id: s.id,
+            signerName: s.signerName,
+            signerEmail: s.signerEmail,
+            signedAt: s.signedAt,
+            signatureMethod: s.signatureMethod,
+            signatureReference: s.signatureReference,
+          })),
+        }
+      : {}),
+  };
+}
 
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
   const cookieStore = await cookies();
@@ -53,9 +117,7 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
   });
 
   if (!result?.session || !result.user) {
-    const error = new Error('Unauthenticated') as Error & { statusCode?: number };
-    error.statusCode = 401;
-    throw error;
+    throw codedError('Unauthenticated', 401);
   }
 
   const user = result.user as { role?: string; organizationId?: string };
@@ -115,7 +177,7 @@ export async function listContracts(): Promise<ContractResponse[]> {
 
   await requirePermission(userId, organizationId, 'contract.read');
 
-  const contracts = await prisma.contract.findMany({
+  const contracts = (await prisma.contract.findMany({
     where: { organizationId },
     include: {
       proposal: { select: { id: true, number: true, title: true, status: true } },
@@ -123,33 +185,9 @@ export async function listContracts(): Promise<ContractResponse[]> {
       signer: { select: { id: true, name: true, email: true } },
     },
     orderBy: { updatedAt: 'desc' },
-  });
+  })) as ContractRecord[];
 
-  return contracts.map((c: ContractRecord) => ({
-    id: c.id,
-    organizationId: c.organizationId,
-    proposalId: c.proposalId,
-    projectId: c.projectId,
-    title: c.title,
-    status: c.status,
-    signatureReference: c.signatureReference,
-    signedAt: c.signedAt,
-    signedBy: c.signedBy,
-    createdAt: c.createdAt,
-    updatedAt: c.updatedAt,
-    proposal: c.proposal
-      ? {
-          id: c.proposal.id,
-          number: c.proposal.number,
-          title: c.proposal.title,
-          status: c.proposal.status,
-        }
-      : null,
-    project: c.project
-      ? { id: c.project.id, name: c.project.name, status: c.project.status }
-      : null,
-    signer: c.signer ? { id: c.signer.id, name: c.signer.name, email: c.signer.email } : null,
-  }));
+  return contracts.map(serializeContract);
 }
 
 export async function getContract(id: string): Promise<ContractResponse> {
@@ -157,48 +195,31 @@ export async function getContract(id: string): Promise<ContractResponse> {
 
   await requirePermission(userId, organizationId, 'contract.read');
 
-  const contract = await prisma.contract.findFirst({
+  const contract = (await prisma.contract.findFirst({
     where: { id, organizationId },
     include: {
       proposal: { select: { id: true, number: true, title: true, status: true } },
       project: { select: { id: true, name: true, status: true } },
       signer: { select: { id: true, name: true, email: true } },
+      signatures: {
+        orderBy: { signedAt: 'desc' },
+        select: {
+          id: true,
+          signerName: true,
+          signerEmail: true,
+          signedAt: true,
+          signatureMethod: true,
+          signatureReference: true,
+        },
+      },
     },
-  });
+  })) as ContractRecord | null;
 
   if (!contract) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
   }
 
-  return {
-    id: contract.id,
-    organizationId: contract.organizationId,
-    proposalId: contract.proposalId,
-    projectId: contract.projectId,
-    title: contract.title,
-    status: contract.status,
-    signatureReference: contract.signatureReference,
-    signedAt: contract.signedAt,
-    signedBy: contract.signedBy,
-    createdAt: contract.createdAt,
-    updatedAt: contract.updatedAt,
-    proposal: contract.proposal
-      ? {
-          id: contract.proposal.id,
-          number: contract.proposal.number,
-          title: contract.proposal.title,
-          status: contract.proposal.status,
-        }
-      : null,
-    project: contract.project
-      ? { id: contract.project.id, name: contract.project.name, status: contract.project.status }
-      : null,
-    signer: contract.signer
-      ? { id: contract.signer.id, name: contract.signer.name, email: contract.signer.email }
-      : null,
-  };
+  return serializeContract(contract);
 }
 
 export async function createContract(input: ContractCreateInput): Promise<ContractResponse> {
@@ -206,15 +227,17 @@ export async function createContract(input: ContractCreateInput): Promise<Contra
 
   await requirePermission(userId, organizationId, 'contract.create');
 
+  if (input.status === ('signed' as string)) {
+    throw codedError('Contracts cannot be created directly in signed status', 400);
+  }
+
   // Validate proposal belongs to same org if provided
   if (input.proposalId) {
     const proposal = await prisma.proposal.findFirst({
       where: { id: input.proposalId, organizationId },
     });
-    if (!proposal) {
-      const error = new Error('Proposal not found') as Error & { statusCode?: number };
-      error.statusCode = 404;
-      throw error;
+    if (!proposal || (proposal as { deletedAt?: Date | null }).deletedAt) {
+      throw codedError('Proposal not found', 404);
     }
   }
 
@@ -223,14 +246,12 @@ export async function createContract(input: ContractCreateInput): Promise<Contra
     const project = await prisma.project.findFirst({
       where: { id: input.projectId, organizationId },
     });
-    if (!project) {
-      const error = new Error('Project not found') as Error & { statusCode?: number };
-      error.statusCode = 404;
-      throw error;
+    if (!project || (project as { deletedAt?: Date | null }).deletedAt) {
+      throw codedError('Project not found', 404);
     }
   }
 
-  const contract = await prisma.contract.create({
+  const contract = (await prisma.contract.create({
     data: {
       organizationId,
       proposalId: input.proposalId ?? null,
@@ -242,7 +263,7 @@ export async function createContract(input: ContractCreateInput): Promise<Contra
       proposal: { select: { id: true, number: true, title: true, status: true } },
       project: { select: { id: true, name: true, status: true } },
     },
-  });
+  })) as ContractRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -260,33 +281,7 @@ export async function createContract(input: ContractCreateInput): Promise<Contra
     organizationId,
   });
 
-  return {
-    id: contract.id,
-    organizationId: contract.organizationId,
-    proposalId: contract.proposalId,
-    projectId: contract.projectId,
-    title: contract.title,
-    status: contract.status,
-    signatureReference: contract.signatureReference,
-    signedAt: contract.signedAt,
-    signedBy: contract.signedBy,
-    createdAt: contract.createdAt,
-    updatedAt: contract.updatedAt,
-    proposal: contract.proposal
-      ? {
-          id: contract.proposal.id,
-          number: contract.proposal.number,
-          title: contract.proposal.title,
-          status: contract.proposal.status,
-        }
-      : null,
-    project: contract.project
-      ? { id: contract.project.id, name: contract.project.name, status: contract.project.status }
-      : null,
-    signer: contract.signer
-      ? { id: contract.signer.id, name: contract.signer.name, email: contract.signer.email }
-      : null,
-  };
+  return serializeContract(contract);
 }
 
 export async function updateContract(
@@ -302,20 +297,50 @@ export async function updateContract(
   });
 
   if (!existing) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
   }
 
-  if (input.status !== undefined && !CONTRACT_STATUSES.includes(input.status)) {
-    const error = new Error(`Invalid contract status: ${input.status}`) as Error & {
-      statusCode?: number;
-    };
-    error.statusCode = 400;
-    throw error;
+  // Signed and voided contracts are immutable
+  if (!EDITABLE_CONTRACT_STATUSES.includes(existing.status)) {
+    throw codedError(`Cannot modify a ${existing.status} contract`, 400);
   }
 
-  const contract = await prisma.contract.update({
+  if (input.status !== undefined) {
+    if (input.status === ('signed' as string)) {
+      throw codedError('Use the contract signing endpoint to sign a contract', 400);
+    }
+    if (input.status !== existing.status) {
+      const allowed = VALID_CONTRACT_TRANSITIONS[existing.status] ?? [];
+      if (!allowed.includes(input.status)) {
+        throw codedError(
+          `Invalid contract status transition from ${existing.status} to ${input.status}`,
+          400
+        );
+      }
+    }
+  }
+
+  // Validate cross-org proposalId if provided
+  if (input.proposalId !== undefined && input.proposalId !== null) {
+    const proposal = await prisma.proposal.findFirst({
+      where: { id: input.proposalId, organizationId },
+    });
+    if (!proposal || (proposal as { deletedAt?: Date | null }).deletedAt) {
+      throw codedError('Proposal not found', 404);
+    }
+  }
+
+  // Validate cross-org projectId if provided
+  if (input.projectId !== undefined && input.projectId !== null) {
+    const project = await prisma.project.findFirst({
+      where: { id: input.projectId, organizationId },
+    });
+    if (!project || (project as { deletedAt?: Date | null }).deletedAt) {
+      throw codedError('Project not found', 404);
+    }
+  }
+
+  const contract = (await prisma.contract.update({
     where: { id },
     data: {
       proposalId: input.proposalId !== undefined ? input.proposalId : existing.proposalId,
@@ -326,8 +351,9 @@ export async function updateContract(
     include: {
       proposal: { select: { id: true, number: true, title: true, status: true } },
       project: { select: { id: true, name: true, status: true } },
+      signer: { select: { id: true, name: true, email: true } },
     },
-  });
+  })) as ContractRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -339,42 +365,20 @@ export async function updateContract(
       id: existing.id,
       title: existing.title,
       status: existing.status,
+      proposalId: existing.proposalId,
+      projectId: existing.projectId,
     },
     after: {
       id: contract.id,
       title: contract.title,
       status: contract.status,
+      proposalId: contract.proposalId,
+      projectId: contract.projectId,
     },
     organizationId,
   });
 
-  return {
-    id: contract.id,
-    organizationId: contract.organizationId,
-    proposalId: contract.proposalId,
-    projectId: contract.projectId,
-    title: contract.title,
-    status: contract.status,
-    signatureReference: contract.signatureReference,
-    signedAt: contract.signedAt,
-    signedBy: contract.signedBy,
-    createdAt: contract.createdAt,
-    updatedAt: contract.updatedAt,
-    proposal: contract.proposal
-      ? {
-          id: contract.proposal.id,
-          number: contract.proposal.number,
-          title: contract.proposal.title,
-          status: contract.proposal.status,
-        }
-      : null,
-    project: contract.project
-      ? { id: contract.project.id, name: contract.project.name, status: contract.project.status }
-      : null,
-    signer: contract.signer
-      ? { id: contract.signer.id, name: contract.signer.name, email: contract.signer.email }
-      : null,
-  };
+  return serializeContract(contract);
 }
 
 export async function signContract(
@@ -398,40 +402,48 @@ export async function signContract(
   });
 
   if (!contract) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
   }
 
   if (contract.status === 'signed') {
-    const error = new Error('Contract is already signed') as Error & { statusCode?: number };
-    error.statusCode = 400;
-    throw error;
+    throw codedError('Contract is already signed', 400);
   }
 
-  const updated = await prisma.contract.update({
-    where: { id },
-    data: {
-      status: 'signed',
-      signedAt: new Date(),
-      signedBy: userId,
-      signatureReference: input.signatureReference ?? null,
-    },
-  });
+  if (contract.status === 'voided') {
+    throw codedError('Cannot sign a voided contract', 400);
+  }
 
-  // Record signature audit entry
-  await prisma.signature.create({
-    data: {
-      organizationId,
-      contractId: id,
-      signerName: input.signerName,
-      signerEmail: input.signerEmail,
-      signatureMethod: 'audit_trail',
-      signatureReference: input.signatureReference ?? null,
-      ipAddress,
-      userAgent,
-    },
-  });
+  const runInTx = async (tx: typeof prisma) => {
+    const signedContract = await tx.contract.update({
+      where: { id },
+      data: {
+        status: 'signed',
+        signedAt: new Date(),
+        signedBy: userId,
+        signatureReference: input.signatureReference ?? null,
+      },
+    });
+
+    await tx.signature.create({
+      data: {
+        organizationId,
+        contractId: id,
+        signerName: input.signerName,
+        signerEmail: input.signerEmail,
+        signatureMethod: 'audit_trail',
+        signatureReference: input.signatureReference ?? null,
+        ipAddress: ipAddress ?? null,
+        userAgent: userAgent ?? null,
+      },
+    });
+
+    return signedContract;
+  };
+
+  const updated =
+    typeof prisma.$transaction === 'function'
+      ? await prisma.$transaction((tx: typeof prisma) => runInTx(tx))
+      : await runInTx(prisma);
 
   await createAuditLog({
     actorId: userId,
@@ -440,7 +452,12 @@ export async function signContract(
     entityType: 'Contract',
     entityId: id,
     before: { status: contract.status },
-    after: { status: 'signed', signedAt: updated.signedAt },
+    after: {
+      status: 'signed',
+      signedAt: updated.signedAt,
+      signerName: input.signerName,
+      signerEmail: input.signerEmail,
+    },
     organizationId,
     ipAddress,
     userAgent,
@@ -465,17 +482,11 @@ export async function deleteContract(id: string) {
   });
 
   if (!existing) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
   }
 
   if (existing.status === 'signed') {
-    const error = new Error('Cannot delete a signed contract') as Error & {
-      statusCode?: number;
-    };
-    error.statusCode = 400;
-    throw error;
+    throw codedError('Cannot delete a signed contract', 400);
   }
 
   await prisma.contract.delete({

@@ -21,11 +21,19 @@ function codedError(message: string, statusCode: number): Error & { statusCode: 
   return error;
 }
 
+export interface EstimateClientSummary {
+  id: string;
+  firstName: string | null;
+  lastName: string;
+  email: string | null;
+}
+
 export interface EstimateResponse {
   id: string;
   organizationId: string;
   number: string;
   clientId: string;
+  client: EstimateClientSummary | null;
   status: string;
   total: string;
   currency: string;
@@ -41,12 +49,83 @@ interface EstimateRecord {
   number: string;
   clientId: string;
   status: string;
-  total: { toString: () => string };
+  total: { toString: () => string } | number | string;
   currency: string;
   validUntil: Date | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+const EDITABLE_ESTIMATE_STATUSES = ['draft', 'sent'];
+
+const VALID_ESTIMATE_TRANSITIONS: Record<string, string[]> = {
+  draft: ['sent', 'accepted', 'rejected', 'expired'],
+  sent: ['accepted', 'rejected', 'expired'],
+  accepted: [], // immutable except conversion via convertEstimateToInvoice
+  rejected: [],
+  expired: [],
+  converted: [],
+};
+
+function formatMoneyValue(value: { toString: () => string } | number | string): string {
+  const num = Number(
+    typeof value === 'string' || typeof value === 'number' ? value : value.toString()
+  );
+  return Number.isFinite(num) ? num.toFixed(2) : String(value);
+}
+
+async function resolveContactsById(
+  organizationId: string,
+  clientIds: string[]
+): Promise<Map<string, EstimateClientSummary>> {
+  const map = new Map<string, EstimateClientSummary>();
+  if (clientIds.length === 0) return map;
+  const contactModel = (
+    prisma as unknown as {
+      contact?: {
+        findMany?: (args: unknown) => Promise<EstimateClientSummary[]>;
+      };
+    }
+  ).contact;
+  if (typeof contactModel?.findMany !== 'function') {
+    return map;
+  }
+
+  const uniqueIds = Array.from(new Set(clientIds));
+  const contacts = await contactModel.findMany({
+    where: { organizationId, id: { in: uniqueIds }, deletedAt: null },
+    select: { id: true, firstName: true, lastName: true, email: true },
+  });
+  for (const c of contacts) {
+    map.set(c.id, {
+      id: c.id,
+      firstName: c.firstName,
+      lastName: c.lastName,
+      email: c.email,
+    });
+  }
+  return map;
+}
+
+function serializeEstimate(
+  estimate: EstimateRecord,
+  client: EstimateClientSummary | null = null
+): EstimateResponse {
+  return {
+    id: estimate.id,
+    organizationId: estimate.organizationId,
+    number: estimate.number,
+    clientId: estimate.clientId,
+    client,
+    status: estimate.status,
+    total: formatMoneyValue(estimate.total),
+    currency: estimate.currency,
+    validUntil: estimate.validUntil,
+    notes: estimate.notes,
+    createdAt: estimate.createdAt,
+    updatedAt: estimate.updatedAt,
+  };
 }
 
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
@@ -56,9 +135,7 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
   });
 
   if (!result?.session || !result.user) {
-    const error = new Error('Unauthenticated') as Error & { statusCode?: number };
-    error.statusCode = 401;
-    throw error;
+    throw codedError('Unauthenticated', 401);
   }
 
   const user = result.user as { role?: string; organizationId?: string };
@@ -107,89 +184,80 @@ async function createAuditLog({
   });
 }
 
-export async function listEstimates() {
+export async function listEstimates(): Promise<EstimateResponse[]> {
   const { userId, organizationId } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'estimate.read');
 
-  const estimates = await prisma.estimate.findMany({
+  const estimates = (await prisma.estimate.findMany({
     where: { organizationId },
     orderBy: { createdAt: 'desc' },
-  });
+  })) as EstimateRecord[];
 
-  return estimates.map((e: EstimateRecord) => ({
-    id: e.id,
-    organizationId: e.organizationId,
-    number: e.number,
-    clientId: e.clientId,
-    status: e.status,
-    total: e.total.toString(),
-    currency: e.currency,
-    validUntil: e.validUntil,
-    notes: e.notes,
-    createdAt: e.createdAt,
-    updatedAt: e.updatedAt,
-  }));
+  const contactsMap = await resolveContactsById(
+    organizationId,
+    estimates.map((e) => e.clientId)
+  );
+
+  return estimates.map((e) => serializeEstimate(e, contactsMap.get(e.clientId) ?? null));
 }
 
-export async function getEstimate(id: string) {
+export async function getEstimate(id: string): Promise<EstimateResponse> {
   const { userId, organizationId } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'estimate.read');
 
-  const estimate = await prisma.estimate.findFirst({
+  const estimate = (await prisma.estimate.findFirst({
     where: { id, organizationId },
-  });
+  })) as EstimateRecord | null;
 
   if (!estimate) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
   }
 
-  return {
-    id: estimate.id,
-    organizationId: estimate.organizationId,
-    number: estimate.number,
-    clientId: estimate.clientId,
-    status: estimate.status,
-    total: estimate.total.toString(),
-    currency: estimate.currency,
-    validUntil: estimate.validUntil,
-    notes: estimate.notes,
-    createdAt: estimate.createdAt,
-    updatedAt: estimate.updatedAt,
-  };
+  const contactsMap = await resolveContactsById(organizationId, [estimate.clientId]);
+  return serializeEstimate(estimate, contactsMap.get(estimate.clientId) ?? null);
 }
 
-export async function createEstimate(input: EstimateCreateInput) {
+export async function createEstimate(input: EstimateCreateInput): Promise<EstimateResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'estimate.create');
 
-  // Verify client belongs to org
+  // Verify client belongs to org and is not soft-deleted
   const client = await prisma.contact.findFirst({
     where: { id: input.clientId, organizationId },
   });
 
-  if (!client) {
-    const error = new Error('Client not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+  if (!client || (client as { deletedAt?: Date | null }).deletedAt) {
+    throw codedError('Client not found', 404);
   }
 
-  const estimate = await prisma.estimate.create({
+  // Prevent duplicate estimate numbers inside the same organization
+  const duplicate = await prisma.estimate.findFirst({
+    where: { organizationId, number: input.number },
+  });
+  if (duplicate) {
+    throw codedError(`Estimate number ${input.number} already exists in this organization`, 409);
+  }
+
+  const validUntil = input.validUntil ? new Date(input.validUntil) : null;
+  if (validUntil && Number.isNaN(validUntil.getTime())) {
+    throw codedError('Valid until date is not valid', 400);
+  }
+
+  const estimate = (await prisma.estimate.create({
     data: {
       organizationId,
       number: input.number,
       clientId: input.clientId,
       status: input.status,
-      total: Number(input.total),
+      total: formatMoneyValue(input.total),
       currency: input.currency,
-      validUntil: input.validUntil ? new Date(input.validUntil) : null,
+      validUntil,
       notes: input.notes ?? null,
     },
-  });
+  })) as EstimateRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -201,59 +269,102 @@ export async function createEstimate(input: EstimateCreateInput) {
       id: estimate.id,
       number: estimate.number,
       clientId: estimate.clientId,
-      total: estimate.total.toString(),
+      total: formatMoneyValue(estimate.total),
       status: estimate.status,
     },
     organizationId,
   });
 
-  return {
-    id: estimate.id,
-    organizationId: estimate.organizationId,
-    number: estimate.number,
-    clientId: estimate.clientId,
-    status: estimate.status,
-    total: estimate.total.toString(),
-    currency: estimate.currency,
-    validUntil: estimate.validUntil,
-    notes: estimate.notes,
-    createdAt: estimate.createdAt,
-    updatedAt: estimate.updatedAt,
+  const c = client as {
+    id: string;
+    firstName?: string | null;
+    lastName?: string;
+    email?: string | null;
   };
+
+  return serializeEstimate(estimate, {
+    id: c.id,
+    firstName: c.firstName ?? null,
+    lastName: c.lastName ?? '',
+    email: c.email ?? null,
+  });
 }
 
-export async function updateEstimate(id: string, input: EstimateUpdateInput) {
+export async function updateEstimate(
+  id: string,
+  input: EstimateUpdateInput
+): Promise<EstimateResponse> {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'estimate.update');
 
-  const existing = await prisma.estimate.findFirst({
+  const existing = (await prisma.estimate.findFirst({
     where: { id, organizationId },
-  });
+  })) as EstimateRecord | null;
 
   if (!existing) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
   }
 
-  const estimate = await prisma.estimate.update({
+  if (!EDITABLE_ESTIMATE_STATUSES.includes(existing.status)) {
+    throw codedError(`Cannot modify an estimate in ${existing.status} status`, 400);
+  }
+
+  if (input.status !== undefined && input.status !== existing.status) {
+    const allowed = VALID_ESTIMATE_TRANSITIONS[existing.status] ?? [];
+    if (!allowed.includes(input.status)) {
+      throw codedError(
+        `Invalid estimate status transition from ${existing.status} to ${input.status}`,
+        400
+      );
+    }
+  }
+
+  // Validate cross-org clientId if changed
+  if (input.clientId !== undefined) {
+    const client = await prisma.contact.findFirst({
+      where: { id: input.clientId, organizationId },
+    });
+    if (!client || (client as { deletedAt?: Date | null }).deletedAt) {
+      throw codedError('Client not found', 404);
+    }
+  }
+
+  // Prevent duplicate estimate numbers inside the same organization
+  if (input.number !== undefined && input.number !== existing.number) {
+    const duplicate = await prisma.estimate.findFirst({
+      where: { organizationId, number: input.number },
+    });
+    if (duplicate && duplicate.id !== id) {
+      throw codedError(`Estimate number ${input.number} already exists in this organization`, 409);
+    }
+  }
+
+  let nextValidUntil = existing.validUntil;
+  if (input.validUntil !== undefined) {
+    if (input.validUntil === null || input.validUntil === '') {
+      nextValidUntil = null;
+    } else {
+      const parsedDate = new Date(input.validUntil);
+      if (Number.isNaN(parsedDate.getTime())) {
+        throw codedError('Valid until date is not valid', 400);
+      }
+      nextValidUntil = parsedDate;
+    }
+  }
+
+  const estimate = (await prisma.estimate.update({
     where: { id },
     data: {
       clientId: input.clientId ?? existing.clientId,
       number: input.number ?? existing.number,
       status: input.status ?? existing.status,
-      total: input.total !== undefined ? Number(input.total) : existing.total,
+      total: input.total !== undefined ? formatMoneyValue(input.total) : existing.total,
       currency: input.currency ?? existing.currency,
-      validUntil:
-        input.validUntil !== undefined
-          ? input.validUntil
-            ? new Date(input.validUntil)
-            : null
-          : existing.validUntil,
+      validUntil: nextValidUntil,
       notes: input.notes !== undefined ? input.notes : existing.notes,
     },
-  });
+  })) as EstimateRecord;
 
   await createAuditLog({
     actorId: userId,
@@ -261,24 +372,13 @@ export async function updateEstimate(id: string, input: EstimateUpdateInput) {
     action: 'estimate.update',
     entityType: 'Estimate',
     entityId: estimate.id,
-    before: { id: existing.id, status: existing.status, total: existing.total.toString() },
-    after: { id: estimate.id, status: estimate.status, total: estimate.total.toString() },
+    before: { id: existing.id, status: existing.status, total: formatMoneyValue(existing.total) },
+    after: { id: estimate.id, status: estimate.status, total: formatMoneyValue(estimate.total) },
     organizationId,
   });
 
-  return {
-    id: estimate.id,
-    organizationId: estimate.organizationId,
-    number: estimate.number,
-    clientId: estimate.clientId,
-    status: estimate.status,
-    total: estimate.total.toString(),
-    currency: estimate.currency,
-    validUntil: estimate.validUntil,
-    notes: estimate.notes,
-    createdAt: estimate.createdAt,
-    updatedAt: estimate.updatedAt,
-  };
+  const contactsMap = await resolveContactsById(organizationId, [estimate.clientId]);
+  return serializeEstimate(estimate, contactsMap.get(estimate.clientId) ?? null);
 }
 
 export async function deleteEstimate(id: string) {
@@ -291,9 +391,11 @@ export async function deleteEstimate(id: string) {
   });
 
   if (!existing) {
-    const error = new Error('Not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Not found', 404);
+  }
+
+  if (existing.status === 'accepted' || existing.status === 'converted') {
+    throw codedError(`Cannot delete an ${existing.status} estimate`, 400);
   }
 
   await prisma.estimate.delete({

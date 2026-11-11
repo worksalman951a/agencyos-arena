@@ -38,7 +38,7 @@ const builderSchema = z.object({
 
 type BuilderFormValues = z.infer<typeof builderSchema>;
 
-interface ProposalData {
+export interface ProposalData {
   id: string;
   title: string;
   status: string;
@@ -79,9 +79,22 @@ interface ProposalBuilderAppProps {
   initialOpportunities: OpportunityOption[];
   /** Organization default currency for new documents (settings). */
   defaultCurrency?: string;
+  /** Optional prefill values when creating from a Contact or Opportunity. */
+  prefill?: {
+    title?: string;
+    contactId?: string | null;
+    opportunityId?: string | null;
+    validUntil?: string | null;
+    notes?: string | null;
+  } | null;
 }
 
 const API_BASE = '/api/v1/crm/proposals';
+
+function toDateInputValue(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  return String(raw).slice(0, 10);
+}
 
 export function ProposalBuilderApp({
   isEdit,
@@ -90,12 +103,17 @@ export function ProposalBuilderApp({
   initialContacts,
   initialOpportunities,
   defaultCurrency = 'USD',
+  prefill = null,
 }: ProposalBuilderAppProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [showDiscardDialog, setShowDiscardDialog] = React.useState(false);
   const [contacts] = React.useState<ContactOption[]>(initialContacts);
   const [opportunities] = React.useState<OpportunityOption[]>(initialOpportunities);
+  const [savedStatus, setSavedStatus] = React.useState<string>(existingProposal?.status ?? 'draft');
+  const [savedNumber, setSavedNumber] = React.useState<string | null>(
+    existingProposal?.number ?? null
+  );
 
   const initialInfo: DocumentInfo = React.useMemo(() => {
     if (existingProposal) {
@@ -104,24 +122,24 @@ export function ProposalBuilderApp({
         contactId: existingProposal.contactId,
         opportunityId: existingProposal.opportunityId,
         currency: existingProposal.currency,
-        validUntil: existingProposal.validUntil,
+        validUntil: toDateInputValue(existingProposal.validUntil),
         notes: existingProposal.notes,
         status: existingProposal.status,
       };
     }
     return {
-      title: '',
-      contactId: null,
-      opportunityId: null,
+      title: prefill?.title ?? '',
+      contactId: prefill?.contactId ?? null,
+      opportunityId: prefill?.opportunityId ?? null,
       currency: defaultCurrency,
-      validUntil: null,
-      notes: null,
+      validUntil: toDateInputValue(prefill?.validUntil),
+      notes: prefill?.notes ?? null,
       status: 'draft',
     };
-  }, [existingProposal, defaultCurrency]);
+  }, [existingProposal, defaultCurrency, prefill]);
 
   const initialItems: LineItem[] = React.useMemo(() => {
-    if (existingProposal?.items) {
+    if (existingProposal?.items && existingProposal.items.length > 0) {
       return existingProposal.items.map((item) => ({
         id: String((item as Record<string, unknown>).id ?? crypto.randomUUID()),
         description: String((item as Record<string, unknown>).description),
@@ -163,14 +181,10 @@ export function ProposalBuilderApp({
     form.setValue('title', builder.documentInfo.title, { shouldDirty: true });
     form.setValue('contactId', builder.documentInfo.contactId, { shouldDirty: true });
     form.setValue('opportunityId', builder.documentInfo.opportunityId, { shouldDirty: true });
-    form.setValue('currency', builder.documentInfo.currency, {
-      shouldDirty: true,
-    });
+    form.setValue('currency', builder.documentInfo.currency, { shouldDirty: true });
     form.setValue('validUntil', builder.documentInfo.validUntil, { shouldDirty: true });
     form.setValue('notes', builder.documentInfo.notes, { shouldDirty: true });
-    form.setValue('status', builder.documentInfo.status, {
-      shouldDirty: true,
-    });
+    form.setValue('status', builder.documentInfo.status, { shouldDirty: true });
   }, [builder.documentInfo, form]);
 
   useUnsavedChanges(builder.isDirty, true);
@@ -179,6 +193,11 @@ export function ProposalBuilderApp({
     if (builder.isSaving) return;
 
     const formValues = form.getValues();
+
+    if (!formValues.title.trim()) {
+      builder.setError('Title is required');
+      return;
+    }
 
     if (builder.lineItems.length === 0) {
       builder.setError('At least one line item is required');
@@ -206,7 +225,7 @@ export function ProposalBuilderApp({
       const body = {
         opportunityId: formValues.opportunityId || null,
         contactId: formValues.contactId || null,
-        title: formValues.title,
+        title: formValues.title.trim(),
         status: formValues.status,
         currency: formValues.currency,
         validUntil: formValues.validUntil || null,
@@ -228,30 +247,44 @@ export function ProposalBuilderApp({
       }
 
       const saved = await res.json();
+      const normalizedValidUntil = toDateInputValue(saved.validUntil);
 
-      builder.markSaved();
+      const updatedItems: LineItem[] = (saved.items || []).map((item: Record<string, unknown>) => ({
+        id: String(item.id),
+        description: String(item.description),
+        quantity: String(item.quantity ?? '1'),
+        unitPrice: String(item.unitPrice ?? '0'),
+        taxRate: String(item.taxRate ?? '0'),
+        sortOrder: Number(item.sortOrder ?? 0),
+      }));
+
+      builder.setDocumentInfo({
+        title: saved.title,
+        contactId: saved.contactId ?? null,
+        opportunityId: saved.opportunityId ?? null,
+        currency: saved.currency,
+        validUntil: normalizedValidUntil,
+        notes: saved.notes ?? null,
+        status: saved.status,
+      });
+      builder.setLineItems(updatedItems);
+      setSavedStatus(saved.status);
+      if (saved.number) {
+        setSavedNumber(saved.number);
+      }
+
       form.reset({
         title: saved.title,
-        contactId: saved.contactId,
-        opportunityId: saved.opportunityId,
+        contactId: saved.contactId ?? null,
+        opportunityId: saved.opportunityId ?? null,
         currency: saved.currency,
-        validUntil: saved.validUntil,
-        notes: saved.notes,
+        validUntil: normalizedValidUntil,
+        notes: saved.notes ?? null,
         status: saved.status,
       });
 
-      const updatedItems: LineItem[] = (saved.items || []).map((item: Record<string, unknown>) => {
-        const it = item;
-        return {
-          id: String(it.id),
-          description: String(it.description),
-          quantity: String(it.quantity ?? '1'),
-          unitPrice: String(it.unitPrice ?? '0'),
-          taxRate: String(it.taxRate ?? '0'),
-          sortOrder: Number(it.sortOrder ?? 0),
-        };
-      });
-      builder.setLineItems(updatedItems);
+      // Mark clean AFTER updating line items and document info so isDirty stays false
+      builder.markSaved();
 
       toast({
         title: 'Saved',
@@ -292,7 +325,7 @@ export function ProposalBuilderApp({
 
   const previewData = {
     title: builder.documentInfo.title,
-    number: isEdit && existingProposal ? existingProposal.number : null,
+    number: isEdit ? savedNumber : null,
     contact: contacts.find((c) => c.id === builder.documentInfo.contactId),
     currency: builder.documentInfo.currency,
     validUntil: builder.documentInfo.validUntil,
@@ -300,8 +333,7 @@ export function ProposalBuilderApp({
     createdAt: existingProposal?.createdAt ? new Date(existingProposal.createdAt) : null,
   };
 
-  const isReadOnly =
-    isEdit && existingProposal && !['draft', 'sent'].includes(existingProposal.status);
+  const isReadOnly = Boolean(isEdit && !['draft', 'sent'].includes(savedStatus));
 
   const resolvedContact: { firstName?: string | null; lastName?: string | null } | null =
     previewData.contact ??
@@ -337,12 +369,17 @@ export function ProposalBuilderApp({
       <BuilderLayout
         isMobile={false}
         showPreview={true}
-        isDirty={builder.isDirty}
+        isDirty={
+          isEdit
+            ? builder.isDirty
+            : Boolean(builder.isDirty || builder.documentInfo.title || builder.lineItems.length > 0)
+        }
         onSave={saveDraft}
         isSaving={builder.isSaving}
         saveLabel={isEdit ? 'Save Changes' : 'Create Proposal'}
         preview={
           <DocumentPreview
+            documentTypeLabel="Proposal"
             documentInfo={{
               ...previewData,
               contact: resolvedContact,
@@ -359,7 +396,9 @@ export function ProposalBuilderApp({
             currencies={builder.CURRENCIES}
             contacts={contacts}
             opportunities={opportunities}
-            loading={false}
+            loading={isReadOnly}
+            isEdit={isEdit}
+            savedStatus={savedStatus}
             onChange={(updates) => {
               builder.setDocumentInfo(updates);
               if (updates.title !== undefined)
@@ -369,17 +408,13 @@ export function ProposalBuilderApp({
               if (updates.opportunityId !== undefined)
                 form.setValue('opportunityId', updates.opportunityId, { shouldDirty: true });
               if (updates.currency !== undefined)
-                form.setValue('currency', updates.currency, {
-                  shouldDirty: true,
-                });
+                form.setValue('currency', updates.currency, { shouldDirty: true });
               if (updates.validUntil !== undefined)
                 form.setValue('validUntil', updates.validUntil, { shouldDirty: true });
               if (updates.notes !== undefined)
                 form.setValue('notes', updates.notes, { shouldDirty: true });
               if (updates.status !== undefined)
-                form.setValue('status', updates.status, {
-                  shouldDirty: true,
-                });
+                form.setValue('status', updates.status, { shouldDirty: true });
             }}
           />
 
@@ -393,18 +428,12 @@ export function ProposalBuilderApp({
             onContactSelect={(id) => {
               builder.setDocumentInfo({ contactId: id });
               form.setValue('contactId', id, { shouldDirty: true });
-              if (id) {
-                form.setValue('opportunityId', null, {
-                  shouldDirty: true,
-                });
-                builder.setDocumentInfo({ opportunityId: null });
-              }
             }}
             onOpportunitySelect={(id) => {
               builder.setDocumentInfo({ opportunityId: id });
               form.setValue('opportunityId', id, { shouldDirty: true });
             }}
-            loading={false}
+            loading={isReadOnly}
           />
 
           <LineItemEditor
@@ -420,7 +449,7 @@ export function ProposalBuilderApp({
 
           {isReadOnly && (
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive flex items-center gap-2 mb-4">
-              <span>This proposal is {existingProposal.status} and cannot be edited.</span>
+              <span>This proposal is {savedStatus} and cannot be edited.</span>
             </div>
           )}
         </div>

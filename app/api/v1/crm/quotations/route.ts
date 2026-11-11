@@ -16,6 +16,7 @@ import {
   quotationQuerySchema,
   quotationLineItemSchema,
 } from '@/lib/schemas/crm/quotation.schema';
+import { apiErrorFrom } from '@/lib/api/route-error';
 
 /** Whitelisted sortable fields */
 const ALLOWED_SORT_FIELDS = ['title', 'status', 'total', 'createdAt', 'updatedAt'];
@@ -45,11 +46,8 @@ export async function GET(request: Request) {
     const data = await listQuotations(parsed.data);
     return NextResponse.json(data);
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }
 
@@ -81,10 +79,7 @@ export async function POST(request: Request) {
     const quotation = await createQuotation(parsed.data, lineItems);
     return NextResponse.json(quotation, { status: 201 });
   } catch (err) {
-    const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
-    return errorResponse(
-      statusCode === 401 ? 'Unauthenticated' : statusCode === 403 ? 'Forbidden' : 'Not found',
-      statusCode
-    );
+    const { status, message } = apiErrorFrom(err);
+    return errorResponse(message, status);
   }
 }

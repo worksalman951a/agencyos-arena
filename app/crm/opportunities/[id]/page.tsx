@@ -8,6 +8,10 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getOpportunity } from '@/lib/services/crm/opportunity-service';
+import { listProposals } from '@/lib/services/crm/proposal-service';
+import { listQuotations } from '@/lib/services/crm/quotation-service';
+import { proposalQuerySchema } from '@/lib/schemas/crm/proposal.schema';
+import { quotationQuerySchema } from '@/lib/schemas/crm/quotation.schema';
 
 export default async function OpportunityDetailPage({
   params,
@@ -25,6 +29,26 @@ export default async function OpportunityDetailPage({
 
   const { id } = await params;
   const opportunity = await getOpportunity(id);
+  interface LinkedSalesDoc {
+    id: string;
+    number: string;
+    title: string;
+    status: string;
+    currency: string;
+    total: string | number;
+  }
+  const [proposalsData, quotationsData] = await Promise.all([
+    listProposals(proposalQuerySchema.parse({ opportunityId: id })).catch(() => ({
+      proposals: [],
+      total: 0,
+    })),
+    listQuotations(quotationQuerySchema.parse({ opportunityId: id })).catch(() => ({
+      quotations: [],
+      total: 0,
+    })),
+  ]);
+  const linkedProposals = proposalsData.proposals as LinkedSalesDoc[];
+  const linkedQuotations = quotationsData.quotations as LinkedSalesDoc[];
 
   return (
     <div className="space-y-6 p-6">
@@ -203,6 +227,94 @@ export default async function OpportunityDetailPage({
             <p className="text-muted-foreground whitespace-pre-wrap">{opportunity.description}</p>
           </div>
         )}
+
+        <div className="col-span-3 bg-card p-6 rounded-lg border border-border space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <h2 className="text-sm font-semibold text-muted-foreground">
+              Proposals &amp; Quotations
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href={`/sales/proposals/builder?opportunityId=${encodeURIComponent(opportunity.id)}${opportunity.contact ? `&contactId=${encodeURIComponent(opportunity.contact.id)}` : ''}`}
+                className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-medium hover:bg-accent/90"
+              >
+                + Create Proposal
+              </Link>
+              <Link
+                href={`/sales/quotations/builder?opportunityId=${encodeURIComponent(opportunity.id)}${opportunity.contact ? `&contactId=${encodeURIComponent(opportunity.contact.id)}` : ''}`}
+                className="px-3 py-1.5 rounded-md border border-input bg-background text-xs font-medium hover:bg-muted"
+              >
+                + Create Quotation
+              </Link>
+              {opportunity.contact && (
+                <Link
+                  href={`/finance/estimates/new?clientId=${encodeURIComponent(opportunity.contact.id)}`}
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-xs font-medium hover:bg-muted"
+                >
+                  + Create Estimate
+                </Link>
+              )}
+            </div>
+          </div>
+
+          {linkedProposals.length === 0 && linkedQuotations.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No proposals or quotations linked to this opportunity yet.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs text-muted-foreground">
+                    <th className="pb-2 font-medium">Type</th>
+                    <th className="pb-2 font-medium">Number</th>
+                    <th className="pb-2 font-medium">Title</th>
+                    <th className="pb-2 font-medium">Status</th>
+                    <th className="pb-2 font-medium text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linkedProposals.map((p) => (
+                    <tr key={`prop-${p.id}`} className="border-b border-border last:border-b-0">
+                      <td className="py-2.5 text-xs text-muted-foreground">Proposal</td>
+                      <td className="py-2.5 font-mono text-xs">
+                        <Link
+                          href={`/sales/proposals/${p.id}`}
+                          className="text-accent hover:underline"
+                        >
+                          #{p.number}
+                        </Link>
+                      </td>
+                      <td className="py-2.5">{p.title}</td>
+                      <td className="py-2.5 capitalize">{p.status}</td>
+                      <td className="py-2.5 text-right">
+                        {p.currency} {Number(p.total).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                  {linkedQuotations.map((q) => (
+                    <tr key={`quot-${q.id}`} className="border-b border-border last:border-b-0">
+                      <td className="py-2.5 text-xs text-muted-foreground">Quotation</td>
+                      <td className="py-2.5 font-mono text-xs">
+                        <Link
+                          href={`/sales/quotations/${q.id}`}
+                          className="text-accent hover:underline"
+                        >
+                          #{q.number}
+                        </Link>
+                      </td>
+                      <td className="py-2.5">{q.title}</td>
+                      <td className="py-2.5 capitalize">{q.status}</td>
+                      <td className="py-2.5 text-right">
+                        {q.currency} {Number(q.total).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

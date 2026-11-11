@@ -17,6 +17,7 @@ interface ProposalVersionRecord {
   total: { toString: () => string };
   currency: string;
   notes: string | null;
+  snapshot?: unknown;
   createdAt: Date;
   createdBy: string | null;
 }
@@ -59,6 +60,12 @@ export interface DocumentVersionResponse {
   createdBy: string | null;
 }
 
+function codedError(message: string, statusCode: number): Error & { statusCode: number } {
+  const error = new Error(message) as Error & { statusCode: number };
+  error.statusCode = statusCode;
+  return error;
+}
+
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
@@ -66,9 +73,7 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
   });
 
   if (!result?.session || !result.user) {
-    const error = new Error('Unauthenticated') as Error & { statusCode?: number };
-    error.statusCode = 401;
-    throw error;
+    throw codedError('Unauthenticated', 401);
   }
 
   const user = result.user as { role?: string; organizationId?: string };
@@ -117,20 +122,21 @@ async function createAuditLog({
   });
 }
 
-/** Create a versioned snapshot of a proposal before editing */
+/** Create a versioned snapshot of a proposal (including line items) */
 export async function createProposalVersion(proposalId: string): Promise<ProposalVersionResponse> {
-  const { userId, organizationId } = await getAuthorizedUser();
+  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
-  await requirePermission(userId, organizationId, 'proposal.read');
+  await requirePermission(userId, organizationId, 'proposal.update');
 
   const proposal = await prisma.proposal.findFirst({
     where: { id: proposalId, organizationId },
+    include: {
+      items: { orderBy: { sortOrder: 'asc' } },
+    },
   });
 
-  if (!proposal) {
-    const error = new Error('Proposal not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+  if (!proposal || proposal.deletedAt) {
+    throw codedError('Proposal not found', 404);
   }
 
   // Get next version number
@@ -155,13 +161,32 @@ export async function createProposalVersion(proposalId: string): Promise<Proposa
       currency: proposal.currency,
       notes: proposal.notes,
       snapshot: {
+        number: proposal.number,
         title: proposal.title,
         status: proposal.status,
         subtotal: proposal.subtotal.toString(),
         tax: proposal.tax.toString(),
         total: proposal.total.toString(),
         currency: proposal.currency,
+        validUntil: proposal.validUntil ? proposal.validUntil.toISOString() : null,
         notes: proposal.notes,
+        items: (
+          (proposal.items ?? []) as Array<{
+            description: string;
+            quantity: { toString: () => string };
+            unitPrice: { toString: () => string };
+            taxRate: { toString: () => string };
+            amount: { toString: () => string };
+            sortOrder: number;
+          }>
+        ).map((item) => ({
+          description: item.description,
+          quantity: item.quantity.toString(),
+          unitPrice: item.unitPrice.toString(),
+          taxRate: item.taxRate.toString(),
+          amount: item.amount.toString(),
+          sortOrder: item.sortOrder,
+        })),
       },
       createdBy: userId,
     },
@@ -169,7 +194,7 @@ export async function createProposalVersion(proposalId: string): Promise<Proposa
 
   await createAuditLog({
     actorId: userId,
-    actorName: '',
+    actorName: actorEmail,
     action: 'proposal.version',
     entityType: 'ProposalVersion',
     entityId: version.id,
@@ -206,10 +231,8 @@ export async function listProposalVersions(proposalId: string) {
     where: { id: proposalId, organizationId },
   });
 
-  if (!proposal) {
-    const error = new Error('Proposal not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+  if (!proposal || proposal.deletedAt) {
+    throw codedError('Proposal not found', 404);
   }
 
   const versions = await prisma.proposalVersion.findMany({
@@ -247,9 +270,7 @@ export async function listDocumentVersions(documentId: string) {
   });
 
   if (!document) {
-    const error = new Error('Document not found') as Error & { statusCode?: number };
-    error.statusCode = 404;
-    throw error;
+    throw codedError('Document not found', 404);
   }
 
   const versions = await prisma.documentVersion.findMany({

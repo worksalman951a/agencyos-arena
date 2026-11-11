@@ -8,20 +8,31 @@ import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
  * from the authenticated user's session context.
  */
 
-const baseQuotationSchema = z.object({
-  opportunityId: z.string().cuid().optional().nullable(),
-  contactId: z.string().cuid().optional().nullable(),
-  title: z.string().min(1, 'Title is required').max(200),
-  status: z.string().min(1).max(50).default('draft'),
-  currency: z.string().min(1).max(10).default('USD'),
-  validUntil: z.string().optional().nullable(),
-  notes: z.string().max(5000).optional().nullable(),
-});
+export const QUOTATION_STATUSES = ['draft', 'sent', 'accepted', 'rejected', 'expired'] as const;
+export const QUOTATION_CREATE_STATUSES = ['draft', 'sent'] as const;
 
-export const quotationCreateSchema = baseQuotationSchema.strict();
+export const quotationCreateSchema = z
+  .object({
+    opportunityId: z.string().cuid().optional().nullable(),
+    contactId: z.string().cuid().optional().nullable(),
+    title: z.string().min(1, 'Title is required').max(200),
+    status: z.enum(QUOTATION_CREATE_STATUSES).default('draft'),
+    currency: z.string().min(1).max(10).default('USD'),
+    validUntil: z.string().optional().nullable(),
+    notes: z.string().max(5000).optional().nullable(),
+  })
+  .strict();
 
-export const quotationUpdateSchema = baseQuotationSchema
-  .partial()
+export const quotationUpdateSchema = z
+  .object({
+    opportunityId: z.string().cuid().optional().nullable(),
+    contactId: z.string().cuid().optional().nullable(),
+    title: z.string().min(1, 'Title is required').max(200).optional(),
+    status: z.enum(QUOTATION_STATUSES).optional(),
+    currency: z.string().min(1).max(10).optional(),
+    validUntil: z.string().optional().nullable(),
+    notes: z.string().max(5000).optional().nullable(),
+  })
   .strict()
   .refine(
     (data) =>

@@ -33,6 +33,8 @@ export interface QuotationResponse {
   updatedAt: Date;
   creator: { id: string; name: string | null; email: string | null } | null;
   updater: { id: string; name: string | null; email: string | null } | null;
+  opportunity: { id: string; title: string } | null;
+  contact: { id: string; firstName: string | null; lastName: string } | null;
   items: QuotationLineItemResponse[];
 }
 
@@ -128,77 +130,64 @@ async function createAuditLog({
   });
 }
 
-/** Generate the next document number for an organization */
-/** Generate the next document number for an organization (concurrency-safe with retry) */
-async function generateDocumentNumber(organizationId: string, prefix: string): Promise<string> {
-  const now = new Date();
-  const year = now.getFullYear().toString();
+/** Allocate the next quotation number inside an active transaction */
+async function allocateQuotationNumberInTx(
+  tx: typeof prisma,
+  organizationId: string,
+  prefix: string
+): Promise<string> {
+  if (typeof (tx as { $queryRawUnsafe?: unknown }).$queryRawUnsafe === 'function') {
+    await (
+      tx as { $queryRawUnsafe: (sql: string, ...params: unknown[]) => Promise<unknown> }
+    ).$queryRawUnsafe('SELECT id FROM "Organization" WHERE id = $1 FOR UPDATE', organizationId);
+  }
+
+  const year = new Date().getFullYear().toString();
   const prefixPattern = `${prefix}-${year}`;
 
-  const MAX_RETRIES = 5;
+  const last = await tx.quotation.findFirst({
+    where: {
+      organizationId,
+      number: {
+        startsWith: prefixPattern,
+      },
+    },
+    orderBy: { number: 'desc' },
+    select: { number: true },
+  });
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      const result = await prisma.$transaction(async (tx: typeof prisma) => {
-        const last = await tx.quotation.findFirst({
-          where: {
-            organizationId,
-            number: {
-              startsWith: prefixPattern,
-            },
-          },
-          orderBy: { number: 'desc' },
-          select: { number: true },
-        });
-
-        let seq = 1;
-        if (last?.number) {
-          const match = last.number.match(/-(\d+)$/);
-          if (match) {
-            seq = parseInt(match[1], 10) + 1;
-          }
-        }
-
-        const nextNumber = `${prefixPattern}-${seq.toString().padStart(4, '0')}`;
-
-        // Check for collision (another concurrent tx may have committed this number)
-        const existing = await tx.quotation.findUnique({
-          where: {
-            organizationId_number: {
-              organizationId,
-              number: nextNumber,
-            },
-          },
-        });
-
-        if (existing) {
-          throw new Error('NUMBER_COLLISION');
-        }
-
-        return nextNumber;
-      });
-
-      if (result) {
-        return result;
-      }
-    } catch (err) {
-      if ((err as Error).message !== 'NUMBER_COLLISION') {
-        throw err;
-      }
-      continue;
+  let seq = 1;
+  if (last?.number) {
+    const match = last.number.match(/-(\d+)$/);
+    if (match) {
+      seq = parseInt(match[1], 10) + 1;
     }
   }
 
-  const error = new Error('Failed to generate unique document number') as Error & {
-    statusCode?: number;
-  };
-  error.statusCode = 500;
-  throw error;
+  const nextNumber = `${prefixPattern}-${seq.toString().padStart(4, '0')}`;
+
+  const existing = await tx.quotation.findUnique({
+    where: {
+      organizationId_number: {
+        organizationId,
+        number: nextNumber,
+      },
+    },
+  });
+
+  if (existing) {
+    throw new Error('NUMBER_COLLISION');
+  }
+
+  return nextNumber;
 }
 
-/** Convert a decimal string to cents (integer) for safe money math */
-function toCents(value: string | number): number {
-  const num = typeof value === 'string' ? parseDecimal(value) : value;
+/** Convert a decimal string/number/Decimal to cents (integer) for safe money math */
+function toCents(value: string | number | { toString: () => string }): number {
+  const num =
+    typeof value === 'number'
+      ? value
+      : parseDecimal(typeof value === 'string' ? value : value.toString());
   return Math.round(num * 100);
 }
 
@@ -211,6 +200,11 @@ function parseDecimal(value: string): number {
 /** Format cents as a 2-decimal string */
 function formatMoney(cents: number): string {
   return (cents / 100).toFixed(2);
+}
+
+/** Normalize stored Decimal/number/string money values to 2 decimal places */
+function formatMoneyValue(value: string | number | { toString: () => string }): string {
+  return formatMoney(toCents(value));
 }
 
 /** Calculate line item totals using integer (cent) math to avoid floating-point errors */
@@ -240,7 +234,6 @@ function calculateLineItemTotals(items: QuotationLineItemInput[]) {
   };
 }
 
-/** Serialize a quotation with server-calculated totals */
 /** Prisma quotation result type with all relations */
 type QuotationWithRelations = {
   id: string;
@@ -250,9 +243,9 @@ type QuotationWithRelations = {
   contactId: string | null;
   title: string;
   status: string;
-  subtotal: number;
-  tax: number;
-  total: number;
+  subtotal: number | string | { toString: () => string };
+  tax: number | string | { toString: () => string };
+  total: number | string | { toString: () => string };
   currency: string;
   validUntil: Date | null;
   notes: string | null;
@@ -265,17 +258,17 @@ type QuotationWithRelations = {
     id: string;
     quotationId: string;
     description: string;
-    quantity: number;
-    unitPrice: number;
-    taxRate: number;
-    amount: number;
+    quantity: number | string | { toString: () => string };
+    unitPrice: number | string | { toString: () => string };
+    taxRate: number | string | { toString: () => string };
+    amount: number | string | { toString: () => string };
     sortOrder: number;
     createdAt: Date;
   }>;
-  creator: { id: string; name: string | null; email: string | null } | null;
-  updater: { id: string; name: string | null; email: string | null } | null;
-  opportunity: { id: string; title: string } | null;
-  contact: { id: string; firstName: string | null; lastName: string } | null;
+  creator?: { id: string; name: string | null; email: string | null } | null;
+  updater?: { id: string; name: string | null; email: string | null } | null;
+  opportunity?: { id: string; title: string } | null;
+  contact?: { id: string; firstName: string | null; lastName: string } | null;
 };
 
 function serializeQuotation(quotation: QuotationWithRelations): QuotationResponse {
@@ -287,9 +280,9 @@ function serializeQuotation(quotation: QuotationWithRelations): QuotationRespons
     contactId: quotation.contactId,
     title: quotation.title,
     status: quotation.status,
-    subtotal: quotation.subtotal.toString(),
-    tax: quotation.tax.toString(),
-    total: quotation.total.toString(),
+    subtotal: formatMoneyValue(quotation.subtotal),
+    tax: formatMoneyValue(quotation.tax),
+    total: formatMoneyValue(quotation.total),
     currency: quotation.currency,
     validUntil: quotation.validUntil,
     notes: quotation.notes,
@@ -304,29 +297,27 @@ function serializeQuotation(quotation: QuotationWithRelations): QuotationRespons
     updater: quotation.updater
       ? { id: quotation.updater.id, name: quotation.updater.name, email: quotation.updater.email }
       : null,
-    items: quotation.items.map(
-      (item: {
-        id: string;
-        quotationId: string;
-        description: string;
-        quantity: number;
-        unitPrice: number;
-        taxRate: number;
-        amount: number;
-        sortOrder: number;
-        createdAt: Date;
-      }) => ({
-        id: item.id,
-        quotationId: item.quotationId,
-        description: item.description,
-        quantity: item.quantity.toString(),
-        unitPrice: item.unitPrice.toString(),
-        taxRate: item.taxRate.toString(),
-        amount: item.amount.toString(),
-        sortOrder: item.sortOrder,
-        createdAt: item.createdAt,
-      })
-    ),
+    opportunity: quotation.opportunity
+      ? { id: quotation.opportunity.id, title: quotation.opportunity.title }
+      : null,
+    contact: quotation.contact
+      ? {
+          id: quotation.contact.id,
+          firstName: quotation.contact.firstName,
+          lastName: quotation.contact.lastName,
+        }
+      : null,
+    items: quotation.items.map((item) => ({
+      id: item.id,
+      quotationId: item.quotationId,
+      description: item.description,
+      quantity: item.quantity.toString(),
+      unitPrice: item.unitPrice.toString(),
+      taxRate: item.taxRate.toString(),
+      amount: formatMoneyValue(item.amount),
+      sortOrder: item.sortOrder,
+      createdAt: item.createdAt,
+    })),
   };
 }
 
@@ -370,10 +361,6 @@ export async function listQuotations(input: QuotationQueryInput) {
   await requirePermission(userId, organizationId, 'quotation.read');
 
   const where = buildQuotationWhere(organizationId, input);
-  // Independent read-only statements: run concurrently on separate pooled
-  // connections. Deliberately not $transaction(): a transaction pins one pg
-  // client, Prisma 7 dispatches relation loads concurrently on it, and pg
-  // >= 8.22 deprecates overlapping client.query() (hard error in pg 9).
   const [quotations, total] = await Promise.all([
     prisma.quotation.findMany({
       where,
@@ -400,7 +387,7 @@ export async function listQuotations(input: QuotationQueryInput) {
   };
 }
 
-/** Get a single quotation by ID with organization isolation (non-disclosing 404 for cross-org) */
+/** Get a single quotation by ID with organization isolation (non-disclosing 404 for cross-org or deleted) */
 export async function getQuotation(id: string) {
   const { userId, organizationId } = await getAuthorizedUser();
 
@@ -419,7 +406,7 @@ export async function getQuotation(id: string) {
     },
   });
 
-  if (!quotation) {
+  if (!quotation || quotation.deletedAt) {
     const error = new Error('Not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;
@@ -428,7 +415,7 @@ export async function getQuotation(id: string) {
   return serializeQuotation(quotation as QuotationWithRelations);
 }
 
-/** Create a quotation with server-calculated totals, organization scoping, and audit logging */
+/** Create a quotation with atomic document numbering, server-calculated totals, org scoping, and audit logging */
 export async function createQuotation(
   input: QuotationCreateInput,
   lineItems: QuotationLineItemInput[]
@@ -442,7 +429,7 @@ export async function createQuotation(
     const opportunity = await prisma.opportunity.findFirst({
       where: { id: input.opportunityId, organizationId },
     });
-    if (!opportunity) {
+    if (!opportunity || (opportunity as { deletedAt?: Date | null }).deletedAt) {
       const error = new Error('Not found') as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
@@ -454,57 +441,82 @@ export async function createQuotation(
     const contact = await prisma.contact.findFirst({
       where: { id: input.contactId, organizationId },
     });
-    if (!contact) {
+    if (!contact || (contact as { deletedAt?: Date | null }).deletedAt) {
       const error = new Error('Not found') as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
     }
   }
 
-  // Generate document number
-  const number = await generateDocumentNumber(organizationId, 'QOT');
-
   // Calculate totals server-side from line items (never trust client)
   const { subtotal, tax, total } = calculateLineItemTotals(lineItems);
 
-  const quotation = await prisma.quotation.create({
-    data: {
-      organizationId,
-      number,
-      opportunityId: input.opportunityId ?? null,
-      contactId: input.contactId ?? null,
-      title: input.title,
-      status: input.status,
-      subtotal,
-      tax,
-      total,
-      currency: input.currency,
-      validUntil: input.validUntil ? new Date(input.validUntil) : null,
-      notes: input.notes ?? null,
-      createdBy: userId,
-      updatedBy: userId,
-      items: {
-        create: lineItems.map((item, index) => {
-          const qtyCents = toCents(item.quantity);
-          const priceCents = toCents(item.unitPrice);
-          const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
-          return {
-            description: item.description,
-            quantity: Number(item.quantity),
-            unitPrice: Number(item.unitPrice),
-            taxRate: Number(item.taxRate),
-            amount: formatMoney(itemAmountCents),
-            sortOrder: item.sortOrder ?? index,
-          };
-        }),
-      },
-    },
-    include: {
-      items: {
-        orderBy: { sortOrder: 'asc' },
-      },
-    },
-  });
+  let quotation: QuotationWithRelations | null = null;
+  const MAX_RETRIES = 5;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      quotation = (await prisma.$transaction(async (tx: typeof prisma) => {
+        const number = await allocateQuotationNumberInTx(tx, organizationId, 'QOT');
+
+        return tx.quotation.create({
+          data: {
+            organizationId,
+            number,
+            opportunityId: input.opportunityId ?? null,
+            contactId: input.contactId ?? null,
+            title: input.title,
+            status: input.status,
+            subtotal,
+            tax,
+            total,
+            currency: input.currency,
+            validUntil: input.validUntil ? new Date(input.validUntil) : null,
+            notes: input.notes ?? null,
+            createdBy: userId,
+            updatedBy: userId,
+            items: {
+              create: lineItems.map((item, index) => {
+                const qtyCents = toCents(item.quantity);
+                const priceCents = toCents(item.unitPrice);
+                const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
+                return {
+                  description: item.description,
+                  quantity: Number(item.quantity),
+                  unitPrice: Number(item.unitPrice),
+                  taxRate: Number(item.taxRate),
+                  amount: formatMoney(itemAmountCents),
+                  sortOrder: item.sortOrder ?? index,
+                };
+              }),
+            },
+          },
+          include: {
+            items: {
+              orderBy: { sortOrder: 'asc' },
+            },
+            opportunity: { select: { id: true, title: true } },
+            contact: { select: { id: true, firstName: true, lastName: true } },
+          },
+        });
+      })) as QuotationWithRelations;
+      break;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if ((err as Error).message === 'NUMBER_COLLISION' || code === 'P2002') {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (!quotation) {
+    const error = new Error('Failed to generate unique document number') as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 500;
+    throw error;
+  }
 
   await createAuditLog({
     actorId: userId,
@@ -523,7 +535,7 @@ export async function createQuotation(
     organizationId,
   });
 
-  return serializeQuotation(quotation as QuotationWithRelations);
+  return serializeQuotation(quotation);
 }
 
 /** Update a quotation with server-calculated totals, organization scoping, and audit logging */
@@ -536,19 +548,19 @@ export async function updateQuotation(
 
   await requirePermission(userId, organizationId, 'quotation.update');
 
-  // Verify quotation exists and belongs to the user's organization
+  // Verify quotation exists, is not soft-deleted, and belongs to the user's organization
   const existing = await prisma.quotation.findFirst({
     where: { id, organizationId },
     include: { items: true },
   });
 
-  if (!existing) {
+  if (!existing || existing.deletedAt) {
     const error = new Error('Not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;
   }
 
-  // Immutable once accepted
+  // Immutable once accepted/rejected/expired
   if (!EDITABLE_STATUSES.includes(existing.status)) {
     const error = new Error(
       'Cannot modify a quotation that is not in draft or sent status'
@@ -578,7 +590,7 @@ export async function updateQuotation(
     const opportunity = await prisma.opportunity.findFirst({
       where: { id: input.opportunityId, organizationId },
     });
-    if (!opportunity) {
+    if (!opportunity || (opportunity as { deletedAt?: Date | null }).deletedAt) {
       const error = new Error('Not found') as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
@@ -590,7 +602,7 @@ export async function updateQuotation(
     const contact = await prisma.contact.findFirst({
       where: { id: input.contactId, organizationId },
     });
-    if (!contact) {
+    if (!contact || (contact as { deletedAt?: Date | null }).deletedAt) {
       const error = new Error('Not found') as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
@@ -612,8 +624,9 @@ export async function updateQuotation(
   const quotation = await prisma.quotation.update({
     where: { id },
     data: {
-      opportunityId: input.opportunityId ?? existing.opportunityId,
-      contactId: input.contactId ?? existing.contactId,
+      opportunityId:
+        input.opportunityId !== undefined ? input.opportunityId : existing.opportunityId,
+      contactId: input.contactId !== undefined ? input.contactId : existing.contactId,
       title: input.title ?? existing.title,
       status: input.status ?? existing.status,
       subtotal,
@@ -626,7 +639,7 @@ export async function updateQuotation(
             ? new Date(input.validUntil)
             : null
           : existing.validUntil,
-      notes: input.notes ?? existing.notes,
+      notes: input.notes !== undefined ? input.notes : existing.notes,
       updatedBy: userId,
       ...(lineItems
         ? {
@@ -653,6 +666,8 @@ export async function updateQuotation(
       items: {
         orderBy: { sortOrder: 'asc' },
       },
+      opportunity: { select: { id: true, title: true } },
+      contact: { select: { id: true, firstName: true, lastName: true } },
     },
   });
 
@@ -690,7 +705,7 @@ export async function deleteQuotation(id: string) {
     where: { id, organizationId },
   });
 
-  if (!existing) {
+  if (!existing || existing.deletedAt) {
     const error = new Error('Not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;

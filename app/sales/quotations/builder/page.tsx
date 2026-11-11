@@ -11,6 +11,7 @@ import { getFinancialDefaults } from '@/lib/services/settings/organization-servi
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getQuotation } from '@/lib/services/crm/quotation-service';
+import { getProposal } from '@/lib/services/crm/proposal-service';
 import { listContacts } from '@/lib/services/crm/contact-service';
 import { listOpportunities } from '@/lib/services/crm/opportunity-service';
 import { QuotationBuilderApp } from './BuilderApp';
@@ -27,7 +28,12 @@ interface OpportunityOption {
   title: string;
 }
 
-export default async function QuotationBuilderPage() {
+export default async function QuotationBuilderPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const resolvedSearch = searchParams ? await searchParams : {};
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },
@@ -41,33 +47,37 @@ export default async function QuotationBuilderPage() {
   // route id to read. Editing lives at /sales/quotations/builder/[id].
   const id = '';
   const isEdit = Boolean(id);
+  const fromProposalId =
+    typeof resolvedSearch.fromProposalId === 'string' ? resolvedSearch.fromProposalId : '';
 
-  // Load contacts and opportunities for client selection
-  const [contactsResult, opportunitiesResult, existingQuotation] = await Promise.all([
-    listContacts({
-      page: 1,
-      pageSize: 100,
-      sortBy: 'createdAt',
-      sortOrder: 'desc',
-      includeDeleted: false,
-    }).catch(() => ({
-      contacts: [],
-      total: 0,
-      totalPages: 1,
-    })),
-    listOpportunities({
-      page: 1,
-      pageSize: 100,
-      sortBy: 'createdAt',
-      sortOrder: 'desc',
-      includeDeleted: false,
-    }).catch(() => ({
-      opportunities: [],
-      total: 0,
-      totalPages: 1,
-    })),
-    isEdit ? getQuotation(id).catch(() => null) : null,
-  ]);
+  // Load contacts, opportunities, and optional source proposal for prefill
+  const [contactsResult, opportunitiesResult, existingQuotation, sourceProposal] =
+    await Promise.all([
+      listContacts({
+        page: 1,
+        pageSize: 100,
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
+        includeDeleted: false,
+      }).catch(() => ({
+        contacts: [],
+        total: 0,
+        totalPages: 1,
+      })),
+      listOpportunities({
+        page: 1,
+        pageSize: 100,
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
+        includeDeleted: false,
+      }).catch(() => ({
+        opportunities: [],
+        total: 0,
+        totalPages: 1,
+      })),
+      isEdit ? getQuotation(id).catch(() => null) : null,
+      fromProposalId ? getProposal(fromProposalId).catch(() => null) : null,
+    ]);
 
   const rawContacts = Array.isArray((contactsResult as { contacts: unknown[] }).contacts)
     ? ((contactsResult as { contacts: unknown[] }).contacts as unknown[])
@@ -96,34 +106,14 @@ export default async function QuotationBuilderPage() {
     };
   });
 
-  // Map QuotationResponse to local QuotationData shape
-  const existingQuotationLike: {
-    id: string;
-    title: string;
-    status: string;
-    currency: string;
-    validUntil: string | null;
-    notes: string | null;
-    contactId: string | null;
-    opportunityId: string | null;
-    number: string;
-    createdAt: string | null;
-    items: Array<{
-      id: string;
-      description: string;
-      quantity: number | string;
-      unitPrice: number | string;
-      taxRate: number | string;
-      sortOrder: number;
-    }>;
-  } | null = existingQuotation
+  const existingQuotationLike = existingQuotation
     ? {
         id: existingQuotation.id,
         title: existingQuotation.title,
         status: existingQuotation.status,
         currency: existingQuotation.currency,
         validUntil: existingQuotation.validUntil
-          ? existingQuotation.validUntil.toISOString()
+          ? existingQuotation.validUntil.toISOString().slice(0, 10)
           : null,
         notes: existingQuotation.notes,
         contactId: existingQuotation.contactId,
@@ -147,6 +137,39 @@ export default async function QuotationBuilderPage() {
   // Organization defaults: a new document starts in the configured currency.
   const financialDefaults = await getFinancialDefaults();
 
+  const prefill = sourceProposal
+    ? {
+        title: sourceProposal.title,
+        contactId: sourceProposal.contactId,
+        opportunityId: sourceProposal.opportunityId,
+        currency: sourceProposal.currency,
+        validUntil: sourceProposal.validUntil
+          ? sourceProposal.validUntil.toISOString().slice(0, 10)
+          : null,
+        notes: sourceProposal.notes,
+        items: (sourceProposal.items || []).map((it, idx) => ({
+          id: `from-prop-${idx}-${it.id}`,
+          description: it.description,
+          quantity: String(it.quantity),
+          unitPrice: String(it.unitPrice),
+          taxRate: String(it.taxRate),
+          sortOrder: it.sortOrder ?? idx,
+        })),
+      }
+    : {
+        title: typeof resolvedSearch.title === 'string' ? resolvedSearch.title : undefined,
+        contactId:
+          typeof resolvedSearch.contactId === 'string' &&
+          contacts.some((c) => c.id === resolvedSearch.contactId)
+            ? resolvedSearch.contactId
+            : null,
+        opportunityId:
+          typeof resolvedSearch.opportunityId === 'string' &&
+          opportunities.some((o) => o.id === resolvedSearch.opportunityId)
+            ? resolvedSearch.opportunityId
+            : null,
+      };
+
   return (
     <QuotationBuilderApp
       isEdit={isEdit}
@@ -155,6 +178,7 @@ export default async function QuotationBuilderPage() {
       initialContacts={contacts}
       initialOpportunities={opportunities}
       defaultCurrency={financialDefaults.defaultCurrency}
+      prefill={prefill}
     />
   );
 }

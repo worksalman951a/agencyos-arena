@@ -27,7 +27,12 @@ interface OpportunityOption {
   title: string;
 }
 
-export default async function ProposalBuilderPage() {
+export default async function ProposalBuilderPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const resolvedSearch = searchParams ? await searchParams : {};
   const cookieStore = await cookies();
   const result = await auth.api.getSession({
     headers: { cookie: cookieStore.toString() },
@@ -96,33 +101,15 @@ export default async function ProposalBuilderPage() {
     };
   });
 
-  // Map ProposalResponse to local ProposalData shape
-  const existingQuotationLike: {
-    id: string;
-    title: string;
-    status: string;
-    currency: string;
-    validUntil: string | null;
-    notes: string | null;
-    contactId: string | null;
-    opportunityId: string | null;
-    number: string;
-    createdAt: string | null;
-    items: Array<{
-      id: string;
-      description: string;
-      quantity: number | string;
-      unitPrice: number | string;
-      taxRate: number | string;
-      sortOrder: number;
-    }>;
-  } | null = existingProposal
+  const existingQuotationLike = existingProposal
     ? {
         id: existingProposal.id,
         title: existingProposal.title,
         status: existingProposal.status,
         currency: existingProposal.currency,
-        validUntil: existingProposal.validUntil ? existingProposal.validUntil.toISOString() : null,
+        validUntil: existingProposal.validUntil
+          ? existingProposal.validUntil.toISOString().slice(0, 10)
+          : null,
         notes: existingProposal.notes,
         contactId: existingProposal.contactId,
         opportunityId: existingProposal.opportunityId,
@@ -144,6 +131,17 @@ export default async function ProposalBuilderPage() {
 
   // Organization defaults: a new document starts in the configured currency.
   const financialDefaults = await getFinancialDefaults();
+  const prefillContactId =
+    typeof resolvedSearch.contactId === 'string' &&
+    contacts.some((c) => c.id === resolvedSearch.contactId)
+      ? resolvedSearch.contactId
+      : null;
+  const prefillOpportunityId =
+    typeof resolvedSearch.opportunityId === 'string' &&
+    opportunities.some((o) => o.id === resolvedSearch.opportunityId)
+      ? resolvedSearch.opportunityId
+      : null;
+  const prefillTitle = typeof resolvedSearch.title === 'string' ? resolvedSearch.title : undefined;
 
   return (
     <ProposalBuilderApp
@@ -153,6 +151,11 @@ export default async function ProposalBuilderPage() {
       initialContacts={contacts}
       initialOpportunities={opportunities}
       defaultCurrency={financialDefaults.defaultCurrency}
+      prefill={{
+        title: prefillTitle,
+        contactId: prefillContactId,
+        opportunityId: prefillOpportunityId,
+      }}
     />
   );
 }

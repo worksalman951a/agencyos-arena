@@ -6,17 +6,25 @@ import { z } from 'zod';
  * from the authenticated user's session context.
  */
 
-const baseContractSchema = z.object({
-  proposalId: z.string().cuid().optional().nullable(),
-  projectId: z.string().cuid().optional().nullable(),
-  title: z.string().min(1, 'Title is required').max(200),
-  status: z.string().min(1).max(50).default('draft'),
-});
+export const CONTRACT_CREATE_STATUSES = ['draft', 'sent'] as const;
+export const CONTRACT_UPDATE_STATUSES = ['draft', 'sent', 'voided'] as const;
 
-export const contractCreateSchema = baseContractSchema.strict();
+export const contractCreateSchema = z
+  .object({
+    proposalId: z.string().cuid().optional().nullable(),
+    projectId: z.string().cuid().optional().nullable(),
+    title: z.string().min(1, 'Title is required').max(200),
+    status: z.enum(CONTRACT_CREATE_STATUSES).default('draft'),
+  })
+  .strict();
 
-export const contractUpdateSchema = baseContractSchema
-  .partial()
+export const contractUpdateSchema = z
+  .object({
+    proposalId: z.string().cuid().optional().nullable(),
+    projectId: z.string().cuid().optional().nullable(),
+    title: z.string().min(1, 'Title is required').max(200).optional(),
+    status: z.enum(CONTRACT_UPDATE_STATUSES).optional(),
+  })
   .strict()
   .refine(
     (data) =>
@@ -28,8 +36,8 @@ export const contractUpdateSchema = baseContractSchema
   );
 
 export const contractSignSchema = z.object({
-  signatureReference: z.string().optional(),
-  signerName: z.string().min(1, 'Signer name is required'),
+  signatureReference: z.string().max(200).optional(),
+  signerName: z.string().min(1, 'Signer name is required').max(200),
   signerEmail: z.string().email('Valid email is required'),
   ipAddress: z.string().optional(),
   userAgent: z.string().optional(),

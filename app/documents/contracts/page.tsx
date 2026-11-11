@@ -3,11 +3,10 @@
  * Server component that lists contracts for the current organization.
  */
 
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { listContracts } from '@/lib/services/documents/contract-service';
+import { loadPageData } from '@/lib/page-data';
+import { PageStateNotice } from '@/components/server/page-state-notice';
 
 interface ContractListItem {
   id: string;
@@ -27,16 +26,13 @@ interface ContractListItem {
 }
 
 export default async function ContractsListPage() {
-  const cookieStore = await cookies();
-  const result = await auth.api.getSession({
-    headers: { cookie: cookieStore.toString() },
-  });
+  const result = await loadPageData(() => listContracts());
 
-  if (!result?.session || !result.user) {
-    redirect('/login');
+  if (!result.ok) {
+    return <PageStateNotice reason={result.reason} />;
   }
 
-  const contracts = await listContracts();
+  const contracts = result.data as ContractListItem[];
 
   return (
     <div className="space-y-6 p-6">
@@ -56,20 +52,22 @@ export default async function ContractsListPage() {
       </div>
 
       {contracts.length === 0 ? (
-        <div className="rounded-md border bg-background p-6 text-center">
+        <div className="rounded-md border bg-background p-6 text-center space-y-3">
           <h2 className="text-lg font-semibold">No contracts yet</h2>
           <p className="text-muted-foreground">
             Create your first contract from a proposal or project.
           </p>
-          <Link
-            href="/documents/contracts/new"
-            className="mt-4 px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
-          >
-            Create Contract
-          </Link>
+          <div>
+            <Link
+              href="/documents/contracts/new"
+              className="inline-block mt-2 px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
+            >
+              Create Contract
+            </Link>
+          </div>
         </div>
       ) : (
-        <div className="rounded-md border bg-background p-6">
+        <div className="rounded-md border bg-background p-6 overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b text-sm">
@@ -78,23 +76,23 @@ export default async function ContractsListPage() {
                 <th className="pb-3 font-medium text-muted-foreground">Proposal</th>
                 <th className="pb-3 font-medium text-muted-foreground">Project</th>
                 <th className="pb-3 font-medium text-muted-foreground">Signed</th>
-                <th className="pb-3 font-medium text-muted-foreground">Updated</th>
+                <th className="pb-3 font-medium text-muted-foreground text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {(contracts as ContractListItem[]).map((c) => (
-                <tr key={c.id} className="border-b last:border-0">
+              {contracts.map((c) => (
+                <tr key={c.id} className="border-b last:border-0 hover:bg-muted/40">
                   <td className="py-4">
                     <Link
                       href={`/documents/contracts/${c.id}`}
-                      className="font-medium hover:underline"
+                      className="font-medium text-accent hover:underline"
                     >
                       {c.title}
                     </Link>
                   </td>
                   <td className="py-4">
                     <span
-                      className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
                         c.status === 'signed'
                           ? 'bg-green-100 text-green-800'
                           : c.status === 'voided'
@@ -138,8 +136,21 @@ export default async function ContractsListPage() {
                       <span className="text-muted-foreground text-sm">—</span>
                     )}
                   </td>
-                  <td className="py-4 text-sm text-muted-foreground">
-                    {new Date(c.updatedAt).toLocaleDateString()}
+                  <td className="py-4 text-right space-x-2">
+                    <Link
+                      href={`/documents/contracts/${c.id}`}
+                      className="text-sm text-accent hover:underline"
+                    >
+                      View
+                    </Link>
+                    {(c.status === 'draft' || c.status === 'sent') && (
+                      <Link
+                        href={`/documents/contracts/${c.id}/edit`}
+                        className="text-sm text-muted-foreground hover:text-accent"
+                      >
+                        Edit
+                      </Link>
+                    )}
                   </td>
                 </tr>
               ))}

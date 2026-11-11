@@ -1,31 +1,77 @@
 /**
  * AgencyOS Documents - New Contract
- * Client component form for creating a new contract.
+ * Client component form for creating a new contract with Proposal and Project selectors.
  */
 
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
-interface FormData {
-  proposalId: string;
-  projectId: string;
+interface ProposalOption {
+  id: string;
+  number: string;
   title: string;
-  status: string;
+}
+
+interface ProjectOption {
+  id: string;
+  name: string;
 }
 
 export default function NewContractPage() {
   const router = useRouter();
-  const [form, setForm] = useState<FormData>({
-    proposalId: '',
-    projectId: '',
-    title: '',
-    status: 'draft',
-  });
+  const [proposals, setProposals] = useState<ProposalOption[]>([]);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [proposalId, setProposalId] = useState('');
+  const [projectId, setProjectId] = useState('');
+  const [title, setTitle] = useState('');
+  const [status, setStatus] = useState('draft');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    async function init() {
+      const search = new URLSearchParams(window.location.search);
+      const qProposalId = search.get('proposalId');
+      const qProjectId = search.get('projectId');
+      const qTitle = search.get('title');
+
+      const [propRes, projRes] = await Promise.all([
+        fetch('/api/v1/crm/proposals?pageSize=100').catch(() => null),
+        fetch('/api/v1/projects?pageSize=100').catch(() => null),
+      ]);
+
+      if (!active) return;
+      if (qProposalId) setProposalId(qProposalId);
+      if (qProjectId) setProjectId(qProjectId);
+      if (qTitle) setTitle(qTitle);
+
+      if (propRes?.ok) {
+        const pData = (await propRes.json()) as { proposals?: ProposalOption[] } | ProposalOption[];
+        const list = Array.isArray(pData) ? pData : (pData.proposals ?? []);
+        setProposals(list);
+        if (qProposalId && !qTitle) {
+          const matched = list.find((p) => p.id === qProposalId);
+          if (matched) setTitle(`${matched.title} Agreement`);
+        }
+      }
+      if (projRes?.ok) {
+        const prData = (await projRes.json()) as { projects?: ProjectOption[] } | ProjectOption[];
+        const list = Array.isArray(prData) ? prData : (prData.projects ?? []);
+        setProjects(list);
+      }
+    }
+
+    void init();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,16 +82,16 @@ export default function NewContractPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          proposalId: form.proposalId || undefined,
-          projectId: form.projectId || undefined,
-          title: form.title,
-          status: form.status,
+          proposalId: proposalId || undefined,
+          projectId: projectId || undefined,
+          title: title.trim(),
+          status,
         }),
       });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Failed to create contract' }));
-        throw new Error(err.error || 'Failed to create contract');
+        throw new Error((err as { error?: string }).error || 'Failed to create contract');
       }
 
       const data = await res.json();
@@ -75,58 +121,78 @@ export default function NewContractPage() {
         </Link>
       </div>
 
-      <div className="rounded-md border bg-background p-6">
+      <div className="rounded-md border bg-background p-6 max-w-2xl">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium">Title</label>
+            <label htmlFor="contract-title" className="block text-sm font-medium">
+              Contract Title <span className="text-destructive">*</span>
+            </label>
             <input
+              id="contract-title"
               type="text"
-              value={form.title}
-              onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="border border-input rounded-md px-3 py-2 text-sm"
-              placeholder="Contract title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full border border-input rounded-md px-3 py-2 text-sm"
+              placeholder="e.g. Master Services Agreement"
               required
             />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Proposal</label>
-              <input
-                type="text"
-                value={form.proposalId}
-                onChange={(e) => setForm({ ...form, proposalId: e.target.value })}
-                className="border border-input rounded-md px-3 py-2 text-sm"
-                placeholder="Proposal ID (optional)"
-              />
+              <label htmlFor="contract-proposal" className="block text-sm font-medium">
+                Linked Proposal
+              </label>
+              <select
+                id="contract-proposal"
+                value={proposalId}
+                onChange={(e) => setProposalId(e.target.value)}
+                className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+              >
+                <option value="">None (standalone contract)</option>
+                {proposals.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    #{p.number} — {p.title}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Project</label>
-              <input
-                type="text"
-                value={form.projectId}
-                onChange={(e) => setForm({ ...form, projectId: e.target.value })}
-                className="border border-input rounded-md px-3 py-2 text-sm"
-                placeholder="Project ID (optional)"
-              />
+              <label htmlFor="contract-project" className="block text-sm font-medium">
+                Linked Project
+              </label>
+              <select
+                id="contract-project"
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+              >
+                <option value="">None</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">Status</label>
+            <label htmlFor="contract-status" className="block text-sm font-medium">
+              Initial Status
+            </label>
             <select
-              value={form.status}
-              onChange={(e) => setForm({ ...form, status: e.target.value })}
-              className="border border-input rounded-md px-3 py-2 text-sm"
+              id="contract-status"
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
             >
               <option value="draft">Draft</option>
               <option value="sent">Sent</option>
-              <option value="signed">Signed</option>
-              <option value="voided">Voided</option>
             </select>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end pt-2">
             <button
               type="submit"
               disabled={loading}

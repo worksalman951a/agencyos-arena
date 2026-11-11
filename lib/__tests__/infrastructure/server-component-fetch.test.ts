@@ -74,7 +74,10 @@ function analyse(file: string): Finding[] {
       });
     }
 
-    const browserGlobal = /\b(window|document|localStorage|sessionStorage)\./.exec(code);
+    const codeWithoutStrings = code.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, '""');
+    const browserGlobal = /\b(window|document|localStorage|sessionStorage)\./.exec(
+      codeWithoutStrings
+    );
     if (browserGlobal) {
       findings.push({
         file,

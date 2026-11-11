@@ -35,12 +35,15 @@ function NewProjectFormInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialTemplateId = searchParams.get('templateId') ?? '';
+  const initialName = searchParams.get('name') ?? '';
+  const initialClientId = searchParams.get('clientId') ?? '';
+  const initialBudget = searchParams.get('budget') ?? '';
 
-  const [clientId, setClientId] = useState('');
+  const [clientId, setClientId] = useState(initialClientId);
   const [templateId, setTemplateId] = useState(initialTemplateId);
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName);
   const [status, setStatus] = useState('active');
-  const [budget, setBudget] = useState('');
+  const [budget, setBudget] = useState(initialBudget);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [description, setDescription] = useState('');

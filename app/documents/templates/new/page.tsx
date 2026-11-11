@@ -1,6 +1,6 @@
 /**
  * AgencyOS Documents - New Template
- * Client component form for creating a new document template.
+ * Client component form for creating a reusable document template with content and variables.
  */
 
 'use client';
@@ -10,39 +10,41 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
-interface FormData {
-  name: string;
-  type: string;
-  isDefault: boolean;
-}
-
 export default function NewTemplatePage() {
   const router = useRouter();
-  const [form, setForm] = useState<FormData>({
-    name: '',
-    type: 'proposal',
-    isDefault: false,
-  });
+  const [name, setName] = useState('');
+  const [type, setType] = useState('proposal');
+  const [content, setContent] = useState('');
+  const [variablesRaw, setVariablesRaw] = useState('client_name, project_scope, valid_until');
+  const [isDefault, setIsDefault] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
+    const varKeys = variablesRaw
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+    const variables = Object.fromEntries(varKeys.map((k) => [k, '']));
+
     try {
       const res = await fetch('/api/v1/documents/templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: form.name,
-          type: form.type,
-          isDefault: form.isDefault,
+          name: name.trim(),
+          type,
+          content: content || null,
+          variables,
+          isDefault,
         }),
       });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Failed to create template' }));
-        throw new Error(err.error || 'Failed to create template');
+        throw new Error((err as { error?: string }).error || 'Failed to create template');
       }
 
       const data = await res.json();
@@ -70,49 +72,85 @@ export default function NewTemplatePage() {
         </Link>
       </div>
 
-      <div className="rounded-md border bg-background p-6">
+      <div className="rounded-md border bg-background p-6 max-w-2xl">
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label htmlFor="template-name" className="block text-sm font-medium">
+                Template Name <span className="text-destructive">*</span>
+              </label>
+              <input
+                id="template-name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full border border-input rounded-md px-3 py-2 text-sm"
+                placeholder="Standard Agency Retainer"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="template-type" className="block text-sm font-medium">
+                Template Type
+              </label>
+              <select
+                id="template-type"
+                value={type}
+                onChange={(e) => setType(e.target.value)}
+                className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+              >
+                <option value="proposal">Proposal</option>
+                <option value="quotation">Quotation</option>
+                <option value="contract">Contract</option>
+                <option value="invoice">Invoice</option>
+                <option value="letter">Letter</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+
           <div className="space-y-2">
-            <label className="text-sm font-medium">Template Name</label>
+            <label htmlFor="template-variables" className="block text-sm font-medium">
+              Merge Variables (comma-separated)
+            </label>
             <input
+              id="template-variables"
               type="text"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="border border-input rounded-md px-3 py-2 text-sm"
-              placeholder="Template name"
-              required
+              value={variablesRaw}
+              onChange={(e) => setVariablesRaw(e.target.value)}
+              className="w-full border border-input rounded-md px-3 py-2 text-sm font-mono"
+              placeholder="client_name, project_scope, valid_until"
             />
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">Template Type</label>
-            <select
-              value={form.type}
-              onChange={(e) => setForm({ ...form, type: e.target.value })}
-              className="border border-input rounded-md px-3 py-2 text-sm"
-            >
-              <option value="proposal">Proposal</option>
-              <option value="quotation">Quotation</option>
-              <option value="contract">Contract</option>
-              <option value="invoice">Invoice</option>
-              <option value="letter">Letter</option>
-              <option value="other">Other</option>
-            </select>
+            <label htmlFor="template-content" className="block text-sm font-medium">
+              Template Body / Terms
+            </label>
+            <textarea
+              id="template-content"
+              rows={7}
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="w-full border border-input rounded-md px-3 py-2 text-sm"
+              placeholder="Prepared for {{client_name}}. Scope of work: {{project_scope}}..."
+            />
           </div>
 
           <div className="space-y-2">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
-                checked={form.isDefault}
-                onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
+                checked={isDefault}
+                onChange={(e) => setIsDefault(e.target.checked)}
                 className="rounded border-accent"
               />
               <span className="text-sm">Set as default for this type</span>
             </label>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end pt-2">
             <button
               type="submit"
               disabled={loading}

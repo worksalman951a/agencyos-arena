@@ -6,14 +6,38 @@ import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
-import { SelectLabel } from '@/components/ui/select';
 import { type DocumentInfo } from './use-builder-state';
+
+const NONE_SENTINEL = '__none__';
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  sent: 'Sent',
+  accepted: 'Accepted',
+  rejected: 'Rejected',
+  expired: 'Expired',
+};
+
+function allowedStatusOptions(isEdit: boolean, savedStatus: string): string[] {
+  if (!isEdit) {
+    return ['draft', 'sent'];
+  }
+  if (savedStatus === 'draft') {
+    return ['draft', 'sent', 'expired'];
+  }
+  if (savedStatus === 'sent') {
+    return ['sent', 'accepted', 'rejected', 'expired'];
+  }
+  return [savedStatus];
+}
 
 interface DocumentInfoProps {
   info: DocumentInfo;
@@ -21,6 +45,8 @@ interface DocumentInfoProps {
   contacts: Array<{ id: string; firstName?: string | null; lastName?: string | null }>;
   opportunities: Array<{ id: string; title: string }>;
   loading: boolean;
+  isEdit?: boolean;
+  savedStatus?: string;
   onChange: (updates: Partial<DocumentInfo>) => void;
 }
 
@@ -30,8 +56,20 @@ export function DocumentInfoForm({
   contacts,
   opportunities,
   loading,
+  isEdit = false,
+  savedStatus = 'draft',
   onChange,
 }: DocumentInfoProps) {
+  const statusOptions = React.useMemo(() => {
+    const opts = allowedStatusOptions(isEdit, savedStatus);
+    return opts.includes(info.status) ? opts : [...opts, info.status];
+  }, [isEdit, savedStatus, info.status]);
+
+  const currencyOptions = React.useMemo(
+    () => (currencies.includes(info.currency) ? currencies : [info.currency, ...currencies]),
+    [currencies, info.currency]
+  );
+
   return (
     <section className="space-y-6">
       <div className="flex items-center gap-2">
@@ -58,15 +96,15 @@ export function DocumentInfoForm({
         <div className="space-y-2">
           <Label htmlFor="currency">Currency</Label>
           <Select
+            value={info.currency}
             onValueChange={(value) => onChange({ currency: value })}
-            defaultValue={info.currency}
             disabled={loading}
           >
             <SelectTrigger id="currency">
               <SelectValue placeholder="Select currency" />
             </SelectTrigger>
             <SelectContent>
-              {currencies.map((c) => (
+              {currencyOptions.map((c) => (
                 <SelectItem key={c} value={c}>
                   {c}
                 </SelectItem>
@@ -78,19 +116,19 @@ export function DocumentInfoForm({
         <div className="space-y-2">
           <Label htmlFor="status">Status</Label>
           <Select
+            value={info.status}
             onValueChange={(value) => onChange({ status: value })}
-            defaultValue={info.status}
-            disabled={loading}
+            disabled={loading || statusOptions.length <= 1}
           >
             <SelectTrigger id="status">
               <SelectValue placeholder="Select status" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="draft">Draft</SelectItem>
-              <SelectItem value="sent">Sent</SelectItem>
-              <SelectItem value="accepted">Accepted</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-              <SelectItem value="expired">Expired</SelectItem>
+              {statusOptions.map((st) => (
+                <SelectItem key={st} value={st}>
+                  {STATUS_LABELS[st] ?? st}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -98,30 +136,30 @@ export function DocumentInfoForm({
         <div className="space-y-2">
           <Label htmlFor="contactId">Contact / Client</Label>
           <Select
-            onValueChange={(value) => onChange({ contactId: value || null, opportunityId: null })}
-            defaultValue={info.contactId ?? ''}
+            value={info.contactId ?? NONE_SENTINEL}
+            onValueChange={(value) =>
+              onChange({ contactId: value === NONE_SENTINEL ? null : value })
+            }
             disabled={loading || contacts.length === 0}
           >
             <SelectTrigger id="contactId">
               <SelectValue placeholder="Select a contact..." />
             </SelectTrigger>
             <SelectContent>
-              <SelectLabel>Contacts</SelectLabel>
-              {contacts.map((contact) => {
-                const name =
-                  [contact.firstName ?? '', contact.lastName ?? ''].join(' ').trim() ||
-                  'Unnamed Contact';
-                return (
-                  <SelectItem key={contact.id} value={contact.id}>
-                    {name}
-                  </SelectItem>
-                );
-              })}
-              {contacts.length === 0 && (
-                <SelectItem disabled value="">
-                  No contacts available
-                </SelectItem>
-              )}
+              <SelectGroup>
+                <SelectLabel>Contacts</SelectLabel>
+                <SelectItem value={NONE_SENTINEL}>None</SelectItem>
+                {contacts.map((contact) => {
+                  const name =
+                    [contact.firstName ?? '', contact.lastName ?? ''].join(' ').trim() ||
+                    'Unnamed Contact';
+                  return (
+                    <SelectItem key={contact.id} value={contact.id}>
+                      {name}
+                    </SelectItem>
+                  );
+                })}
+              </SelectGroup>
             </SelectContent>
           </Select>
           {contacts.length === 0 && (
@@ -132,25 +170,25 @@ export function DocumentInfoForm({
         <div className="space-y-2">
           <Label htmlFor="opportunityId">Opportunity</Label>
           <Select
-            onValueChange={(value) => onChange({ opportunityId: value || null })}
-            defaultValue={info.opportunityId ?? ''}
+            value={info.opportunityId ?? NONE_SENTINEL}
+            onValueChange={(value) =>
+              onChange({ opportunityId: value === NONE_SENTINEL ? null : value })
+            }
             disabled={loading || opportunities.length === 0}
           >
             <SelectTrigger id="opportunityId">
               <SelectValue placeholder="Select an opportunity..." />
             </SelectTrigger>
             <SelectContent>
-              <SelectLabel>Opportunities</SelectLabel>
-              {opportunities.map((opp) => (
-                <SelectItem key={opp.id} value={opp.id}>
-                  {opp.title}
-                </SelectItem>
-              ))}
-              {opportunities.length === 0 && (
-                <SelectItem disabled value="">
-                  No opportunities available
-                </SelectItem>
-              )}
+              <SelectGroup>
+                <SelectLabel>Opportunities</SelectLabel>
+                <SelectItem value={NONE_SENTINEL}>None</SelectItem>
+                {opportunities.map((opp) => (
+                  <SelectItem key={opp.id} value={opp.id}>
+                    {opp.title}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             </SelectContent>
           </Select>
           {opportunities.length === 0 && (

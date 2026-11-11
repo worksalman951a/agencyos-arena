@@ -11,6 +11,7 @@ import {
   getProjectWorkspaceDetails,
   listProjectMembers,
 } from '@/lib/services/crm/project-service';
+import { listContracts } from '@/lib/services/documents/contract-service';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import {
@@ -36,10 +37,23 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
 
   const project = projectResult.data;
 
-  const [workspaceResult, membersResult] = await Promise.all([
+  const [workspaceResult, membersResult, contractsResult] = await Promise.all([
     loadPageData(() => getProjectWorkspaceDetails(id)),
     loadPageData(() => listProjectMembers()),
+    loadPageData(() => listContracts()),
   ]);
+
+  const projectContracts = contractsResult.ok
+    ? (
+        contractsResult.data as Array<{
+          id: string;
+          projectId: string | null;
+          title: string;
+          status: string;
+          signedAt: Date | null;
+        }>
+      ).filter((c) => c.projectId === id)
+    : [];
 
   const workspace = workspaceResult.ok
     ? workspaceResult.data
@@ -261,6 +275,40 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
           <p className="text-sm text-muted-foreground whitespace-pre-wrap">{project.description}</p>
         </div>
       )}
+
+      <div className="rounded-md border bg-background p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Contracts ({projectContracts.length})</h2>
+          {!project.deletedAt && (
+            <Link
+              href={`/documents/contracts/new?projectId=${encodeURIComponent(project.id)}&title=${encodeURIComponent(`${project.name} Contract`)}`}
+              className="px-3 py-1.5 rounded-md border border-input bg-background text-xs font-medium hover:bg-muted"
+            >
+              + New Contract
+            </Link>
+          )}
+        </div>
+        {projectContracts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No contracts linked to this project yet.</p>
+        ) : (
+          <div className="divide-y divide-border text-sm">
+            {projectContracts.map((c) => (
+              <div key={c.id} className="py-2 flex items-center justify-between">
+                <Link
+                  href={`/documents/contracts/${c.id}`}
+                  className="font-medium text-accent hover:underline"
+                >
+                  {c.title}
+                </Link>
+                <span className="text-xs capitalize text-muted-foreground">
+                  {c.status}
+                  {c.signedAt ? ` · Signed ${new Date(c.signedAt).toLocaleDateString()}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <ProjectMilestonesSection
         projectId={project.id}

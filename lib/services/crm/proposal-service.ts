@@ -24,9 +24,9 @@ type ProposalWithRelations = {
   contactId: string | null;
   title: string;
   status: string;
-  subtotal: number;
-  tax: number;
-  total: number;
+  subtotal: number | string | { toString: () => string };
+  tax: number | string | { toString: () => string };
+  total: number | string | { toString: () => string };
   currency: string;
   validUntil: Date | null;
   notes: string | null;
@@ -39,17 +39,17 @@ type ProposalWithRelations = {
     id: string;
     proposalId: string;
     description: string;
-    quantity: number;
-    unitPrice: number;
-    taxRate: number;
-    amount: number;
+    quantity: number | string | { toString: () => string };
+    unitPrice: number | string | { toString: () => string };
+    taxRate: number | string | { toString: () => string };
+    amount: number | string | { toString: () => string };
     sortOrder: number;
     createdAt: Date;
   }>;
-  creator: { id: string; name: string | null; email: string | null } | null;
-  updater: { id: string; name: string | null; email: string | null } | null;
-  opportunity: { id: string; title: string } | null;
-  contact: { id: string; firstName: string | null; lastName: string } | null;
+  creator?: { id: string; name: string | null; email: string | null } | null;
+  updater?: { id: string; name: string | null; email: string | null } | null;
+  opportunity?: { id: string; title: string } | null;
+  contact?: { id: string; firstName: string | null; lastName: string } | null;
 };
 
 /** Proposal serialization with server-calculated totals */
@@ -74,6 +74,8 @@ export interface ProposalResponse {
   updatedAt: Date;
   creator: { id: string; name: string | null; email: string | null } | null;
   updater: { id: string; name: string | null; email: string | null } | null;
+  opportunity: { id: string; title: string } | null;
+  contact: { id: string; firstName: string | null; lastName: string } | null;
   items: ProposalLineItemResponse[];
 }
 
@@ -169,9 +171,12 @@ async function createAuditLog({
   });
 }
 
-/** Convert a decimal string to cents (integer) for safe money math */
-function toCents(value: string | number): number {
-  const num = typeof value === 'string' ? parseDecimal(value) : value;
+/** Convert a decimal string/number/Decimal to cents (integer) for safe money math */
+function toCents(value: string | number | { toString: () => string }): number {
+  const num =
+    typeof value === 'number'
+      ? value
+      : parseDecimal(typeof value === 'string' ? value : value.toString());
   return Math.round(num * 100);
 }
 
@@ -184,6 +189,11 @@ function parseDecimal(value: string): number {
 /** Format cents as a 2-decimal string */
 function formatMoney(cents: number): string {
   return (cents / 100).toFixed(2);
+}
+
+/** Normalize stored Decimal/number/string money values to 2 decimal places */
+function formatMoneyValue(value: string | number | { toString: () => string }): string {
+  return formatMoney(toCents(value));
 }
 
 /** Calculate line item totals using integer (cent) math to avoid floating-point errors */
@@ -215,7 +225,7 @@ function calculateLineItemTotals(items: ProposalLineItemInput[]) {
   };
 }
 
-/** Serialize a proposal with server-calculated totals */
+/** Serialize a proposal with server-calculated totals and linked CRM summaries */
 function serializeProposal(proposal: ProposalWithRelations): ProposalResponse {
   return {
     id: proposal.id,
@@ -225,9 +235,9 @@ function serializeProposal(proposal: ProposalWithRelations): ProposalResponse {
     contactId: proposal.contactId,
     title: proposal.title,
     status: proposal.status,
-    subtotal: proposal.subtotal.toString(),
-    tax: proposal.tax.toString(),
-    total: proposal.total.toString(),
+    subtotal: formatMoneyValue(proposal.subtotal),
+    tax: formatMoneyValue(proposal.tax),
+    total: formatMoneyValue(proposal.total),
     currency: proposal.currency,
     validUntil: proposal.validUntil,
     notes: proposal.notes,
@@ -242,6 +252,16 @@ function serializeProposal(proposal: ProposalWithRelations): ProposalResponse {
     updater: proposal.updater
       ? { id: proposal.updater.id, name: proposal.updater.name, email: proposal.updater.email }
       : null,
+    opportunity: proposal.opportunity
+      ? { id: proposal.opportunity.id, title: proposal.opportunity.title }
+      : null,
+    contact: proposal.contact
+      ? {
+          id: proposal.contact.id,
+          firstName: proposal.contact.firstName,
+          lastName: proposal.contact.lastName,
+        }
+      : null,
     items: proposal.items.map((item) => ({
       id: item.id,
       proposalId: item.proposalId,
@@ -249,7 +269,7 @@ function serializeProposal(proposal: ProposalWithRelations): ProposalResponse {
       quantity: item.quantity.toString(),
       unitPrice: item.unitPrice.toString(),
       taxRate: item.taxRate.toString(),
-      amount: item.amount.toString(),
+      amount: formatMoneyValue(item.amount),
       sortOrder: item.sortOrder,
       createdAt: item.createdAt,
     })),
@@ -326,7 +346,7 @@ export async function listProposals(input: ProposalQueryInput) {
   };
 }
 
-/** Get a single proposal by ID with organization isolation (non-disclosing 404 for cross-org) */
+/** Get a single proposal by ID with organization isolation (non-disclosing 404 for cross-org or deleted) */
 export async function getProposal(id: string) {
   const { userId, organizationId } = await getAuthorizedUser();
 
@@ -345,7 +365,7 @@ export async function getProposal(id: string) {
     },
   });
 
-  if (!proposal) {
+  if (!proposal || proposal.deletedAt) {
     const error = new Error('Not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;
@@ -368,7 +388,7 @@ export async function createProposal(
     const opportunity = await prisma.opportunity.findFirst({
       where: { id: input.opportunityId, organizationId },
     });
-    if (!opportunity) {
+    if (!opportunity || (opportunity as { deletedAt?: Date | null }).deletedAt) {
       const error = new Error('Not found') as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
@@ -380,7 +400,7 @@ export async function createProposal(
     const contact = await prisma.contact.findFirst({
       where: { id: input.contactId, organizationId },
     });
-    if (!contact) {
+    if (!contact || (contact as { deletedAt?: Date | null }).deletedAt) {
       const error = new Error('Not found') as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
@@ -431,6 +451,8 @@ export async function createProposal(
         items: {
           orderBy: { sortOrder: 'asc' },
         },
+        opportunity: { select: { id: true, title: true } },
+        contact: { select: { id: true, firstName: true, lastName: true } },
       },
     });
   });
@@ -465,19 +487,19 @@ export async function updateProposal(
 
   await requirePermission(userId, organizationId, 'proposal.update');
 
-  // Verify proposal exists and belongs to the user's organization
+  // Verify proposal exists, is not soft-deleted, and belongs to the user's organization
   const existing = await prisma.proposal.findFirst({
     where: { id, organizationId },
     include: { items: true },
   });
 
-  if (!existing) {
+  if (!existing || existing.deletedAt) {
     const error = new Error('Not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;
   }
 
-  // Immutable once accepted
+  // Immutable once accepted/rejected/expired
   if (!EDITABLE_STATUSES.includes(existing.status)) {
     const error = new Error(
       'Cannot modify a proposal that is not in draft or sent status'
@@ -507,7 +529,7 @@ export async function updateProposal(
     const opportunity = await prisma.opportunity.findFirst({
       where: { id: input.opportunityId, organizationId },
     });
-    if (!opportunity) {
+    if (!opportunity || (opportunity as { deletedAt?: Date | null }).deletedAt) {
       const error = new Error('Not found') as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
@@ -519,7 +541,7 @@ export async function updateProposal(
     const contact = await prisma.contact.findFirst({
       where: { id: input.contactId, organizationId },
     });
-    if (!contact) {
+    if (!contact || (contact as { deletedAt?: Date | null }).deletedAt) {
       const error = new Error('Not found') as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
@@ -541,8 +563,9 @@ export async function updateProposal(
   const proposal = await prisma.proposal.update({
     where: { id },
     data: {
-      opportunityId: input.opportunityId ?? existing.opportunityId,
-      contactId: input.contactId ?? existing.contactId,
+      opportunityId:
+        input.opportunityId !== undefined ? input.opportunityId : existing.opportunityId,
+      contactId: input.contactId !== undefined ? input.contactId : existing.contactId,
       title: input.title ?? existing.title,
       status: input.status ?? existing.status,
       subtotal,
@@ -555,7 +578,7 @@ export async function updateProposal(
             ? new Date(input.validUntil)
             : null
           : existing.validUntil,
-      notes: input.notes ?? existing.notes,
+      notes: input.notes !== undefined ? input.notes : existing.notes,
       updatedBy: userId,
       ...(lineItems
         ? {
@@ -582,6 +605,8 @@ export async function updateProposal(
       items: {
         orderBy: { sortOrder: 'asc' },
       },
+      opportunity: { select: { id: true, title: true } },
+      contact: { select: { id: true, firstName: true, lastName: true } },
     },
   });
 
@@ -619,7 +644,7 @@ export async function deleteProposal(id: string) {
     where: { id, organizationId },
   });
 
-  if (!existing) {
+  if (!existing || existing.deletedAt) {
     const error = new Error('Not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;
