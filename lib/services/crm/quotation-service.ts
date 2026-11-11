@@ -1,6 +1,10 @@
 'use server';
 
 import { prisma } from '@/lib/db';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -535,6 +539,12 @@ export async function createQuotation(
     organizationId,
   });
 
+  await emitWorkflowEvent({
+    type: 'record.created',
+    recordType: 'Quotation',
+    recordId: quotation.id,
+  });
+
   return serializeQuotation(quotation);
 }
 
@@ -691,6 +701,20 @@ export async function updateQuotation(
     },
     organizationId,
   });
+
+  await emitWorkflowEvents([
+    { type: 'record.updated', recordType: 'Quotation', recordId: quotation.id },
+    ...(existing.status !== quotation.status
+      ? [
+          {
+            type: 'record.status_changed',
+            recordType: 'Quotation',
+            recordId: quotation.id,
+            previousStatus: existing.status,
+          },
+        ]
+      : []),
+  ]);
 
   return serializeQuotation(quotation as QuotationWithRelations);
 }

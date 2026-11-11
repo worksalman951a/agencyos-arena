@@ -67,6 +67,11 @@ vi.mock('@/lib/permissions', () => ({
   requireOrganization: vi.fn(),
 }));
 
+vi.mock('@/lib/services/automation/run-workflow-service', () => ({
+  emitWorkflowEvent: vi.fn(async () => ({})),
+  emitWorkflowEvents: vi.fn(async () => []),
+}));
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth-server';
@@ -402,6 +407,32 @@ describe('Opportunity service - createOpportunity', () => {
     });
   });
 
+  it.each([
+    {
+      status: 'open',
+      stageLabel: 'won',
+      stage: { id: 'won-stage', pipelineId: 'pipeline_1', isWon: true, isLost: false },
+      message: 'Cannot move to a won stage without setting status to won',
+    },
+    {
+      status: 'open',
+      stageLabel: 'lost',
+      stage: { id: 'lost-stage', pipelineId: 'pipeline_1', isWon: false, isLost: true },
+      message: 'Cannot move to a lost stage without setting status to lost',
+    },
+  ])(
+    'rejects creating an opportunity with a mismatched $stageLabel stage and status',
+    async ({ status, stage, message }) => {
+      mockStageFindFirst.mockResolvedValue(stage);
+
+      await expect(
+        createOpportunity({ ...createInput, stageId: stage.id, status })
+      ).rejects.toMatchObject({ statusCode: 400, message });
+
+      expect(mockOppCreate).not.toHaveBeenCalled();
+    }
+  );
+
   it('throws 401 when unauthenticated', async () => {
     mockNoAuth();
     await expect(createOpportunity(createInput)).rejects.toThrow('Unauthenticated');
@@ -565,6 +596,72 @@ describe('Opportunity service - updateOpportunity', () => {
       include: { pipeline: true },
     });
   });
+
+  it.each([
+    {
+      stageLabel: 'won',
+      stage: { id: 'won-stage', pipelineId: 'pipeline_1', isWon: true, isLost: false },
+      message: 'Cannot move to a won stage without setting status to won',
+    },
+    {
+      stageLabel: 'lost',
+      stage: { id: 'lost-stage', pipelineId: 'pipeline_1', isWon: false, isLost: true },
+      message: 'Cannot move to a lost stage without setting status to lost',
+    },
+  ])(
+    'rejects moving an open opportunity to a $stageLabel stage without a matching status',
+    async ({ stage, message }) => {
+      mockOppFindFirst.mockResolvedValue({
+        id: oppId,
+        organizationId: orgId,
+        pipelineId: 'pipeline_1',
+        stageId: null,
+        title: 'Test Deal',
+        status: 'open',
+      });
+      mockStageFindFirst.mockResolvedValue(stage);
+
+      await expect(
+        updateOpportunity(oppId, { stageId: stage.id } as OpportunityUpdateInput)
+      ).rejects.toMatchObject({ statusCode: 400, message });
+
+      expect(mockOppUpdate).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    {
+      stageLabel: 'won',
+      currentStatus: 'won',
+      stage: { id: 'won-stage', isWon: true, isLost: false },
+      message: 'Cannot move to a won stage without setting status to won',
+    },
+    {
+      stageLabel: 'lost',
+      currentStatus: 'lost',
+      stage: { id: 'lost-stage', isWon: false, isLost: true },
+      message: 'Cannot move to a lost stage without setting status to lost',
+    },
+  ])(
+    'rejects changing status away from the current $stageLabel stage',
+    async ({ currentStatus, stage, message }) => {
+      mockOppFindFirst.mockResolvedValue({
+        id: oppId,
+        organizationId: orgId,
+        pipelineId: 'pipeline_1',
+        stageId: stage.id,
+        title: 'Test Deal',
+        status: currentStatus,
+        stage,
+      });
+
+      await expect(
+        updateOpportunity(oppId, { status: 'open' } as OpportunityUpdateInput)
+      ).rejects.toMatchObject({ statusCode: 400, message });
+
+      expect(mockOppUpdate).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('Opportunity service - deleteOpportunity', () => {

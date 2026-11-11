@@ -1,6 +1,10 @@
 'use server';
 
 import { prisma } from '@/lib/db';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -323,6 +327,7 @@ export async function convertLead(
 
       return {
         alreadyConverted: false,
+        previousLeadStatus: lead.status,
         opportunity: {
           id: opportunity.id,
           organizationId: opportunity.organizationId,
@@ -348,5 +353,27 @@ export async function convertLead(
     { maxWait: 5000, timeout: 10000 }
   );
 
-  return result as LeadConversionResult;
+  const conversion = result as LeadConversionResult & { previousLeadStatus?: string };
+  if (!conversion.alreadyConverted) {
+    await emitWorkflowEvent({
+      type: 'record.created',
+      recordType: 'Opportunity',
+      recordId: conversion.opportunity.id,
+    });
+    await emitWorkflowEvents([
+      { type: 'record.updated', recordType: 'Lead', recordId: conversion.lead.id },
+      {
+        type: 'record.status_changed',
+        recordType: 'Lead',
+        recordId: conversion.lead.id,
+        previousStatus: conversion.previousLeadStatus ?? null,
+      },
+    ]);
+  }
+
+  const publicResult = { ...conversion } as LeadConversionResult & {
+    previousLeadStatus?: string;
+  };
+  delete publicResult.previousLeadStatus;
+  return publicResult;
 }

@@ -53,6 +53,11 @@ vi.mock('next/headers', () => ({
   cookies: vi.fn(),
 }));
 
+vi.mock('@/lib/services/automation/run-workflow-service', () => ({
+  emitWorkflowEvent: vi.fn(async () => ({})),
+  emitWorkflowEvents: vi.fn(async () => []),
+}));
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '@/lib/db';
 import { requirePermission, requireOrganization } from '@/lib/permissions';

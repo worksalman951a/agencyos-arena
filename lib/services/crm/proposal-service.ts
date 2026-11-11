@@ -2,6 +2,10 @@
 
 import { prisma } from '@/lib/db';
 import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
+import {
   allocateDocumentNumber,
   type PrismaTransactionClient,
 } from '@/lib/services/settings/document-numbering';
@@ -474,6 +478,12 @@ export async function createProposal(
     organizationId,
   });
 
+  await emitWorkflowEvent({
+    type: 'record.created',
+    recordType: 'Proposal',
+    recordId: proposal.id,
+  });
+
   return serializeProposal(proposal as ProposalWithRelations);
 }
 
@@ -630,6 +640,20 @@ export async function updateProposal(
     },
     organizationId,
   });
+
+  await emitWorkflowEvents([
+    { type: 'record.updated', recordType: 'Proposal', recordId: proposal.id },
+    ...(existing.status !== proposal.status
+      ? [
+          {
+            type: 'record.status_changed',
+            recordType: 'Proposal',
+            recordId: proposal.id,
+            previousStatus: existing.status,
+          },
+        ]
+      : []),
+  ]);
 
   return serializeProposal(proposal as ProposalWithRelations);
 }

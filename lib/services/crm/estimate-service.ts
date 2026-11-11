@@ -1,6 +1,10 @@
 'use server';
 
 import { prisma } from '@/lib/db';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -282,6 +286,12 @@ export async function createEstimate(input: EstimateCreateInput): Promise<Estima
     email?: string | null;
   };
 
+  await emitWorkflowEvent({
+    type: 'record.created',
+    recordType: 'Estimate',
+    recordId: estimate.id,
+  });
+
   return serializeEstimate(estimate, {
     id: c.id,
     firstName: c.firstName ?? null,
@@ -378,6 +388,20 @@ export async function updateEstimate(
   });
 
   const contactsMap = await resolveContactsById(organizationId, [estimate.clientId]);
+  await emitWorkflowEvents([
+    { type: 'record.updated', recordType: 'Estimate', recordId: estimate.id },
+    ...(existing.status !== estimate.status
+      ? [
+          {
+            type: 'record.status_changed',
+            recordType: 'Estimate',
+            recordId: estimate.id,
+            previousStatus: existing.status,
+          },
+        ]
+      : []),
+  ]);
+
   return serializeEstimate(estimate, contactsMap.get(estimate.clientId) ?? null);
 }
 
@@ -491,6 +515,21 @@ export async function convertEstimateToInvoice(id: string, input: EstimateConver
     },
     organizationId,
   });
+
+  await emitWorkflowEvent({
+    type: 'record.created',
+    recordType: 'Invoice',
+    recordId: result.invoiceId,
+  });
+  await emitWorkflowEvents([
+    { type: 'record.updated', recordType: 'Estimate', recordId: id },
+    {
+      type: 'record.status_changed',
+      recordType: 'Estimate',
+      recordId: id,
+      previousStatus: 'accepted',
+    },
+  ]);
 
   return {
     estimateId: id,

@@ -1,6 +1,10 @@
 'use server';
 
 import { prisma } from '@/lib/db';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -61,6 +65,29 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
     email: result.user.email ?? '',
     role: user.role ?? 'employee',
   };
+}
+
+/** Enforce consistency between terminal stages and opportunity status. */
+function assertOpportunityStageStatusConsistency(
+  stage: { isWon?: boolean; isLost?: boolean } | null | undefined,
+  status: string
+): void {
+  if (stage?.isWon && status !== 'won') {
+    const error = new Error('Cannot move to a won stage without setting status to won') as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 400;
+    throw error;
+  }
+  if (stage?.isLost && status !== 'lost') {
+    const error = new Error(
+      'Cannot move to a lost stage without setting status to lost'
+    ) as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 400;
+    throw error;
+  }
 }
 
 /** Create an audit log entry */
@@ -432,6 +459,7 @@ export async function createOpportunity(input: OpportunityCreateInput) {
       error.statusCode = 404;
       throw error;
     }
+    assertOpportunityStageStatusConsistency(stage, input.status);
   }
 
   const opportunity = await prisma.opportunity.create({
@@ -471,6 +499,12 @@ export async function createOpportunity(input: OpportunityCreateInput) {
       ownerId: opportunity.ownerId,
     },
     organizationId,
+  });
+
+  await emitWorkflowEvent({
+    type: 'record.created',
+    recordType: 'Opportunity',
+    recordId: opportunity.id,
   });
 
   return serializeOpportunity(opportunity);
@@ -556,6 +590,7 @@ export async function updateOpportunity(id: string, input: OpportunityUpdateInpu
 
   // Validate stage membership if stageId is provided — stage must belong
   // to the same organization (via its pipeline).
+  let targetStage = existing.stage as { isWon?: boolean; isLost?: boolean } | null;
   if (input.stageId !== undefined && input.stageId !== null) {
     const pipelineId = input.pipelineId ?? existing.pipelineId;
     const stage = await prisma.pipelineStage.findFirst({
@@ -576,35 +611,10 @@ export async function updateOpportunity(id: string, input: OpportunityUpdateInpu
       error.statusCode = 404;
       throw error;
     }
+    targetStage = stage;
   }
 
-  // Prevent inconsistent stage/status transitions
-  if (input.stageId !== undefined && input.stageId !== null) {
-    const stage = await prisma.pipelineStage.findFirst({
-      where: {
-        id: input.stageId,
-        pipeline: { organizationId },
-      },
-    });
-    if (stage?.isWon && input.status !== undefined && input.status !== 'won') {
-      const error = new Error(
-        'Cannot move to a won stage without setting status to won'
-      ) as Error & {
-        statusCode?: number;
-      };
-      error.statusCode = 400;
-      throw error;
-    }
-    if (stage?.isLost && input.status !== undefined && input.status !== 'lost') {
-      const error = new Error(
-        'Cannot move to a lost stage without setting status to lost'
-      ) as Error & {
-        statusCode?: number;
-      };
-      error.statusCode = 400;
-      throw error;
-    }
-  }
+  assertOpportunityStageStatusConsistency(targetStage, input.status ?? existing.status);
 
   const opportunity = await prisma.opportunity.update({
     where: { id },
@@ -669,6 +679,20 @@ export async function updateOpportunity(id: string, input: OpportunityUpdateInpu
     },
     organizationId,
   });
+
+  await emitWorkflowEvents([
+    { type: 'record.updated', recordType: 'Opportunity', recordId: opportunity.id },
+    ...(existing.status !== opportunity.status
+      ? [
+          {
+            type: 'record.status_changed',
+            recordType: 'Opportunity',
+            recordId: opportunity.id,
+            previousStatus: existing.status,
+          },
+        ]
+      : []),
+  ]);
 
   return serializeOpportunity(opportunity);
 }

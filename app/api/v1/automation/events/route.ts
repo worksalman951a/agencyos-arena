@@ -2,11 +2,10 @@
  * Workflow event HTTP dispatch is intentionally disabled.
  *
  * This route previously trusted caller-supplied record snapshots and used a
- * read permission to execute actions that write records. There are currently no
- * trusted business-event producers in the application, so accepting an HTTP
- * event would let callers forge event origins and record fields. Re-enable only
- * after events are emitted by trusted server-side domain services and their
- * affected-record authorization is verified.
+ * read permission to execute actions that write records. Business-domain
+ * services now emit validated, tenant-scoped events internally. The HTTP route
+ * nevertheless stays disabled: events must originate from those server-side
+ * services, never from a caller-supplied payload.
  */
 
 import { NextResponse } from 'next/server';
@@ -18,7 +17,7 @@ export async function POST(_request: Request) {
   return NextResponse.json(
     {
       error:
-        'Workflow event dispatch is unavailable through the HTTP API until trusted server-side event producers are configured.',
+        'Workflow event dispatch is disabled through the HTTP API; business events are produced by trusted server-side services.',
     },
     { status: 410 }
   );

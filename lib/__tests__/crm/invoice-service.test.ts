@@ -63,11 +63,20 @@ vi.mock('@/lib/services/settings/document-numbering', () => ({
   allocateDocumentNumber: vi.fn(),
 }));
 
+vi.mock('@/lib/services/automation/run-workflow-service', () => ({
+  emitWorkflowEvent: vi.fn(async () => ({})),
+  emitWorkflowEvents: vi.fn(async () => []),
+}));
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '@/lib/db';
 import { requirePermission, requireOrganization } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import {
   listInvoices,
   getInvoice,
@@ -101,6 +110,8 @@ const mockInvoiceFindUniqueOrThrow = prisma.invoice.findUniqueOrThrow as unknown
   typeof vi.fn
 >;
 const mockAllocateNumber = allocateDocumentNumber as unknown as ReturnType<typeof vi.fn>;
+const mockEmitWorkflowEvent = emitWorkflowEvent as unknown as ReturnType<typeof vi.fn>;
+const mockEmitWorkflowEvents = emitWorkflowEvents as unknown as ReturnType<typeof vi.fn>;
 
 const baseInvoice = {
   id: 'inv-1',
@@ -301,6 +312,11 @@ describe('createInvoice', () => {
       })
     );
     expect(result.id).toBe('inv-new');
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledExactlyOnceWith({
+      type: 'record.created',
+      recordType: 'Invoice',
+      recordId: 'inv-new',
+    });
 
     // Numbering is delegated to the atomic allocator, inside the transaction,
     // instead of scanning for the last number (which could race).
@@ -572,10 +588,20 @@ describe('recordPayment', () => {
     });
 
     expect(result.invoiceStatus).toBe('paid');
+    expect(result).not.toHaveProperty('previousInvoiceStatus');
     expect(result.payment).toBeDefined();
     expect(result.payment.amount).toBe('100.00');
     expect(result.payment.method).toBe('bank_transfer');
     expect(result.payment.reference).toBe('REF-123');
+    expect(mockEmitWorkflowEvents).toHaveBeenCalledExactlyOnceWith([
+      { type: 'record.updated', recordType: 'Invoice', recordId: 'inv-1' },
+      {
+        type: 'record.status_changed',
+        recordType: 'Invoice',
+        recordId: 'inv-1',
+        previousStatus: 'draft',
+      },
+    ]);
   });
 
   it('rejects payment on voided invoice', async () => {
@@ -728,6 +754,7 @@ describe('recordPayment', () => {
     expect(result.balance).toBe('80.00');
     expect(mockPaymentCreate).not.toHaveBeenCalled();
     expect(mockInvoiceUpdate).not.toHaveBeenCalled();
+    expect(mockEmitWorkflowEvents).not.toHaveBeenCalled();
   });
 
   it('treats a soft-deleted invoice as missing', async () => {

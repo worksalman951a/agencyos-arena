@@ -6,6 +6,11 @@
  * `converted`: every conversion failed with a 500 and stranded the estimate.
  */
 
+vi.mock('@/lib/services/automation/run-workflow-service', () => ({
+  emitWorkflowEvent: vi.fn(async () => ({})),
+  emitWorkflowEvents: vi.fn(async () => []),
+}));
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/db', () => ({
@@ -37,6 +42,10 @@ import { prisma } from '@/lib/db';
 import { requirePermission, requireOrganization } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
+import {
+  emitWorkflowEvent,
+  emitWorkflowEvents,
+} from '@/lib/services/automation/run-workflow-service';
 import { allocateDocumentNumber } from '@/lib/services/settings/document-numbering';
 import { convertEstimateToInvoice } from '@/lib/services/crm/estimate-service';
 
@@ -51,6 +60,8 @@ const mockRequireOrganization = requireOrganization as unknown as ReturnType<typ
 const mockGetSession = auth.api.getSession as unknown as ReturnType<typeof vi.fn>;
 const mockCookies = cookies as unknown as ReturnType<typeof vi.fn>;
 const mockAllocateNumber = allocateDocumentNumber as unknown as ReturnType<typeof vi.fn>;
+const mockEmitWorkflowEvent = emitWorkflowEvent as unknown as ReturnType<typeof vi.fn>;
+const mockEmitWorkflowEvents = emitWorkflowEvents as unknown as ReturnType<typeof vi.fn>;
 
 const estimate = {
   id: 'est-1',
@@ -118,6 +129,20 @@ describe('convertEstimateToInvoice', () => {
       where: { id: 'est-1' },
       data: { status: 'converted' },
     });
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledExactlyOnceWith({
+      type: 'record.created',
+      recordType: 'Invoice',
+      recordId: 'inv-9',
+    });
+    expect(mockEmitWorkflowEvents).toHaveBeenCalledExactlyOnceWith([
+      { type: 'record.updated', recordType: 'Estimate', recordId: 'est-1' },
+      {
+        type: 'record.status_changed',
+        recordType: 'Estimate',
+        recordId: 'est-1',
+        previousStatus: 'accepted',
+      },
+    ]);
   });
 
   it('rejects an estimate that is not accepted without touching it', async () => {
