@@ -40,7 +40,11 @@ export function PortalLoginForm({
 
     try {
       if (mode === 'signup') {
-        await signUpEmail({ email, password, name: name || undefined });
+        // Better Auth requires a non-empty `name` on sign-up (it rejects
+        // `undefined` with a raw schema error). The field is optional in this form,
+        // so fall back to the local part of the address rather than failing.
+        const displayName = name.trim() || email.trim().split('@')[0] || 'Client';
+        await signUpEmail({ email, password, name: displayName });
         // Better Auth does not auto sign in for this project (autoSignIn: false).
         await signInEmail({ email, password });
       } else {
