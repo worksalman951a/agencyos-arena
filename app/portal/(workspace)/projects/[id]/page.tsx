@@ -9,14 +9,32 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { CommentForm } from '@/components/portal/comment-form';
 import { getPortalProject } from '@/lib/services/portal/portal-workspace-service';
+import { listClientVisibleComments } from '@/lib/services/portal/client-comment-service';
+import { requireGrantedResource, requirePortalAccess } from '@/lib/portal/access-control';
+import { hasCapability } from '@/lib/portal/capabilities';
 import { loadPortalPageData } from '@/lib/portal/page-data';
 
 export const dynamic = 'force-dynamic';
 
 export default async function PortalProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const result = await loadPortalPageData(() => getPortalProject(id));
+  const result = await loadPortalPageData(async () => {
+    // The conversation is part of the project page: client-visible comments only,
+    // and the form is offered only when both the capability and this project's
+    // grant allow commenting.
+    const context = await requirePortalAccess();
+    const granted = await requireGrantedResource(context, 'project', id);
+    const project = await getPortalProject(id);
+    const comments = await listClientVisibleComments(context, 'project', id);
+
+    return {
+      project,
+      comments,
+      canComment: hasCapability(context, 'comment') && granted.grant.canComment,
+    };
+  });
 
   if (!result.ok) {
     // A record the client may not see answers HTTP 404, indistinguishable from a
@@ -35,7 +53,7 @@ export default async function PortalProjectPage({ params }: { params: Promise<{ 
     );
   }
 
-  const project = result.data;
+  const { project, comments, canComment } = result.data;
   const progress =
     project.milestoneCount === 0
       ? 0
@@ -101,6 +119,33 @@ export default async function PortalProjectPage({ params }: { params: Promise<{ 
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section className="rounded-lg border bg-background p-4">
+        <h3 className="text-lg font-semibold">Conversation</h3>
+        {comments.length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">No comments yet.</p>
+        ) : (
+          <ul className="mt-2 space-y-2" data-testid="project-comments">
+            {comments.map((comment) => (
+              <li key={comment.id} className="rounded-md bg-muted/40 p-3 text-sm">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  {comment.authorName} · {comment.createdAt.toLocaleString()}
+                </p>
+                <p className="mt-1">{comment.body}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+        {canComment ? (
+          <div className="mt-4">
+            <CommentForm resourceType="project" resourceId={project.id} canComment={canComment} />
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Commenting is not enabled for this project.
+          </p>
         )}
       </section>
 

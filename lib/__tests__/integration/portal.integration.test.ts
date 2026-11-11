@@ -575,6 +575,12 @@ describeIfDb('Client Portal integration (real PostgreSQL)', () => {
       expect([301, 302, 303, 307, 308]).toContain(dashboard.status);
     });
 
+    it('sends an unauthenticated portal visit to the portal login, not the team login', async () => {
+      const response = await fetch(`${SERVER_URL}/portal`, { redirect: 'manual' });
+      expect([302, 307]).toContain(response.status);
+      expect(response.headers.get('location')).toContain('/portal/login');
+    });
+
     it('returns 401 for a portal request without a session', async () => {
       expect((await api(null, '/api/v1/portal/session')).status).toBe(401);
       expect((await api(null, '/api/v1/portal/approvals')).status).toBe(401);
@@ -864,9 +870,11 @@ describeIfDb('Client Portal integration (real PostgreSQL)', () => {
       expect(clientBodies).toContain('Excited to get started!');
       expect(clientBodies).not.toContain('Internal: this client is price sensitive');
 
-      // …and it stays invisible on the rendered page too.
+      // The project page renders the client-visible conversation…
       const page = await api(clientToken, `/portal/projects/${projectSharedId}`);
       expect(page.status).toBe(200);
+      expect(page.text).toContain('Excited to get started!');
+      // …and the internal note stays invisible on the rendered page too.
       expect(page.text).not.toContain('price sensitive');
 
       // The team still sees it in their own inbox view.

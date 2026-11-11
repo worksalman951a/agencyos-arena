@@ -177,16 +177,14 @@ test.describe('Client portal end-to-end journeys', () => {
     // Either the invitation re-renders signed in (the happy path) or the form
     // reports why it could not create the account — asserted below.
     const acceptButton = page.getByTestId('accept-invitation');
+    // The form's own error banner, never Next's empty route announcer.
+    const formError = page.locator('form [role="alert"]');
     await Promise.race([
       acceptButton.waitFor({ state: 'visible', timeout: 45_000 }).catch(() => undefined),
-      page
-        .getByRole('alert')
-        .waitFor({ state: 'visible', timeout: 45_000 })
-        .catch(() => undefined),
+      formError.waitFor({ state: 'visible', timeout: 45_000 }).catch(() => undefined),
     ]);
 
-    const alertText = await page
-      .locator('[role="alert"]')
+    const alertText = await formError
       .first()
       .textContent()
       .catch(() => null);
@@ -287,7 +285,9 @@ test.describe('Client portal end-to-end journeys', () => {
 
     // The decision form is gone: a decided request is terminal.
     await expect(page.getByTestId('approve-button')).toHaveCount(0);
-    await expect(page.getByText('Approved from the E2E journey.')).toBeVisible();
+    await expect(page.getByTestId('approval-decision')).toContainText(
+      'Approved from the E2E journey.'
+    );
 
     // History shows both the request (by the team) and the decision (by the client).
     const history = page.getByTestId('approval-history');
@@ -369,7 +369,9 @@ test.describe('Client portal end-to-end journeys', () => {
     await page.getByLabel('E-mail').fill(fixture.email);
     await page.getByLabel('Password').fill(fixture.password);
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page.getByRole('alert')).toBeVisible({ timeout: 20_000 });
+    const formError = page.locator('form [role="alert"]');
+    await expect(formError).toBeVisible({ timeout: 20_000 });
+    await expect(formError).not.toBeEmpty();
     await expect(page).toHaveURL(/\/portal\/login/);
 
     await page.context().close();
