@@ -19,13 +19,8 @@ import { listContacts } from '@/lib/services/crm/contact-service';
 import { getCurrentPermissions } from '@/lib/current-user';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
+import { INVOICE_STATUS_TRANSITIONS } from '@/lib/schemas/crm/invoice-status';
 import { EditInvoiceForm, type EditableInvoice } from './EditInvoiceForm';
-
-/** Mirrors VALID_TRANSITIONS in the invoice service. */
-const STATUS_TRANSITIONS: Record<string, string[]> = {
-  draft: ['sent', 'paid', 'voided'],
-  sent: ['paid', 'voided'],
-};
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -84,7 +79,8 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
     );
   }
 
-  const allowedTransitions = STATUS_TRANSITIONS[invoice.status];
+  const allowedTransitions =
+    INVOICE_STATUS_TRANSITIONS[invoice.status as keyof typeof INVOICE_STATUS_TRANSITIONS];
   if (!allowedTransitions) {
     return (
       <EditBlocked

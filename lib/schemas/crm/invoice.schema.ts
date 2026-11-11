@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
+import {
+  INVOICE_INITIAL_STATUSES,
+  INVOICE_MANUAL_UPDATE_STATUSES,
+} from '@/lib/schemas/crm/invoice-status';
 
 /**
  * Zod validation schemas for Invoice CRUD operations.
@@ -11,15 +15,17 @@ import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
 const baseInvoiceSchema = z.object({
   clientId: z.string().cuid().optional().nullable(),
   title: z.string().min(1, 'Title is required').max(200),
-  status: z.string().min(1).max(50).default('draft'),
   currency: z.string().min(1).max(10).default('USD'),
   dueDate: z.string().optional().nullable(),
   notes: z.string().max(5000).optional().nullable(),
 });
 
-export const invoiceCreateSchema = baseInvoiceSchema.strict();
+export const invoiceCreateSchema = baseInvoiceSchema
+  .extend({ status: z.enum(INVOICE_INITIAL_STATUSES).default('draft') })
+  .strict();
 
 export const invoiceUpdateSchema = baseInvoiceSchema
+  .extend({ status: z.enum(INVOICE_MANUAL_UPDATE_STATUSES).optional() })
   .partial()
   .strict()
   .refine(

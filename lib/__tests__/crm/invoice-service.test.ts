@@ -76,7 +76,11 @@ import {
   recordPayment,
   deleteInvoice,
 } from '@/lib/services/crm/invoice-service';
-import { invoiceLineItemSchema } from '@/lib/schemas/crm/invoice.schema';
+import {
+  invoiceCreateSchema,
+  invoiceLineItemSchema,
+  invoiceUpdateSchema,
+} from '@/lib/schemas/crm/invoice.schema';
 import { allocateDocumentNumber } from '@/lib/services/settings/document-numbering';
 
 const mockRequirePermission = requirePermission as unknown as ReturnType<typeof vi.fn>;
@@ -177,6 +181,24 @@ describe('Money math and validation', () => {
       taxRate: '8',
     });
     expect(result.success).toBe(false);
+  });
+
+  it('defaults new invoices to draft and permits only draft or sent creation states', () => {
+    expect(invoiceCreateSchema.parse({ title: 'Draft' }).status).toBe('draft');
+    expect(invoiceCreateSchema.parse({ title: 'Already sent', status: 'sent' }).status).toBe(
+      'sent'
+    );
+    for (const status of ['paid', 'voided', 'overdue', 'unknown']) {
+      expect(invoiceCreateSchema.safeParse({ title: 'Invalid', status }).success).toBe(false);
+    }
+  });
+
+  it('accepts manual update targets and rejects payment/aging-managed statuses', () => {
+    expect(invoiceUpdateSchema.safeParse({ status: 'sent' }).success).toBe(true);
+    expect(invoiceUpdateSchema.safeParse({ status: 'voided' }).success).toBe(true);
+    for (const status of ['paid', 'overdue', 'unknown']) {
+      expect(invoiceUpdateSchema.safeParse({ status }).success).toBe(false);
+    }
   });
 });
 
@@ -371,6 +393,15 @@ describe('createInvoice', () => {
     expect(mockRequirePermission).toHaveBeenCalledWith('user-1', 'org-1', 'invoice.create');
   });
 
+  it('rejects non-initial statuses at the service boundary before writing', async () => {
+    await expect(
+      createInvoice({ title: 'Already paid', status: 'paid', currency: 'USD' } as never, lineItems)
+    ).rejects.toMatchObject({ statusCode: 400 });
+
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockInvoiceCreate).not.toHaveBeenCalled();
+  });
+
   it('returns 404 for cross-organization client', async () => {
     mockContactFindFirst.mockResolvedValue(null);
     await expect(
@@ -449,11 +480,70 @@ describe('updateInvoice', () => {
     expect(mockInvoiceUpdate).toHaveBeenCalled();
   });
 
+  it('allows a draft invoice to transition to sent', async () => {
+    mockInvoiceFindFirst.mockResolvedValue(baseInvoice);
+    mockInvoiceUpdate.mockResolvedValue({ ...baseInvoice, status: 'sent' });
+
+    const result = await updateInvoice('inv-1', { status: 'sent' }, []);
+
+    expect(result.status).toBe('sent');
+    expect(mockInvoiceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'sent' }) })
+    );
+  });
+
+  it('allows a sent invoice to transition to voided', async () => {
+    mockInvoiceFindFirst.mockResolvedValue({ ...baseInvoice, status: 'sent' });
+    mockInvoiceUpdate.mockResolvedValue({ ...baseInvoice, status: 'voided' });
+
+    const result = await updateInvoice('inv-1', { status: 'voided' }, []);
+
+    expect(result.status).toBe('voided');
+  });
+
+  it('rejects reverting a sent invoice to draft', async () => {
+    mockInvoiceFindFirst.mockResolvedValue({ ...baseInvoice, status: 'sent' });
+    await expect(updateInvoice('inv-1', { status: 'draft' }, [])).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    expect(mockInvoiceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects manual paid/overdue transitions before reading or writing invoices', async () => {
+    for (const status of ['paid', 'overdue']) {
+      await expect(updateInvoice('inv-1', { status } as never, [])).rejects.toMatchObject({
+        statusCode: 400,
+      });
+    }
+
+    expect(mockInvoiceFindFirst).not.toHaveBeenCalled();
+    expect(mockInvoiceUpdate).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid status transition', async () => {
     mockInvoiceFindFirst.mockResolvedValue({ ...baseInvoice, status: 'paid' });
     await expect(updateInvoice('inv-1', { status: 'draft' }, [])).rejects.toMatchObject({
       statusCode: 400,
     });
+  });
+
+  it('rejects an unknown status at the service boundary without writing', async () => {
+    mockInvoiceFindFirst.mockResolvedValue(baseInvoice);
+    await expect(updateInvoice('inv-1', { status: 'corrupt' as never }, [])).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    expect(mockInvoiceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not update an invoice belonging to another organization', async () => {
+    mockInvoiceFindFirst.mockResolvedValue(null);
+    await expect(updateInvoice('inv-other-org', { title: 'Tampered' }, [])).rejects.toMatchObject({
+      statusCode: 404,
+    });
+    expect(mockInvoiceFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'inv-other-org', organizationId: 'org-1' } })
+    );
+    expect(mockInvoiceUpdate).not.toHaveBeenCalled();
   });
 });
 
