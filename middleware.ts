@@ -21,11 +21,26 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
 // Public paths that don't require authentication
-const PUBLIC_PATHS = ['/', '/login', '/register', '/invite', '/share', '/api/auth', '/api/health'];
+//
+// `/portal/invite` and `/portal/login` are public because an invitee has no
+// session yet; the rest of `/portal` requires a session, and the portal layout
+// additionally requires an active client access row.
+const PUBLIC_PATHS = [
+  '/',
+  '/login',
+  '/register',
+  '/invite',
+  '/share',
+  '/api/auth',
+  '/api/health',
+  '/portal/invite',
+  '/portal/login',
+];
 
 // Paths that require authentication (protected app routes)
 const PROTECTED_PATH_PREFIXES = [
   '/dashboard',
+  '/portal',
   '/crm',
   '/sales',
   '/finance',

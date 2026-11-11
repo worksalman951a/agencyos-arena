@@ -24,6 +24,13 @@ model User {
   organizationId String?
   role           String    @default("employee")
   status         String    @default("active")
+  /// "internal" (team member) or "client" (client-portal identity).
+  ///
+  /// Client identities are created only by accepting a ClientInvitation. They
+  /// have no organization membership and no UserRole rows, so every internal
+  /// authorization path (requireOrganization / RBAC) rejects them by
+  /// construction. See lib/portal/access-control.ts.
+  userType       String    @default("internal")
   mfaEnabled     Boolean   @default(false)
   mfaSecret      String?
   lastLoginAt    DateTime?
@@ -35,29 +42,38 @@ model User {
   verifications Verification[]
   auditLogs     AuditLog[]
 
-  createdContacts   Contact[]         @relation("CreatedContact")
-  updatedContacts   Contact[]         @relation("UpdatedContact")
-  createdProposals  Proposal[]        @relation("CreatedProposal")
-  updatedProposals  Proposal[]        @relation("UpdatedProposal")
-  createdQuotations Quotation[]       @relation("CreatedQuotation")
-  updatedQuotations Quotation[]       @relation("UpdatedQuotation")
-  createdInvoices   Invoice[]         @relation("CreatedInvoice")
-  updatedInvoices   Invoice[]         @relation("UpdatedInvoice")
-  createdProjects   Project[]         @relation("CreatedProject")
-  updatedProjects   Project[]         @relation("UpdatedProject")
-  createdPayments   Payment[]         @relation("CreatedPayment")
-  signedContracts   Contract[]
-  timeEntries       TimeEntry[]
-  projectFiles      ProjectFile[]
-  tasks             Task[]
-  notifications     Notification[]
+  createdContacts         Contact[]                @relation("CreatedContact")
+  updatedContacts         Contact[]                @relation("UpdatedContact")
+  createdProposals        Proposal[]               @relation("CreatedProposal")
+  updatedProposals        Proposal[]               @relation("UpdatedProposal")
+  createdQuotations       Quotation[]              @relation("CreatedQuotation")
+  updatedQuotations       Quotation[]              @relation("UpdatedQuotation")
+  createdInvoices         Invoice[]                @relation("CreatedInvoice")
+  updatedInvoices         Invoice[]                @relation("UpdatedInvoice")
+  createdProjects         Project[]                @relation("CreatedProject")
+  updatedProjects         Project[]                @relation("UpdatedProject")
+  createdPayments         Payment[]                @relation("CreatedPayment")
+  signedContracts         Contract[]
+  timeEntries             TimeEntry[]
+  projectFiles            ProjectFile[]
+  tasks                   Task[]
+  notifications           Notification[]
   notificationPreferences NotificationPreference[]
-  sentInvitations   Invitation[]      @relation("InvitationInviter")
-  createdApprovals  ProjectApproval[] @relation("CreatedProjectApproval")
-  taskComments      TaskComment[]
-  proposalVersions  ProposalVersion[] @relation("CreatedProposalVersion")
-  documentVersions  DocumentVersion[] @relation("CreatedDocumentVersion")
-  documentLinks     DocumentLink[]    @relation("CreatedDocumentLink")
+  sentInvitations         Invitation[]             @relation("InvitationInviter")
+  createdApprovals        ProjectApproval[]        @relation("CreatedProjectApproval")
+  taskComments            TaskComment[]
+  proposalVersions        ProposalVersion[]        @relation("CreatedProposalVersion")
+  documentVersions        DocumentVersion[]        @relation("CreatedDocumentVersion")
+  documentLinks           DocumentLink[]           @relation("CreatedDocumentLink")
+
+  // Client portal
+  clientAccess             ClientAccess?
+  sentClientInvitations    ClientInvitation[]    @relation("ClientInvitationInviter")
+  sharedClientGrants       ClientResourceGrant[] @relation("ClientGrantSharer")
+  requestedClientApprovals ClientApproval[]      @relation("ClientApprovalRequester")
+  respondedClientApprovals ClientApproval[]      @relation("ClientApprovalResponder")
+  clientApprovalEvents     ClientApprovalEvent[] @relation("ClientApprovalEventActor")
+  clientComments           ClientComment[]       @relation("ClientCommentAuthor")
 }
 
 model Session {
@@ -116,45 +132,53 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users              User[]
-  agencyAccounts     AgencyAccount[]
-  contacts           Contact[]
-  organizations      OrganizationAccount[]
-  leads              Lead[]
-  opportunities      Opportunity[]
-  pipelines          Pipeline[]
-  projects           Project[]
-  projectTemplates   ProjectTemplate[]
-  invoices           Invoice[]
-  estimates          Estimate[]
-  expenseItems       ExpenseItem[]
-  proposals          Proposal[]
-  quotations         Quotation[]
-  contracts          Contract[]
-  documents          Document[]
-  tasks              Task[]
-  timeEntries        TimeEntry[]
-  projectFiles       ProjectFile[]
-  milestones         Milestone[]
-  changeOrders       ChangeOrder[]
-  workflowRules      WorkflowRule[]
-  workflowExecutions WorkflowExecution[]
-  notifications      Notification[]
+  users                   User[]
+  agencyAccounts          AgencyAccount[]
+  contacts                Contact[]
+  organizations           OrganizationAccount[]
+  leads                   Lead[]
+  opportunities           Opportunity[]
+  pipelines               Pipeline[]
+  projects                Project[]
+  projectTemplates        ProjectTemplate[]
+  invoices                Invoice[]
+  estimates               Estimate[]
+  expenseItems            ExpenseItem[]
+  proposals               Proposal[]
+  quotations              Quotation[]
+  contracts               Contract[]
+  documents               Document[]
+  tasks                   Task[]
+  timeEntries             TimeEntry[]
+  projectFiles            ProjectFile[]
+  milestones              Milestone[]
+  changeOrders            ChangeOrder[]
+  workflowRules           WorkflowRule[]
+  workflowExecutions      WorkflowExecution[]
+  notifications           Notification[]
   notificationPreferences NotificationPreference[]
-  invitations        Invitation[]
-  auditLogs          AuditLog[]
-  customFields       CustomField[]
-  roles              Role[]
-  userRoles          UserRole[]
-  featureFlags       FeatureFlag[]
-  fileAssets         FileAsset[]
-  webhookEvents      WebhookEvent[]
-  projectApprovals   ProjectApproval[]
-  taskComments       TaskComment[]
-  proposalVersions   ProposalVersion[]
-  documentVersions   DocumentVersion[]
-  documentLinks      DocumentLink[]
-  signatures         Signature[]
+  invitations             Invitation[]
+  auditLogs               AuditLog[]
+  customFields            CustomField[]
+  roles                   Role[]
+  userRoles               UserRole[]
+  featureFlags            FeatureFlag[]
+  fileAssets              FileAsset[]
+  webhookEvents           WebhookEvent[]
+  projectApprovals        ProjectApproval[]
+  taskComments            TaskComment[]
+  proposalVersions        ProposalVersion[]
+  documentVersions        DocumentVersion[]
+  documentLinks           DocumentLink[]
+  signatures              Signature[]
+
+  // Client portal
+  clientAccesses       ClientAccess[]
+  clientInvitations    ClientInvitation[]
+  clientGrants         ClientResourceGrant[]
+  clientApprovals      ClientApproval[]
+  clientApprovalEvents ClientApprovalEvent[]
+  clientComments       ClientComment[]
 }
 
 model OrganizationAccount {
@@ -366,6 +390,10 @@ model Contact {
   creator          User?             @relation("CreatedContact", fields: [createdBy], references: [id], onDelete: SetNull)
   updater          User?             @relation("UpdatedContact", fields: [updatedBy], references: [id], onDelete: SetNull)
   projectApprovals ProjectApproval[]
+
+  // Client portal: a CRM contact is the client identity a portal login is bound to.
+  clientAccesses    ClientAccess[]
+  clientInvitations ClientInvitation[]
 }
 
 model AccountContact {
@@ -1069,4 +1097,211 @@ model TaskComment {
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([taskId, createdAt])
+}
+
+/// ============================================
+/// Client Portal (Phase 4C)
+/// ============================================
+///
+/// Design notes
+/// - A client identity is a `User` with `userType = "client"`, **no**
+///   `organizationId` and **no** `UserRole` rows. Internal authorization
+///   (organization membership + RBAC) therefore rejects client sessions by
+///   construction instead of relying on a negative permission list.
+/// - Visibility is an explicit allow-list: a client sees a resource only when a
+///   `ClientResourceGrant` names it. Holding an internal record id grants
+///   nothing.
+/// - Approvals recorded here keep the responding identity and an append-only
+///   event history. These are *not* legally certified e-signatures; the
+///   existing `Signature` audit trail is untouched and remains internal.
+
+/// One portal login per client contact (per organization).
+model ClientAccess {
+  id             String  @id @default(cuid())
+  organizationId String
+  /// Exactly one portal identity per user, so session resolution is unambiguous.
+  userId         String  @unique
+  contactId      String
+  accountId      String?
+  /// active | suspended | revoked
+  status         String  @default("active")
+  /// Informational label only; capabilities come from the flags below, never
+  /// from this string.
+  role           String  @default("client_viewer")
+
+  // Configurable capabilities. Defaults are least-privilege.
+  canViewInvoices  Boolean @default(false)
+  canDownloadFiles Boolean @default(false)
+  canComment       Boolean @default(false)
+  canApprove       Boolean @default(false)
+
+  invitedBy    String?
+  suspendedAt  DateTime?
+  revokedAt    DateTime?
+  lastAccessAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  grants    ClientResourceGrant[]
+  approvals ClientApproval[]
+  comments  ClientComment[]
+
+  @@unique([organizationId, contactId])
+  @@index([organizationId, status])
+}
+
+/// Client portal invitation.
+///
+/// Only the SHA-256 hash of the token is stored; the raw token is returned once
+/// to the administrator who created it. Mirrors the organization `Invitation`
+/// security properties but never grants organization membership or a role.
+model ClientInvitation {
+  id             String  @id @default(cuid())
+  organizationId String
+  email          String
+  contactId      String
+  accountId      String?
+  tokenHash      String  @unique
+  /// pending | accepted | revoked
+  status         String  @default("pending")
+
+  role             String  @default("client_viewer")
+  canViewInvoices  Boolean @default(false)
+  canDownloadFiles Boolean @default(false)
+  canComment       Boolean @default(false)
+  canApprove       Boolean @default(false)
+
+  expiresAt        DateTime
+  invitedBy        String?
+  acceptedAt       DateTime?
+  acceptedByUserId String?
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  inviter      User?        @relation("ClientInvitationInviter", fields: [invitedBy], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, email])
+  @@index([organizationId, status])
+}
+
+/// Explicit share of one internal resource with one client.
+///
+/// `resourceType` is validated in `lib/portal/resource-registry.ts`; a grant for
+/// a type the portal cannot render is rejected rather than silently ignored.
+model ClientResourceGrant {
+  id             String @id @default(cuid())
+  organizationId String
+  clientAccessId String
+  /// project | document | proposal | quotation | estimate | contract | invoice | file
+  resourceType   String
+  resourceId     String
+
+  canComment Boolean @default(false)
+  canApprove Boolean @default(false)
+  note       String?
+
+  sharedBy  String?
+  sharedAt  DateTime  @default(now())
+  revokedAt DateTime?
+  revokedBy String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientAccess ClientAccess @relation(fields: [clientAccessId], references: [id], onDelete: Cascade)
+  sharer       User?        @relation("ClientGrantSharer", fields: [sharedBy], references: [id], onDelete: SetNull)
+
+  @@unique([clientAccessId, resourceType, resourceId])
+  @@index([organizationId, resourceType, resourceId])
+  @@index([clientAccessId, revokedAt])
+}
+
+/// A client-facing approval request (proof / document / project deliverable).
+///
+/// Distinct from `ProjectApproval`, which stays the internal-only approval
+/// record: this one is bound to a client identity, requires an explicit grant on
+/// the resource, and carries its own immutable event history.
+model ClientApproval {
+  id             String  @id @default(cuid())
+  organizationId String
+  clientAccessId String
+  resourceType   String
+  resourceId     String
+  title          String
+  description    String?
+  /// pending | approved | changes_requested | cancelled
+  status         String  @default("pending")
+
+  dueAt        DateTime?
+  requestedBy  String?
+  respondedBy  String?
+  respondedAt  DateTime?
+  responseNote String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientAccess ClientAccess          @relation(fields: [clientAccessId], references: [id], onDelete: Cascade)
+  requester    User?                 @relation("ClientApprovalRequester", fields: [requestedBy], references: [id], onDelete: SetNull)
+  responder    User?                 @relation("ClientApprovalResponder", fields: [respondedBy], references: [id], onDelete: SetNull)
+  events       ClientApprovalEvent[]
+
+  @@index([organizationId, status])
+  @@index([clientAccessId, status])
+  @@index([organizationId, resourceType, resourceId])
+}
+
+/// Append-only approval history (who did what, when, from which side).
+model ClientApprovalEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  approvalId     String
+  /// internal | client | system
+  actorType      String
+  actorUserId    String?
+  /// requested | approved | changes_requested | cancelled | commented
+  action         String
+  note           String?
+  createdAt      DateTime @default(now())
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  approval     ClientApproval @relation(fields: [approvalId], references: [id], onDelete: Cascade)
+  actor        User?          @relation("ClientApprovalEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([approvalId, createdAt])
+}
+
+/// Feedback on a shared resource.
+///
+/// `visibility` separates internal team notes from client-visible conversation:
+/// a client only ever reads `client` rows on resources it was granted, and can
+/// only ever write `client` rows.
+model ClientComment {
+  id             String   @id @default(cuid())
+  organizationId String
+  /// Null only if the client access was deleted afterwards (SetNull below).
+  clientAccessId String?
+  resourceType   String
+  resourceId     String
+  authorUserId   String
+  /// internal | client
+  authorType     String
+  /// client | internal
+  visibility     String
+  body           String
+  createdAt      DateTime @default(now())
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientAccess ClientAccess? @relation(fields: [clientAccessId], references: [id], onDelete: SetNull)
+  author       User          @relation("ClientCommentAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, resourceType, resourceId, createdAt])
+  @@index([clientAccessId, createdAt])
 }

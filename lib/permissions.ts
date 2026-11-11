@@ -81,13 +81,19 @@ export async function requirePermission(
 
 /**
  * Require organization membership; throws if the user has no org.
+ *
+ * Client-portal identities (`userType = "client"`) are rejected here even if a
+ * row somehow carries an organization id. That makes this function the single
+ * place that guarantees a client session can never satisfy an internal
+ * organization check — see lib/portal/access-control.ts for the client-side
+ * equivalent.
  */
 export async function requireOrganization(userId: string): Promise<{ organizationId: string }> {
   const user = (await prisma.user.findUnique({
     where: { id: userId },
-    select: { organizationId: true },
-  })) as { organizationId: string } | null;
-  if (!user?.organizationId) {
+    select: { organizationId: true, userType: true },
+  })) as { organizationId: string | null; userType?: string } | null;
+  if (!user || user.userType === 'client' || !user.organizationId) {
     const error = new Error('Forbidden: no organization') as Error & {
       statusCode?: number;
     };

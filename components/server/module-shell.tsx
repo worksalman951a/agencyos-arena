@@ -30,6 +30,14 @@ export async function ModuleShell({ children }: { children: React.ReactNode }) {
     redirect('/login');
   }
 
+  // Client-portal identities live in a different surface entirely: they hold no
+  // organization membership and no internal permissions, so every internal page
+  // would answer 403. Send them to their own workspace instead of rendering a
+  // shell with nothing in it.
+  if (user.userType === 'client') {
+    redirect('/portal');
+  }
+
   const [permissions, branding] = await Promise.all([getCurrentPermissions(), getBranding()]);
   const sections = filterNavigation(NAV_SECTIONS, permissions);
 
