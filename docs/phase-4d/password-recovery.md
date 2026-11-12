@@ -43,6 +43,11 @@ plaintext credential.
 
 - keep Better Auth's `Verification` entity (no new table, no migration);
 - mint the token here and store **`password-reset:<sha256(token)>`**;
+- declare `Verification.userId` as a Better Auth `verification.additionalFields`
+  entry (`lib/auth/verification-schema.ts`). This project's Prisma model makes
+  the column mandatory, and the adapter's input transform drops undeclared
+  fields; without the declaration every token write fails with
+  `Argument \`user\` is missing`(covered by`lib/**tests**/auth/verification-schema.test.ts`);
 - use Better Auth's own `internalAdapter.createVerificationValue`,
   `consumeVerificationValue` (atomic single-use consume), `password.hash`,
   `findCredentialAccount`, `updatePassword`, `createAccount` and

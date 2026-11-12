@@ -21,6 +21,7 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { prisma } from '@/lib/db';
 import { isAccountIdActive } from '@/lib/auth/account-eligibility';
+import { VERIFICATION_ADDITIONAL_FIELDS } from '@/lib/auth/verification-schema';
 import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
@@ -101,6 +102,20 @@ export const auth = betterAuth({
      */
     resetPasswordTokenExpiresIn: PASSWORD_RESET_TTL_SECONDS,
     revokeSessionsOnPasswordReset: true,
+  },
+  /**
+   * This project's `Verification` row belongs to a user (`userId` is required
+   * by the Prisma model, so an orphan token is impossible). The vendor's
+   * default verification model has no such field, and its adapter's input
+   * transform copies only declared fields - without this declaration the
+   * column is dropped before Prisma sees it and every create fails.
+   *
+   * Declaring it here keeps password recovery on the vendor's
+   * `createVerificationValue`/`consumeVerificationValue` pair instead of
+   * writing the table directly.
+   */
+  verification: {
+    additionalFields: VERIFICATION_ADDITIONAL_FIELDS,
   },
   /**
    * A session may only be created for an identity that is allowed to hold one.
