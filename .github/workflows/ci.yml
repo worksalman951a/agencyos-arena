@@ -612,6 +612,12 @@ jobs:
           echo "Independent verification passed: fixture rows, migrations and foreign keys intact"
         env:
           TARGET_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}
+          # `--keep` still goes through every guard, so it needs the same
+          # isolated-target declaration the verification step used.
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+          RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
+          RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
+          RESTORE_VERIFY_ALLOWED_PORT: "5433"
 
       # ---------------------------------------------------------------------
       # 4. Failure paths. A verifier that only ever sees success is untested.
