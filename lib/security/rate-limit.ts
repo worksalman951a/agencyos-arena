@@ -120,6 +120,10 @@ export const RATE_LIMITS = {
    * is not a realistic strategy, but the endpoint is still bounded.
    */
   'password-reset-confirm': { window: 60 * 60, max: 20 },
+  /** Email ownership verification: request budgets are checked before lookup. */
+  'email-verification-request': { window: 60 * 60, max: 10 },
+  'email-verification-request-account': { window: 60 * 60, max: 5 },
+  'email-verification-confirm': { window: 60 * 60, max: 20 },
 
   /* ---------------------------------------------------------------------
    * Outbound invitation e-mail. Not wired into a route: consumed in
@@ -138,6 +142,9 @@ export const RATE_LIMITS = {
   'password-reset-email-recipient': { window: 60 * 60, max: 5 },
   /** Ceiling for reset mail leaving the whole deployment. */
   'password-reset-email-deployment': { window: 60 * 60, max: 100 },
+  /** Verification mail is bounded per recipient and per deployment. */
+  'email-verification-email-recipient': { window: 60 * 60, max: 5 },
+  'email-verification-email-deployment': { window: 60 * 60, max: 100 },
   /**
    * On behalf of one organization. Keyed on the organization rather than the
    * session, so signing in again does not buy a second budget.

@@ -28,6 +28,7 @@ import { toast } from 'sonner';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { listCurrencies, DEFAULT_CURRENCY } from '@/lib/currencies';
 import { contrastRatio, readableForeground, resolveBrandTheme } from '@/lib/branding';
+import { RequestEmailVerificationButton } from '@/components/auth/request-email-verification-button';
 
 interface OrganizationSettings {
   brandName?: string | null;
@@ -68,6 +69,7 @@ interface OrganizationResponse {
 interface UserProfileResponse {
   id: string;
   email: string;
+  emailVerified: boolean;
   name: string | null;
   image: string | null;
   role: string;
@@ -1048,15 +1050,22 @@ export default function SettingsPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <Field label="Email" htmlFor="profile-email" hint="Cannot be changed here.">
-              <input
-                id="profile-email"
-                type="email"
-                value={user.email}
-                readOnly
-                className="w-full rounded-md border border-input bg-muted/50 px-3 py-2 text-sm"
-              />
-            </Field>
+            <div className="space-y-2">
+              <Field
+                label="Email"
+                htmlFor="profile-email"
+                hint={user.emailVerified ? 'Ownership verified.' : 'Ownership not verified.'}
+              >
+                <input
+                  id="profile-email"
+                  type="email"
+                  value={user.email}
+                  readOnly
+                  className="w-full rounded-md border border-input bg-muted/50 px-3 py-2 text-sm"
+                />
+              </Field>
+              {!user.emailVerified ? <RequestEmailVerificationButton email={user.email} /> : null}
+            </div>
             <Field label="Role" htmlFor="profile-role">
               <input
                 id="profile-role"

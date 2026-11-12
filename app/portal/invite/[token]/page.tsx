@@ -10,6 +10,7 @@ import Link from 'next/link';
 
 import { AcceptInvitationButton } from '@/components/portal/accept-invitation-button';
 import { PortalLoginForm } from '@/components/portal/portal-login-form';
+import { RequestEmailVerificationButton } from '@/components/auth/request-email-verification-button';
 import { getSessionUser } from '@/lib/current-user';
 import { getClientInvitationByToken } from '@/lib/services/portal/client-invitation-service';
 
@@ -66,7 +67,8 @@ export default async function PortalInvitePage({ params }: { params: Promise<{ t
             {!session ? (
               <div className="space-y-2">
                 <p className="text-sm">
-                  Sign in (or create a password) with {invitation!.email} to continue.
+                  Sign in (or create a password) with {invitation!.email} to continue. If this
+                  account is not verified yet, verify ownership before accepting.
                 </p>
                 <PortalLoginForm
                   initialEmail={invitation!.email}
@@ -84,6 +86,11 @@ export default async function PortalInvitePage({ params }: { params: Promise<{ t
                 You are signed in as {session.email}, but this invitation was issued to{' '}
                 {invitation!.email}. Sign in with that address to accept.
               </p>
+            ) : !session.emailVerified ? (
+              <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                <p>Verify ownership of this email address before accepting the invitation.</p>
+                <RequestEmailVerificationButton email={session.email ?? invitation!.email} />
+              </div>
             ) : (
               <AcceptInvitationButton token={token} />
             )}

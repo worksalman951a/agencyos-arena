@@ -415,10 +415,13 @@ export async function acceptClientInvitation(token: string) {
 
   const user = await prisma.user.findUnique({
     where: { id: sessionUserId },
-    select: { id: true, organizationId: true, userType: true, status: true },
+    select: { id: true, organizationId: true, userType: true, status: true, emailVerified: true },
   });
   if (!user) throw codedError('Unauthenticated', 401);
   if (user.status !== 'active') throw codedError('This account is disabled', 403);
+  if (!user.emailVerified) {
+    throw codedError('Verify ownership of this email address before accepting the invitation', 403);
+  }
 
   // Never convert a team member (or an existing client elsewhere) into a client
   // here: that would silently change what an existing session can do.

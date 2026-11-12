@@ -18,6 +18,7 @@ export interface UserSettings {
 export interface UserProfileResponse {
   id: string;
   email: string;
+  emailVerified: boolean;
   name: string | null;
   image: string | null;
   role: string;
@@ -60,6 +61,7 @@ export async function getUserProfile() {
     select: {
       id: true,
       email: true,
+      emailVerified: true,
       name: true,
       image: true,
       role: true,
@@ -77,6 +79,7 @@ export async function getUserProfile() {
   return {
     id: user.id,
     email: user.email,
+    emailVerified: user.emailVerified,
     name: user.name,
     image: user.image,
     role: user.role,
@@ -115,6 +118,7 @@ export async function updateUserProfile(input: UserProfileUpdate) {
     select: {
       id: true,
       email: true,
+      emailVerified: true,
       name: true,
       image: true,
       role: true,
@@ -126,6 +130,7 @@ export async function updateUserProfile(input: UserProfileUpdate) {
   return {
     id: updated.id,
     email: updated.email,
+    emailVerified: updated.emailVerified,
     name: updated.name,
     image: updated.image,
     role: updated.role,

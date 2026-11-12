@@ -23,6 +23,10 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { prisma } from '@/lib/db';
+import {
+  prepareEmailVerification,
+  redeemEmailVerification,
+} from '@/lib/services/auth/email-verification-service';
 import { SERVER_URL } from './test-config';
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -97,6 +101,10 @@ async function signUp(email: string, name: string): Promise<string> {
     body: { email, password: TEST_PASSWORD },
   });
   expect(signInRes.status, `sign-in for ${email}: ${signInRes.text}`).toBe(200);
+
+  // This helper models a fixture whose mailbox ownership was already proved;
+  // the dedicated unverified-acceptance case below explicitly reverses it.
+  await prisma.user.update({ where: { email }, data: { emailVerified: true } });
 
   const setCookie = signInRes.headers.get('set-cookie') ?? '';
   const match = setCookie.match(/better-auth\.session_token=([^;]+)/);
@@ -463,6 +471,31 @@ describeIfDb('Client Portal integration (real PostgreSQL)', () => {
       expect(attempt.status).toBe(403);
       const row = await prisma.clientInvitation.findUniqueOrThrow({ where: { id: invite.id } });
       expect(row.status).toBe('pending');
+    });
+
+    it('requires proven email ownership before linking a portal identity', async () => {
+      const email = `unverified-${EMAIL_DOMAIN}`;
+      const invite = await invitationTokenFor(email, await freshContact(email), 'client_viewer');
+      const token = await signUp(email, 'Unverified Client');
+      emails.push(email);
+      await prisma.user.update({ where: { email }, data: { emailVerified: false } });
+
+      const denied = await api(token, `/api/v1/portal/invitations/${invite.token}/accept`, {
+        method: 'POST',
+      });
+      expect(denied.status).toBe(403);
+      expect(denied.text).toContain('Verify ownership');
+      expect(
+        (await prisma.clientInvitation.findUniqueOrThrow({ where: { id: invite.id } })).status
+      ).toBe('pending');
+
+      const prepared = await prepareEmailVerification(email);
+      await redeemEmailVerification({ token: prepared!.token });
+      const accepted = await api(token, `/api/v1/portal/invitations/${invite.token}/accept`, {
+        method: 'POST',
+      });
+      expect(accepted.status, accepted.text).toBe(200);
+      expect((await prisma.user.findUniqueOrThrow({ where: { email } })).userType).toBe('client');
     });
 
     it('rejects an unauthenticated acceptance with 401', async () => {

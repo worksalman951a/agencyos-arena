@@ -136,12 +136,38 @@ export function clientInvitationEmail(input: ClientInvitationEmailInput): EmailC
       organization
         ? `${organization} has invited you to their client portal, where you can follow the work they share with you.`
         : 'You have been invited to a client portal, where you can follow the work shared with you.',
-      'To accept, open the link below and sign in - or create a password - with the e-mail address this message was sent to.',
+      'To accept, open the link below and sign in - or create a password - with the e-mail address this message was sent to. If that account has not verified the address, request and complete its separate ownership-verification email first.',
     ],
     action: { label: 'Accept invitation', url: input.acceptUrl },
     notes: [
       `This invitation expires on ${formatExpiry(input.expiresAt)} and can be used once.`,
       'If you were not expecting this invitation, you can ignore this e-mail.',
+    ],
+  });
+}
+
+export interface EmailOwnershipVerificationEmailInput {
+  /** Absolute verification page URL; the bearer token is in its fragment. */
+  verificationUrl: string;
+  expiresAt: Date;
+}
+
+/** Verify mailbox ownership without changing sign-in policy or account status. */
+export function emailOwnershipVerificationEmail(
+  input: EmailOwnershipVerificationEmailInput
+): EmailContent {
+  return renderActionEmail({
+    subject: 'Verify your AgencyOS email address',
+    heading: 'Verify your email address',
+    paragraphs: [
+      'Hello,',
+      'We received a request to verify ownership of the email address used for an AgencyOS account.',
+      'Open the link and confirm on the page to complete verification.',
+    ],
+    action: { label: 'Review verification request', url: input.verificationUrl },
+    notes: [
+      `This link expires on ${formatExpiry(input.expiresAt)} and can be used once.`,
+      'If you did not request this, ignore the message. Your account access will not change.',
     ],
   });
 }

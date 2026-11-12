@@ -10,6 +10,7 @@
 import Link from 'next/link';
 
 import type { ClientCapabilityFlags } from '@/lib/portal/capabilities';
+import { RequestEmailVerificationButton } from '@/components/auth/request-email-verification-button';
 
 const PORTAL_NAV: Array<{ label: string; href: string; capability?: keyof ClientCapabilityFlags }> =
   [
@@ -24,6 +25,8 @@ export interface PortalShellProps {
   organizationName: string;
   clientName: string;
   capabilities: ClientCapabilityFlags;
+  email: string;
+  emailVerified: boolean;
   children: React.ReactNode;
 }
 
@@ -31,6 +34,8 @@ export function PortalShell({
   organizationName,
   clientName,
   capabilities,
+  email,
+  emailVerified,
   children,
 }: PortalShellProps) {
   const items = [
@@ -68,7 +73,15 @@ export function PortalShell({
           </ul>
         </nav>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
+      <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+        {!emailVerified ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+            <p>Your email address has not been verified. Portal access is unchanged.</p>
+            <RequestEmailVerificationButton email={email} />
+          </div>
+        ) : null}
+        {children}
+      </main>
       <footer className="mx-auto max-w-6xl px-4 pb-8 text-xs text-muted-foreground">
         You are viewing only the items your agency has explicitly shared with you.
       </footer>

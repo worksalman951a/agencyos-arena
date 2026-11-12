@@ -22,6 +22,7 @@ export interface SessionUser {
   id: string;
   name: string | null;
   email: string | null;
+  emailVerified: boolean;
   /**
    * "internal" (team member) or "client" (client-portal identity).
    *
@@ -45,7 +46,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
 
   const identity = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { userType: true, status: true },
+    select: { userType: true, status: true, emailVerified: true },
   });
 
   // An internal account must be active to count as signed in. A suspended or
@@ -62,6 +63,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
     id: user.id,
     name: user.name ?? null,
     email: user.email ?? null,
+    emailVerified: identity.emailVerified,
     userType,
   };
 });

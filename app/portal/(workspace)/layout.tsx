@@ -14,6 +14,7 @@ import { redirect } from 'next/navigation';
 
 import { PortalShell } from '@/components/portal/portal-shell';
 import { capabilityFlags, getPortalAccessOrNull } from '@/lib/portal/access-control';
+import { getSessionUser } from '@/lib/current-user';
 
 export default async function PortalWorkspaceLayout({ children }: { children: React.ReactNode }) {
   let context = null;
@@ -32,11 +33,17 @@ export default async function PortalWorkspaceLayout({ children }: { children: Re
     redirect('/portal/login');
   }
 
+  const sessionUser = await getSessionUser();
+  if (!sessionUser || sessionUser.userType !== 'client' || !sessionUser.email)
+    redirect('/portal/login');
+
   return (
     <PortalShell
       organizationName={context.organizationName}
       clientName={context.contactName}
       capabilities={capabilityFlags(context)}
+      email={sessionUser.email}
+      emailVerified={sessionUser.emailVerified}
     >
       {children}
       <p className="mt-8 text-xs text-muted-foreground">

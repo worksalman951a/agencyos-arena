@@ -686,6 +686,7 @@ describe('acceptClientInvitation', () => {
       organizationId: null,
       userType: 'internal',
       status: 'active',
+      emailVerified: true,
     });
     mockUserRoleCount.mockResolvedValue(0);
     mockAccessFindUnique.mockResolvedValue(null);
@@ -727,6 +728,7 @@ describe('acceptClientInvitation', () => {
       organizationId,
       userType: 'internal',
       status: 'active',
+      emailVerified: true,
     });
 
     await expect(acceptClientInvitation(rawToken)).rejects.toMatchObject({ statusCode: 409 });
@@ -737,6 +739,19 @@ describe('acceptClientInvitation', () => {
     mockUserRoleCount.mockResolvedValue(1);
 
     await expect(acceptClientInvitation(rawToken)).rejects.toMatchObject({ statusCode: 409 });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a matching but unverified email address before creating portal access', async () => {
+    mockUserFindUnique.mockResolvedValue({
+      id: 'user_client_1',
+      organizationId: null,
+      userType: 'internal',
+      status: 'active',
+      emailVerified: false,
+    });
+
+    await expect(acceptClientInvitation(rawToken)).rejects.toMatchObject({ statusCode: 403 });
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 

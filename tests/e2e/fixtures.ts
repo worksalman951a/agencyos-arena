@@ -15,6 +15,21 @@
 
 import { expect, request as playwrightRequest, test as base } from '@playwright/test';
 import type { APIRequestContext, BrowserContext, Page } from '@playwright/test';
+import { createRequire } from 'node:module';
+import { PrismaPg } from '@prisma/adapter-pg';
+
+const require = createRequire(import.meta.url);
+const { PrismaClient } = require('@prisma/client') as {
+  PrismaClient: new (options: { adapter: unknown }) => {
+    user: {
+      updateMany(args: {
+        where: { email: string };
+        data: { emailVerified: boolean };
+      }): Promise<unknown>;
+    };
+    $disconnect(): Promise<void>;
+  };
+};
 
 export const E2E_PASSWORD = process.env.E2E_PASSWORD ?? 'e2e-arena-password-2026';
 
@@ -125,8 +140,22 @@ export async function ensurePortalInviteeAccount(
     data: { email, password, name: `Portal ${email.split('@')[0]}` },
   });
   const status = response.status();
-  if (status === 200 || status === 422) return;
-  throw new Error(`portal invitee sign-up failed (${status}): ${await response.text()}`);
+  if (status !== 200 && status !== 422) {
+    throw new Error(`portal invitee sign-up failed (${status}): ${await response.text()}`);
+  }
+
+  // Existing portal journeys exercise invitation authorization and isolation,
+  // not mailbox ownership. Mark this disposable CI identity as a verified
+  // fixture; production requests can only set the flag via the mailed token.
+  if (!process.env.DATABASE_URL) throw new Error('E2E database is not configured');
+  const fixtureDb = new PrismaClient({
+    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+  });
+  try {
+    await fixtureDb.user.updateMany({ where: { email }, data: { emailVerified: true } });
+  } finally {
+    await fixtureDb.$disconnect();
+  }
 }
 
 /** Attach the account's session cookie to a browser context. */

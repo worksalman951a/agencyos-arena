@@ -30,6 +30,10 @@ const PUBLIC_ROUTES: Record<string, string> = {
     'Password recovery request: the caller cannot sign in; the handler is Origin-checked, throttled, and answers identically for every address.',
   'api/v1/auth/password-reset/confirm/route.ts':
     'Password recovery redemption: the 256-bit single-use token is the credential; Origin-checked, throttled, and every failure shares one message.',
+  'api/v1/auth/email-verification/request/route.ts':
+    'Public ownership request: account enumeration-neutral, rate limited before lookup, and SMTP work runs after the response.',
+  'api/v1/auth/email-verification/confirm/route.ts':
+    'Public ownership redemption: a 256-bit single-use token is the credential; Origin-checked, throttled, and status-checked.',
 };
 
 /** Routes deliberately disabled until a trusted implementation exists. */
@@ -47,6 +51,8 @@ const UNGUARDED_SERVICES = new Set([
   // Public password recovery: the reset token is the credential, the account
   // status check runs in the service, and no session exists to guard with.
   'lib/services/auth/password-reset-service.ts',
+  // Public ownership verification: only a hash-only mail token can redeem, and active status is rechecked.
+  'lib/services/auth/email-verification-service.ts',
 ]);
 
 /**

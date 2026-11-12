@@ -77,6 +77,9 @@ export const auth = betterAuth({
   },
   emailAndPassword: {
     enabled: true,
+    // Preserve existing sign-in behavior during rollout. Ownership is recorded
+    // by our hash-only custom flow, while portal invitation linking checks the
+    // flag explicitly; global blocking would lock out legacy administrators.
     requireEmailVerification: false,
     autoSignIn: false,
     // Stated explicitly (they match the vendor defaults) so sign-up and the
