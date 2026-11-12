@@ -422,6 +422,7 @@ jobs:
       PGDATABASE: agencyos
       PGPASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}
       PG_CLIENT_VERSION: '16'
+      PG_CLIENT_SERIES: '16'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -433,16 +434,31 @@ jobs:
       # pg_dump/pg_restore/psql are not on the ubuntu-latest image by default.
       # Install only the client (not a server) so the tools match the
       # postgres:16 service image.
-      - name: Install PostgreSQL 16 client tools
+      - name: Install PostgreSQL client tools
         run: |
+          # ubuntu-latest ships a client whose major is NOT necessarily the
+          # server's. A newer pg_dump emits `SET transaction_timeout = 0`,
+          # which a PostgreSQL 16 server rejects with
+          #   ERROR: unrecognized configuration parameter "transaction_timeout"
+          # and the restore then fails while INITIALIZING. The client major is
+          # therefore pinned to match the postgres:16 service image, and the
+          # installed version is asserted rather than assumed.
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg ${PG_CLIENT_SERIES}" > /etc/apt/sources.list.d/pgdg.list'
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-${PG_CLIENT_VERSION}
+
           pg_dump --version
           pg_restore --version
+          psql --version
+          dump_major="$(pg_dump --version | sed -E 's/.* ([0-9]+)\..*/\1/')"
+          restore_major="$(pg_restore --version | sed -E 's/.* ([0-9]+)\..*/\1/')"
+          if [ "$dump_major" != "$PG_CLIENT_VERSION" ] || [ "$restore_major" != "$PG_CLIENT_VERSION" ]; then
+            echo "::error title=pg client version::expected pg_dump/pg_restore major $PG_CLIENT_VERSION to match the postgres:16 service, got $dump_major/$restore_major. A newer client fails to restore into a 16 server (transaction_timeout)."
+            exit 1
+          fi
 
       - name: Wait for both PostgreSQL services
         run: |
@@ -502,11 +518,18 @@ jobs:
       # ---------------------------------------------------------------------
       - name: Restore into isolated database and verify
         run: |
+          set -o pipefail
           DUMP="$(ls backup-artifacts/*.dump | head -1)"
-          node scripts/backup/verify-restore.mjs \
-            --backup "$DUMP" \
-            --label "ci-${{ github.run_id }}" \
-            | tee restore-verification.log
+          # `set -o pipefail` is load-bearing. Without it a pipeline's status is
+          # `tee`'s, so a failing verification reported SUCCESS — which is how an
+          # earlier run showed "restore passed" while nothing had been restored.
+          if ! node scripts/backup/verify-restore.mjs \
+              --backup "$DUMP" \
+              --label "ci-${{ github.run_id }}" \
+              | tee restore-verification.log; then
+            echo "::error title=restore verification::$(tail -c 1500 restore-verification.log | tr '\n' ' ')"
+            exit 1
+          fi
         env:
           DATABASE_URL: ${{ env.SOURCE_URL }}
           RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
@@ -617,7 +640,7 @@ jobs:
           DATABASE_URL: ${{ env.SOURCE_URL }}
           RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
           RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
-          RESTORE_VERIFY_ALLOWED_PORT: "5433"
+          RESTORE_VERIFY_ALLOWED_PORT: '5433'
 
       # ---------------------------------------------------------------------
       # 4. Failure paths. A verifier that only ever sees success is untested.
