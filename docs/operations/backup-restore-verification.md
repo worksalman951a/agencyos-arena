@@ -1,6 +1,6 @@
 # Backup and restore verification
 
-**Status: backup creation and isolated restore verification are implemented, and are exercised end to end on real PostgreSQL in CI (`backup-verify` job). Scheduling, retention and failure reporting are also implemented — see [scheduled backups, retention and failure reporting](backup-scheduling-retention.md). Off-site storage, encryption/key management, monitoring and restore automation are NOT implemented — they are Batch 3C work, listed at the end of this document.**
+**Status: backup creation and isolated restore verification are implemented, and are exercised end to end on real PostgreSQL in CI (`backup-verify` job). Scheduling, retention and failure reporting are also implemented — see [scheduled backups, retention and failure reporting](backup-scheduling-retention.md). Optional encrypted filesystem replication is implemented — see [encrypted backup replication](backup-encrypted-replication.md). A genuine off-site destination, production key management, monitoring and scheduled drills remain to be selected and tested.**
 
 This document covers three things: the safety invariants that any restore must satisfy, the tooling that implements backup + verification, and the residual work required before a production recovery claim is possible.
 
@@ -187,8 +187,8 @@ Scheduling, retention and failure reporting are implemented — see
 [scheduled backups, retention and failure reporting](backup-scheduling-retention.md).
 Deliberately out of scope for that batch, and still required:
 
-- An approved backup destination with encryption and key ownership (no backup is uploaded anywhere today; archives land on local disk).
-- Off-site replication and a documented RPO/RTO.
+- An approved independent backup destination and tested key ownership/recovery; the encrypted filesystem adapter is only a reference implementation.
+- A genuinely off-site deployment and a documented RPO/RTO.
 - Monitoring of backup _age_ (not only failure), dashboards and alerting beyond the exit code, the result file and the webhook.
 - Restore automation and an owner for periodic restore drills.
 - Approval of the data owner before verifying against real production data, and a documented sanitization approach if synthetic data is used instead.

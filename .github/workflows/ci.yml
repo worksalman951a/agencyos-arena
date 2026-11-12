@@ -722,6 +722,28 @@ jobs:
           RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
           RESTORE_VERIFY_ALLOWED_PORT: '5433'
 
+      - name: Encrypted replica survives isolated restore verification
+        run: |
+          set -euo pipefail
+          mkdir -m 700 replica-artifacts recovery-temp
+          DUMP="$(realpath "$(ls backup-artifacts/*.dump | head -1)")"
+          node scripts/backup/replicate.mjs upload --backup "$DUMP"
+          node scripts/backup/replicate.mjs upload --backup "$DUMP" | grep 'already-present'
+          node scripts/backup/replicate.mjs recover --name "$(basename "$DUMP")" --temp-dir "$(realpath recovery-temp)" --verify-restore | tee replica-restore.log
+          grep -q '"status":"restore-verified"' replica-restore.log
+          test -z "$(ls -A recovery-temp)"
+          test "$(find replica-artifacts -type f | wc -l)" -eq 1
+          if grep -aF 'bkverify-org-0001' replica-artifacts/*.age; then
+            echo "ERROR: plaintext fixture found in replica" >&2; exit 1
+          fi
+        env:
+          BACKUP_REPLICATION_DIR: ${{ github.workspace }}/replica-artifacts
+          BACKUP_REPLICATION_KEY: ${{ secrets.CI_BACKUP_REPLICATION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }}
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+          RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
+          RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
+          RESTORE_VERIFY_ALLOWED_PORT: '5433'
+
       # ---------------------------------------------------------------------
       # 3. Independent proof. The script above could in principle verify itself
       #    incorrectly, so this step queries the restored rows directly with

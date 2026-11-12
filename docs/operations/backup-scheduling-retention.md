@@ -2,8 +2,8 @@
 
 **Status: implemented.** The one-shot scheduled runner, the retention pass and
 the structured failure report are implemented and exercised in CI against real
-PostgreSQL. Off-site storage, encryption/key ownership, monitoring dashboards
-and restore automation are **not** implemented — they are Batch 3C, listed at
+PostgreSQL. Optional encrypted filesystem replication is described in [its runbook](backup-encrypted-replication.md). Independent off-site storage, production key ownership, monitoring dashboards
+and scheduled restore drills are **not** implemented, and are listed at
 the end of this document.
 
 This document is the companion to
@@ -27,8 +27,7 @@ platform scheduler  ──▶  scripts/backup/scheduled-backup.mjs  ──▶  e
 
 The platform owns the _frequency_. The runner owns the _safety_ of a single
 invocation. That split is what keeps the tool deployment-neutral: no hosting
-provider is assumed, no new dependency is introduced, and the same command
-runs on a Linux host, on Windows and inside a container.
+provider is assumed. The optional encrypted replication layer adds an age dependency and requires protected POSIX filesystem semantics; see its runbook.
 
 | File                                  | Purpose                                                                                                            |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -36,8 +35,7 @@ runs on a Linux host, on Windows and inside a container.
 | `scripts/backup/retention.mjs`        | The retention pass: classify every file in the backup directory, decide what may be deleted, and delete only that. |
 | `scripts/backup/lib.mjs`              | Shared guardrails (Batch 3A) plus the two new exit codes (`6` locked, `7` storage).                                |
 
-Both new files are dependency-free (Node built-ins only), exactly like the
-Batch 3A scripts, so they run during a recovery before `npm ci`.
+The backup and retention scripts use Node built-ins. The optional replication layer requires the installed age-encryption dependency.
 
 ---
 
@@ -442,7 +440,7 @@ command inside the container is the same.
 - **Changing the policy.** Test it first: `--retention-only --keep N
 --dry-run` prints `retention.planned` without touching anything.
 - **The backup directory is not a backup.** It lives on the same host as the
-  database. Off-site replication is Batch 3C.
+  database. A reference encrypted replication adapter is available, but an independent off-site destination must be provisioned.
 
 ---
 
@@ -451,8 +449,8 @@ command inside the container is the same.
 Deliberately out of scope for this batch, and still required before a
 production recovery claim:
 
-- Off-site replication of archives, and a documented RPO/RTO.
-- Encryption at rest and key ownership for the backup volume.
+- An independent off-site destination, and a documented RPO/RTO.
+- Encryption at rest and key ownership for the local backup volume, and tested key recovery for replicas.
 - Monitoring of backup _age_ (not just failure), dashboards and alerting
   beyond the exit code, the result file and the webhook.
 - Automated restore drills on a schedule, and a named owner for them.
