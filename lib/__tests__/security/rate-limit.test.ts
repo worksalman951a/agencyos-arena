@@ -148,6 +148,21 @@ describe('consumeRateLimit', () => {
     expect((await consumeRateLimit('k', { window: 60, max: 10 })).allowed).toBe(false);
   });
 
+  it('lets the stored count exceed the cap so a denial is reachable', async () => {
+    // Regression guard: the first implementation capped the stored count at
+    // `max`, which left `count <= max` permanently true and silently disabled
+    // the limiter. The decision must still deny when the row reports more than
+    // the cap, and the SQL must be able to store more than the cap.
+    executeRawMock.mockResolvedValue([{ count: 6, retry_after: 30 }]);
+    expect((await consumeRateLimit('k', { window: 60, max: 5 })).allowed).toBe(false);
+
+    const sql = String(executeRawMock.mock.calls[0][0]);
+    expect(sql).toContain('LEAST');
+    expect(sql).not.toMatch(
+      /WHEN "RateLimitBucket"\."count" < \$3 THEN "RateLimitBucket"\."count" \+ 1/
+    );
+  });
+
   it('passes the key, window and cap to SQL as bound parameters', async () => {
     executeRawMock.mockResolvedValue([{ count: 1, retry_after: 0 }]);
     await consumeRateLimit('policy:abc', { window: 30, max: 5 });

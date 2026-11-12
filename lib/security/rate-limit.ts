@@ -134,11 +134,16 @@ export function clientAddressForRateLimit(
  * Consume one unit against `key` and report the decision.
  *
  * The SQL is a single statement:
- *   - no row           → insert with count 1 (allowed);
- *   - window elapsed   → reset count to 1 and restart the window;
- *   - count < max      → increment;
- *   - count >= max     → leave the row untouched (no increment past the cap).
- * `allowed` is derived from the row returned by the statement.
+ *   - no row         → insert with count 1 (allowed);
+ *   - window elapsed → reset count to 1 and restart the window;
+ *   - otherwise      → count + 1, capped at `max + 1`.
+ *
+ * The cap is `max + 1`, not `max`: the stored count has to be able to exceed
+ * the limit for the caller to see a denial. Capping at `max` (the first version
+ * of this function) left `count <= max` permanently true once the budget was
+ * spent, so the limiter silently allowed unlimited traffic — caught by
+ * `integration/security.integration.test.ts`, which is exactly why the
+ * threshold is asserted against a real database rather than a mock.
  */
 export async function consumeRateLimit(
   key: string,
@@ -154,8 +159,7 @@ export async function consumeRateLimit(
     SET
       "count" = CASE
         WHEN "RateLimitBucket"."expiresAt" <= NOW() THEN 1
-        WHEN "RateLimitBucket"."count" < $3 THEN "RateLimitBucket"."count" + 1
-        ELSE "RateLimitBucket"."count"
+        ELSE LEAST("RateLimitBucket"."count" + 1, $3::int + 1)
       END,
       "windowStart" = CASE
         WHEN "RateLimitBucket"."expiresAt" <= NOW() THEN NOW()
