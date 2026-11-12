@@ -395,9 +395,15 @@ describeIfDb('CSRF and rate limiting (real PostgreSQL, real HTTP)', () => {
           expect(response.json).toEqual({ error: 'Too many requests. Please try again later.' });
           break;
         }
-        // The token is live, so an allowed request renders the invitation.
+        // The token is live, so an allowed request renders the invitation
+        // (the public view only: organization name, role name, invitee e-mail).
         expect(response.status, response.text).toBe(200);
-        expect((response.json as { organization?: unknown }).organization).toBeTruthy();
+        const preview = response.json as { organizationName?: unknown; roleName?: unknown };
+        expect(preview.organizationName).toBeTruthy();
+        expect(preview.roleName).toBeTruthy();
+        // Never discloses anything beyond the invitee-facing fields.
+        expect(preview).not.toHaveProperty('organizationId');
+        expect(preview).not.toHaveProperty('token');
         sawAllowed = true;
       }
 
