@@ -436,27 +436,42 @@ jobs:
       # postgres:16 service image.
       - name: Install PostgreSQL client tools
         run: |
-          # ubuntu-latest ships a client whose major is NOT necessarily the
-          # server's. A newer pg_dump emits `SET transaction_timeout = 0`,
-          # which a PostgreSQL 16 server rejects with
-          #   ERROR: unrecognized configuration parameter "transaction_timeout"
-          # and the restore then fails while INITIALIZING. The client major is
-          # therefore pinned to match the postgres:16 service image, and the
-          # installed version is asserted rather than assumed.
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-            https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg ${PG_CLIENT_SERIES}" > /etc/apt/sources.list.d/pgdg.list'
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-${PG_CLIENT_VERSION}
+          # The client major must match the postgres:16 service image. A newer
+          # pg_dump emits `SET transaction_timeout = 0`, which a 16 server
+          # rejects with "unrecognized configuration parameter", and the restore
+          # then dies while INITIALIZING — before writing a single row.
+          #
+          # PGDG does not publish every series for every Ubuntu release, so the
+          # archive is tried first and the distribution packages are the
+          # fallback. Whichever installs, the major is asserted below; if neither
+          # yields 16 the job fails here with a clear message rather than at
+          # restore time.
+          set -x
+          install_from_pgdg() {
+            sudo install -d /usr/share/postgresql-common/pgdg
+            sudo curl -fsSL --retry 3 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+              https://www.postgresql.org/media/keys/ACCC4CF8.asc || return 1
+            sudo sh -c "echo \"deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg ${PG_CLIENT_SERIES}\" > /etc/apt/sources.list.d/pgdg.list" || return 1
+            sudo apt-get update -qq || return 1
+            sudo apt-get install -y -qq "postgresql-client-${PG_CLIENT_VERSION}" || return 1
+          }
+
+          if ! install_from_pgdg; then
+            echo "PGDG series ${PG_CLIENT_SERIES} unavailable on $(lsb_release -cs); using distribution packages"
+            sudo rm -f /etc/apt/sources.list.d/pgdg.list
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+          set +x
 
           pg_dump --version
           pg_restore --version
           psql --version
           dump_major="$(pg_dump --version | sed -E 's/.* ([0-9]+)\..*/\1/')"
           restore_major="$(pg_restore --version | sed -E 's/.* ([0-9]+)\..*/\1/')"
+          echo "client major: pg_dump=$dump_major pg_restore=$restore_major (server image: 16)"
           if [ "$dump_major" != "$PG_CLIENT_VERSION" ] || [ "$restore_major" != "$PG_CLIENT_VERSION" ]; then
-            echo "::error title=pg client version::expected pg_dump/pg_restore major $PG_CLIENT_VERSION to match the postgres:16 service, got $dump_major/$restore_major. A newer client fails to restore into a 16 server (transaction_timeout)."
+            echo "::error title=pg client version::need pg_dump/pg_restore major $PG_CLIENT_VERSION to match the postgres:16 service, got $dump_major/$restore_major. A 17+ client cannot restore into a 16 server (transaction_timeout)."
             exit 1
           fi
 
