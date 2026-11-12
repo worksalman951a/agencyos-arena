@@ -332,8 +332,20 @@ export default function SettingsPage() {
     );
   };
 
+  const [confirmCurrencyChange, setConfirmCurrencyChange] = useState(false);
+
   const handleCurrencySave = (event: React.FormEvent) => {
     event.preventDefault();
+    const currentStored = org?.settings.defaultCurrency ?? DEFAULT_CURRENCY;
+    if (defaultCurrency !== currentStored && !confirmCurrencyChange) {
+      setSave('currency', {
+        status: 'error',
+        message:
+          'Changing workspace default currency will relabel historical expenses. Please check the confirmation box below to proceed.',
+      });
+      return;
+    }
+
     void saveOrganizationSection(
       'currency',
       { settings: { defaultCurrency, dateFormat } },
@@ -509,6 +521,8 @@ export default function SettingsPage() {
         setDisplayName={setDisplayName}
         avatarUrl={avatarUrl}
         setAvatarUrl={setAvatarUrl}
+        confirmCurrencyChange={confirmCurrencyChange}
+        setConfirmCurrencyChange={setConfirmCurrencyChange}
         onOrganizationSave={handleOrganizationSave}
         onBrandingSave={handleBrandingSave}
         onCurrencySave={handleCurrencySave}
@@ -787,6 +801,14 @@ export default function SettingsPage() {
         description="Defaults applied to new documents across the organization."
       >
         <form onSubmit={handleCurrencySave} className="space-y-4">
+          <p className="rounded-md border border-amber-300/60 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
+            <strong>Currency &amp; Historical Expense Notice:</strong> Existing invoices and
+            estimates persist their issued currency code. However, expense items do not store an
+            individual currency column and are displayed using the current workspace default
+            currency. Changing the default currency will visually relabel historical expenses and
+            will not perform automatic foreign exchange (FX) conversion.
+          </p>
+
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field
               label="Default currency"
@@ -824,6 +846,26 @@ export default function SettingsPage() {
                 ))}
               </select>
             </Field>
+
+            {defaultCurrency !== (org.settings.defaultCurrency ?? DEFAULT_CURRENCY) && (
+              <div className="md:col-span-2 pt-2">
+                <label className="flex items-start gap-2 text-xs text-amber-900 dark:text-amber-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={confirmCurrencyChange}
+                    onChange={(e) => setConfirmCurrencyChange(e.target.checked)}
+                    disabled={readOnly}
+                    className="mt-0.5 rounded border-amber-400"
+                  />
+                  <span>
+                    I understand that changing the workspace currency from{' '}
+                    <strong>{org.settings.defaultCurrency ?? DEFAULT_CURRENCY}</strong> to{' '}
+                    <strong>{defaultCurrency}</strong> will visually relabel all historical expense
+                    records without foreign exchange conversion.
+                  </span>
+                </label>
+              </div>
+            )}
           </div>
 
           <SaveRow

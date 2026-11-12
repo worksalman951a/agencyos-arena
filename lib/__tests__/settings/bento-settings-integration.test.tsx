@@ -219,10 +219,92 @@ describe('Phase 8B Bento Settings & Administration Integration', () => {
     expect(screen.getByText('Brand & Visual Identity')).toBeInTheDocument();
     expect(screen.getByText('Curated Accessible Palette Swatches')).toBeInTheDocument();
 
+    // Switch to Currency & Dates
+    fireEvent.click(screen.getByText('Currency & Dates'));
+    expect(screen.getByText('Currency & Regional Defaults')).toBeInTheDocument();
+    expect(screen.getByText(/Currency & Historical Expense Notice:/)).toBeInTheDocument();
+
     // Switch to Invoice Preferences
     fireEvent.click(screen.getByText('Invoice Preferences'));
     expect(screen.getByText('Invoice Numbering & Tax Rules')).toBeInTheDocument();
     expect(screen.getAllByText('INV-2026-0101').length).toBeGreaterThan(0);
+  });
+
+  it('displays explicit currency confirmation checkbox when default currency is modified', () => {
+    render(
+      <BentoSettingsView
+        org={mockOrg}
+        user={mockUser}
+        saves={{
+          organization: { status: 'idle' },
+          branding: { status: 'idle' },
+          currency: { status: 'idle' },
+          invoice: { status: 'idle' },
+          proposal: { status: 'idle' },
+          profile: { status: 'idle' },
+        }}
+        readOnly={false}
+        orgName={mockOrg.name}
+        setOrgName={vi.fn()}
+        contactEmail="contact@acme.test"
+        setContactEmail={vi.fn()}
+        contactPhone=""
+        setContactPhone={vi.fn()}
+        address=""
+        setAddress={vi.fn()}
+        city=""
+        setCity={vi.fn()}
+        country=""
+        setCountry={vi.fn()}
+        postalCode=""
+        setPostalCode={vi.fn()}
+        brandName="Acme Brand"
+        setBrandName={vi.fn()}
+        brandColor="#047857"
+        setBrandColor={vi.fn()}
+        logoUrl=""
+        setLogoUrl={vi.fn()}
+        defaultCurrency="EUR" // modified from USD
+        setDefaultCurrency={vi.fn()}
+        dateFormat="MM/DD/YYYY"
+        setDateFormat={vi.fn()}
+        currencyOptions={[
+          { value: 'USD', label: 'USD — US Dollar' },
+          { value: 'EUR', label: 'EUR — Euro' },
+        ]}
+        dateFormats={[{ value: 'MM/DD/YYYY', label: 'MM/DD/YYYY (US)' }]}
+        invoicePrefix="INV"
+        setInvoicePrefix={vi.fn()}
+        invoiceNextNumber="101"
+        setInvoiceNextNumber={vi.fn()}
+        invoiceTaxDefault="0"
+        setInvoiceTaxDefault={vi.fn()}
+        proposalPrefix="PRP"
+        setProposalPrefix={vi.fn()}
+        proposalNextNumber="50"
+        setProposalNextNumber={vi.fn()}
+        proposalValidDays="30"
+        setProposalValidDays={vi.fn()}
+        displayName="Test Administrator"
+        setDisplayName={vi.fn()}
+        avatarUrl=""
+        setAvatarUrl={vi.fn()}
+        confirmCurrencyChange={false}
+        setConfirmCurrencyChange={vi.fn()}
+        onOrganizationSave={vi.fn()}
+        onBrandingSave={vi.fn()}
+        onCurrencySave={vi.fn()}
+        onInvoiceSave={vi.fn()}
+        onProposalSave={vi.fn()}
+        onProfileSave={vi.fn()}
+      />
+    );
+
+    // Switch to Currency & Dates
+    fireEvent.click(screen.getByText('Currency & Dates'));
+    expect(
+      screen.getByText(/I confirm that changing workspace currency from/i)
+    ).toBeInTheDocument();
   });
 
   it('renders BentoFeatureFlagsView and displays flag inspector details', () => {

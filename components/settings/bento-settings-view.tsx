@@ -135,6 +135,10 @@ interface BentoSettingsViewProps {
   avatarUrl: string;
   setAvatarUrl: (val: string) => void;
 
+  // Currency confirmation
+  confirmCurrencyChange?: boolean;
+  setConfirmCurrencyChange?: (val: boolean) => void;
+
   // Handlers
   onOrganizationSave: (e: React.FormEvent) => void;
   onBrandingSave: (e: React.FormEvent) => void;
@@ -191,6 +195,8 @@ export function BentoSettingsView({
   setDisplayName,
   avatarUrl,
   setAvatarUrl,
+  confirmCurrencyChange = false,
+  setConfirmCurrencyChange,
   onOrganizationSave,
   onBrandingSave,
   onCurrencySave,
@@ -769,10 +775,12 @@ export function BentoSettingsView({
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
                   <Shield className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
                   <span>
-                    <strong>Financial Denomination Notice:</strong> Changing default currency
-                    applies exclusively to newly drafted documents. Existing historical invoices,
-                    estimates, and expenses remain in their issued currency denominations; automatic
-                    currency conversion or foreign exchange revaluation is not performed.
+                    <strong>Currency &amp; Historical Expense Notice:</strong> Existing invoices and
+                    estimates persist their issued currency code. However, expense items do not
+                    store an individual currency column and are displayed using the current
+                    workspace default currency. Changing the default currency will visually relabel
+                    historical expenses and will not perform automatic foreign exchange (FX)
+                    conversion.
                   </span>
                 </div>
 
@@ -816,6 +824,26 @@ export function BentoSettingsView({
                       Standard date formatting used across activity feeds and tables.
                     </p>
                   </div>
+
+                  {defaultCurrency !== (org.settings.defaultCurrency ?? 'USD') && (
+                    <div className="md:col-span-2 pt-1">
+                      <label className="flex items-start gap-2 text-xs text-amber-900 dark:text-amber-200 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={confirmCurrencyChange}
+                          onChange={(e) => setConfirmCurrencyChange?.(e.target.checked)}
+                          disabled={readOnly}
+                          className="mt-0.5 rounded border-amber-400"
+                        />
+                        <span>
+                          I confirm that changing workspace currency from{' '}
+                          <strong>{org.settings.defaultCurrency ?? 'USD'}</strong> to{' '}
+                          <strong>{defaultCurrency}</strong> will visually relabel all historical
+                          expenses without conversion.
+                        </span>
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 {!readOnly && (
