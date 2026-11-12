@@ -155,6 +155,7 @@ model Organization {
   documentVersions   DocumentVersion[]
   documentLinks      DocumentLink[]
   signatures         Signature[]
+  clientPortalAccess ClientPortalAccess[]
 }
 
 model OrganizationAccount {
@@ -371,6 +372,7 @@ model Contact {
   creator          User?             @relation("CreatedContact", fields: [createdBy], references: [id], onDelete: SetNull)
   updater          User?             @relation("UpdatedContact", fields: [updatedBy], references: [id], onDelete: SetNull)
   projectApprovals ProjectApproval[]
+  portalAccess     ClientPortalAccess?
 }
 
 model AccountContact {
@@ -1078,3 +1080,56 @@ model TaskComment {
 
   @@index([taskId, createdAt])
 }
+
+/// ============================================
+/// Client Portal (Phase 11G-1)
+/// ============================================
+
+model ClientPortalAccess {
+  id              String    @id @default(cuid())
+  organizationId  String
+  contactId       String
+  email           String
+  status          String    @default("pending") // pending | active | revoked
+  invitationHash  String?   @unique
+  invitationExpiry DateTime?
+  magicLinkHash   String?   @unique
+  magicLinkExpiry DateTime?
+  lastLoginAt     DateTime?
+  invitedBy       String?
+  invitedAt       DateTime  @default(now())
+  activatedAt     DateTime?
+  revokedAt       DateTime?
+  revokedBy       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact      Contact               @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  sessions     ClientPortalSession[]
+
+  @@unique([organizationId, contactId])
+  @@unique([organizationId, email])
+  @@index([organizationId, status])
+  @@index([invitationHash])
+  @@index([magicLinkHash])
+}
+
+model ClientPortalSession {
+  id             String    @id @default(cuid())
+  portalAccessId String
+  sessionHash    String    @unique
+  expiresAt      DateTime
+  ipAddress      String?
+  userAgent      String?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  portalAccess ClientPortalAccess @relation(fields: [portalAccessId], references: [id], onDelete: Cascade)
+
+  @@index([portalAccessId])
+  @@index([sessionHash])
+  @@index([expiresAt])
+}
+

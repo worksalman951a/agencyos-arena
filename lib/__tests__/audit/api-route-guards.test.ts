@@ -35,7 +35,7 @@ const PUBLIC_ROUTES: Record<string, string> = {
 const UNGUARDED_SERVICES = new Set(['lib/services/settings/document-numbering.ts']);
 
 const GUARD_PATTERN =
-  /requirePermission|requireOrganization|getAuthorizedUser|auth\.api\.getSession|getSessionUser|assertAuthenticated/;
+  /requirePermission|requireOrganization|getAuthorizedUser|auth\.api\.getSession|getSessionUser|assertAuthenticated|getClientPortalSession/;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

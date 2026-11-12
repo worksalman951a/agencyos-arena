@@ -17,8 +17,10 @@ const APP_DIR = path.join(process.cwd(), 'app');
  *
  * `invite` is the invitation-acceptance surface: an invitee usually has no
  * session yet, so the page must render without navigation or toasts.
+ * `portal` is the authenticated client portal, which renders BentoPortalShell
+ * with isolated client navigation rather than internal agency ModuleShell.
  */
-const PUBLIC_DIRS = new Set(['login', 'register', 'api', 'invite', 'share']);
+const PUBLIC_DIRS = new Set(['login', 'register', 'api', 'invite', 'share', 'portal']);
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
