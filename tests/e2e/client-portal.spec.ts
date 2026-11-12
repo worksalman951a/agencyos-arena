@@ -209,18 +209,22 @@ test.describe('Client portal end-to-end journeys', () => {
       .catch(() => null);
     expect(alertText, 'the invitation page reported an error instead of activating').toBeNull();
 
-    // Re-open the invitation as the returning visitor this account now is: a fresh
-    // server render with the session cookie must show the accept button.
-    await page.goto(fixture.acceptPath);
-    await expect(acceptButton).toBeVisible({ timeout: 30_000 });
-    await acceptButton.click();
-    await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
+    // Re-open the invitation as the returning visitor this account now is. A new
+    // page in the same context avoids racing the form's own post-auth reload and
+    // still proves the session cookie persisted: a fresh server render must show
+    // the accept button.
+    const returning = await context.newPage();
+    await returning.goto(fixture.acceptPath);
+    const returningAccept = returning.getByTestId('accept-invitation');
+    await expect(returningAccept).toBeVisible({ timeout: 30_000 });
+    await returningAccept.click();
+    await expect(returning).toHaveURL(/\/portal$/, { timeout: 30_000 });
 
     // The accepting identity is a client: no workspace, no team surfaces.
-    await page.goto('/admin/client-portal');
-    await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
+    await returning.goto('/admin/client-portal');
+    await expect(returning).toHaveURL(/\/portal$/, { timeout: 30_000 });
 
-    await page.context().close();
+    await context.close();
   });
 
   test('a client activates from the invitation, logs in, and sees only the shared project', async ({
