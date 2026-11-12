@@ -1,59 +1,160 @@
-# Backup and restore verification runbook (proposed)
+# Backup and restore verification
 
-**Status: verification workflow only; no backup job or restore has been implemented or tested in this checkout.** The architecture proposal describes daily PostgreSQL dumps to object storage with 30-day retention, but the implementation/deployment search found no executable backup, restore, or restore-test procedure. The hosting and object-storage decisions remain unapproved. This runbook does not claim production recovery readiness.
+**Status: backup creation and isolated restore verification are implemented, and are exercised end to end on real PostgreSQL in CI (`backup-verify` job). Scheduling, retention, off-site storage, encryption/key management, monitoring and restore automation are NOT implemented — they are Batch 3B work, listed at the end of this document.**
+
+This document covers three things: the safety invariants that any restore must satisfy, the tooling that implements backup + verification, and the residual work required before a production recovery claim is possible.
 
 ## Safety invariants
 
-- Never reset, drop, truncate, overwrite, or restore into the development database.
-- Restore only to a newly provisioned, dedicated, disposable PostgreSQL instance and a uniquely named database prefixed `agencyos_restore_verify_`. Do not use the development Compose database or copy its `DATABASE_URL`.
-- PostgreSQL must use the reserved port **5433** and the app, if needed for a smoke check, must use **3001**. If 5433 is occupied by a development database, stop and provision a separate isolated environment; do not connect to, stop, or remap over it. Never use port 3000 or the separate Codex project.
-- Use a synthetic/sanitized backup unless the data owner has approved the backup for recovery testing. Keep credentials out of shell history, logs, tickets, and this document.
-- Do not use `pg_restore --clean`, `dropdb`, `prisma db push`, or `prisma migrate dev` in this verification workflow.
+- Never reset, drop, truncate, overwrite, or restore into the development database. The tooling enforces this (see _Guards_); it is not a convention.
+- Restore only into a **newly created, uniquely named, disposable** database prefixed `agencyos_restore_verify_`. Never reuse an existing database, and never point a restore at the development Compose database or copy its `DATABASE_URL`.
+- The isolated restore target uses the reserved port **5433**; the application (if a smoke check is needed) uses **3001**. If 5433 is occupied by a development database, stop and provision a separate isolated environment — do not connect to, stop, or remap over it. Never use port 3000 or the separate Codex project.
+- No `pg_restore --clean`, `dropdb`, `prisma db push`, or `prisma migrate dev` in verification. The verifier drops only the database it created in the same run, and only after re-checking its prefix.
+- Credentials travel in environment variables (`PG*`), never on a command line, and never appear in logs, tickets or this document.
+- Use a synthetic/sanitized backup for verification runs unless the data owner has approved the real one.
 
-## Verification procedure
+## Tooling
 
-1. **Prepare an isolated target.** Provision a disposable PostgreSQL instance with no network route or credentials to the development/production database. Confirm it listens only on the approved isolated environment's port 5433. Provision a database/user dedicated to this run; the database name must begin with `agencyos_restore_verify_` and must not already exist.
-2. **Select and identify a backup.** Record the backup creation time, PostgreSQL major version, source environment identifier, archive size, and SHA-256. Confirm the archive is readable with `pg_restore --list`. Do not publish a connection string or archive contents in verification logs.
-3. **Pin the target explicitly.** Supply separate, operator-controlled `RESTORE_VERIFY_ADMIN_URL` and `RESTORE_VERIFY_DATABASE_URL` values for the isolated instance. Before creating the database, verify server address, port `5433`, server version, and the expected database prefix using a read-only connection check. Abort if any value points to the development or production database.
-4. **Restore into a new database.** Create the uniquely named database on that isolated instance, then restore the archive with `pg_restore --exit-on-error --single-transaction --no-owner --dbname="$RESTORE_VERIFY_DATABASE_URL" "$BACKUP_FILE"`. Do not add `--clean`; do not reuse an existing database. If restore fails, preserve the disposable instance and logs for diagnosis rather than retrying against another target.
-5. **Verify recovery.** Check that restore completed without errors; confirm expected schema and migration history with read-only SQL and `npx prisma migrate status` pointed explicitly at `RESTORE_VERIFY_DATABASE_URL`; compare agreed table counts or checksums with the backup manifest; and run a read-only application smoke check if required. Any application or integration test that writes data must run only against this isolated synthetic database and on port 3001.
-6. **Capture evidence.** Record the backup checksum, source and target identifiers (not credentials), PostgreSQL versions, restore duration, command exit status, migration status, comparison results, exceptions, and reviewer sign-off. Store the evidence in the approved restricted operational location.
-7. **Clean up safely.** Retain the isolated target until the recovery reviewer accepts the evidence. Then remove only the disposable instance and database created for this run, after rechecking its environment and `agencyos_restore_verify_` name. Never run broad cleanup commands or delete/overwrite a source backup as part of verification.
+| File                                             | Purpose                                                                                                                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/backup/backup.mjs`                      | Creates a consistent custom-format dump, validates it, publishes it with a `.json` manifest.                                                                |
+| `scripts/backup/verify-restore.mjs`              | Restores a dump into a new disposable database and verifies schema, tables, row counts, migrations and referential integrity.                               |
+| `scripts/backup/lib.mjs`                         | Shared guardrails: connection parsing/redaction, libpq env, exclusive file creation, checksums, path containment, disposable-target assertions.             |
+| `scripts/backup/ci-seed.sql`                     | Small known fixture (organization → user → session, plus a role and rate-limit rows) used by CI to prove real rows survive.                                 |
+| `lib/__tests__/backup/backup-guardrails.test.ts` | Unit tests for the guardrails and the CLI surface.                                                                                                          |
+| `.github/workflows/ci.yml` → `backup-verify`     | The end-to-end job: back up, refuse overwrite, restore into an isolated second PostgreSQL service, verify rows independently, then prove the failure paths. |
 
-## Windows PowerShell command template
+Both scripts are dependency-free (Node built-ins only) so they can run during a recovery, before `npm ci`.
 
-Use a fresh PowerShell session. Provision `RESTORE_VERIFY_ADMIN_URL` and `RESTORE_VERIFY_DATABASE_URL` from the approved secret manager as process-scoped values; do not paste credentials into a command, save them in a script, or print them. The admin URL must name the maintenance database on the isolated PostgreSQL server; the target URL must name a new `agencyos_restore_verify_...` database on that same server. Also set `RESTORE_VERIFY_EXPECTED_SERVER_ADDRESS` from the isolated provider's connection details. These values must not be copied from the application's normal `DATABASE_URL`.
+### Creating a backup
 
-First validate the names and connection target, and perform only read-only checks. If any listener or identity is unexpected, stop; do not kill, stop, or connect to an unknown service:
+```bash
+DATABASE_URL='postgresql://user:...@host:5432/agencyos' \
+  node scripts/backup/backup.mjs --dir backups --label nightly
+```
+
+Produces `backups/agencyos-<timestamp>.dump` plus `backups/agencyos-<timestamp>.dump.json`. The manifest records the SHA-256, byte size, source host/port/database (never the user or password), PostgreSQL version, applied migration count, and exact per-table row counts.
+
+What the script guarantees, in order:
+
+1. **No overwrite.** The output is opened with `wx`. An existing path is exit code `2` unless `--force-replace` is passed deliberately. Run against the same `--output` twice, the second run fails and the first archive is untouched.
+2. **A consistent snapshot.** `pg_dump --serializable-deferrable` inside one transaction, so the archive is a single point-in-time state even while the application writes.
+3. **No bad archive under a good name.** The dump is written to `<name>.partial-<pid>-<rand>`, then validated (`pg_restore --list` succeeds, the file is plausibly sized, at least one `TABLE DATA` entry exists) and only then renamed into place. Any failure deletes the partial and exits non-zero.
+4. **No credentials in output.** Only file names, sizes, checksums and counts are printed. The DSN is printed redacted (`user:***@host`).
+5. **Owner-only files.** `0600` archives and manifests in a `0700` directory.
+
+Exit codes: `0` ok, `2` unsafe/usage (including refusing to overwrite), `3` a PostgreSQL client failed, `4` integrity failure, `5` verification failure.
+
+### Verifying a restore
+
+```bash
+RESTORE_VERIFY_ADMIN_URL='postgresql://user:...@isolated-host:5433/postgres' \
+RESTORE_VERIFY_ISOLATION_CONFIRMATION=I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET \
+RESTORE_VERIFY_ALLOWED_PORT=5433 \
+  node scripts/backup/verify-restore.mjs --backup backups/agencyos-<timestamp>.dump
+```
+
+`RESTORE_VERIFY_ADMIN_URL` must name a **maintenance** database (`postgres`) on the isolated instance. The script creates `agencyos_restore_verify_<timestamp>_<random>`, restores into it, verifies, and drops only that database.
+
+### Guards
+
+All of these run before the first write:
+
+| Guard                                                                                           | Failure mode prevented                                                                                     |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `RESTORE_VERIFY_ISOLATION_CONFIRMATION` must equal `I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET`   | Verifying against an environment nobody deliberately designated as disposable.                             |
+| Target name must start with `agencyos_restore_verify_`                                          | Restoring over a real database.                                                                            |
+| Target host+port+database must not equal `DATABASE_URL`                                         | Restoring over the application's own database. Checked first, so the error names the serious problem.      |
+| `RESTORE_VERIFY_ALLOWED_PORT` (e.g. `5433`)                                                     | Silently verifying against the wrong server.                                                               |
+| `RESTORE_VERIFY_EXPECTED_SERVER_ADDRESS`, checked against `inet_server_addr()` after connecting | A URL that resolves somewhere other than the approved host.                                                |
+| Manifest must exist; archive SHA-256 must match it                                              | Verifying a truncated, swapped or corrupted archive.                                                       |
+| Target must not already exist (re-checked immediately before `CREATE DATABASE`)                 | Reusing, and therefore partially overwriting, an old verification database.                                |
+| `pg_restore --exit-on-error --single-transaction`                                               | A _partially_ restored database being reported as a good restore. Any error rolls the entire restore back. |
+
+`assertWithinRoots` additionally refuses a `--output` outside the backup directory, so a typo cannot write over an unrelated file.
+
+### What the verification actually asserts
+
+Restoring a syntactically valid archive proves nothing on its own — an archive containing no data restores "successfully". The verifier fails unless all of the following hold, measured against the restored database:
+
+1. **Schema present** — all critical tables exist (`User`, `Organization`, `Role`, `Permission`, `Session`, `Invitation`, `Contact`, `AgencyAccount`, `Pipeline`, `Opportunity`, `Invoice`, `Payment`, `Project`, `Task`, `Document`, `ClientAccess`, `ClientInvitation`, `RateLimitBucket`).
+2. **Migration history present** — `_prisma_migrations` has at least one applied migration.
+3. **Referential integrity** — no foreign-key constraint is left unvalidated (`pg_constraint.convalidated`) and no index is left invalid. A restore that skipped constraints cannot pass this.
+4. **Rows are physically there** — exact `count(*)` per table, compared to the manifest. `pg_stat_user_tables.n_live_tup` is deliberately not used: it is a planner estimate that reads `0` in a freshly restored database, so an estimate-based check would pass on an empty restore.
+5. **Nothing shrank** — any table that held rows in the source must hold at least as many after restore. (More is allowed: a live source keeps writing after the snapshot.) A restore that silently dropped rows fails here.
+6. **Not empty** — a restore with zero rows everywhere fails unless `--allow-empty-tables` is passed for a deliberately empty source.
+
+The successful run prints a single machine-readable evidence line: `[verify] OK {"label":...,"sha256":...,"schemaTables":...,"totalRows":...,"appliedMigrations":...,...}`.
+
+## CI evidence
+
+The `backup-verify` job in `.github/workflows/ci.yml` runs on real PostgreSQL, not mocks:
+
+- Two separate `postgres:16-alpine` services: the source on `5432` and an **isolated restore target** on `5433`. Because they are different containers, a bug that wrote to the wrong database could not pass unnoticed.
+- Migrate the source, then insert the `ci-seed.sql` fixture.
+- Run `backup.mjs` and print the manifest.
+- Re-run `backup.mjs` against the existing archive and assert **exit 2** — the anti-clobber guarantee on a real filesystem.
+- Run `verify-restore.mjs` against the isolated target with the confirmation string and port pin.
+- **Independently** query the restored rows with `psql` and compare them to the expected fixture — the verifier is not allowed to be the only witness to its own success.
+- Corrupt a copy of the archive and assert **exit 4** with a checksum-mismatch message.
+- Assert **exit 2** for a missing confirmation, for a target named after the application database, and for the wrong isolated port.
+- Confirm the source database still has its data after all of the refusal attempts.
+- Grep every log and manifest for password material and unredacted URLs; fail if any is found.
+- Upload the manifest and verification log as a build artifact.
+
+A mocked or unit-tested backup script cannot satisfy this requirement, which is why the real restore lives in a dedicated CI job rather than in the unit suite. The unit suite covers the guard rules, redaction, exclusive creation, path containment and checksums.
+
+### Verified evidence
+
+Last full green run (`backup-verify`, run 43181728931, commit `fc866b1`) restored a real archive into the isolated port-5433 service and reported:
+
+```
+[verify] OK {"label":"ci-43181728931",
+             "sha256":"c57a012d774bdb76d0458f062fbbb4b858f1437f6d0e5d57d4ebc10d61f9e36a",
+             "status":"passed",
+             "schemaTables":60, "criticalTables":18, "populatedTables":7,
+             "totalRows":99, "rowCountsMatchManifest":true,
+             "appliedMigrations":19, "latestMigration":"0019_rate_limit_bucket",
+             "unvalidatedForeignKeys":0, "invalidIndexes":0,
+             "durationMs":1111}
+```
+
+That line is also published as a `notice` annotation on the job, because artifact and log storage are not reachable from every environment — evidence that cannot be read is not evidence.
+
+The verification was separately shown to be non-vacuous. Fed a restore that wrote nothing, it fails with `Restore is missing critical tables: User, Session, ...` (exit 5); fed one whose tables exist but are empty, it fails with `Restore lost rows in 3 table(s): User: 1 -> 0; ...` (exit 5). A `pg_restore` that exits 0 having written no rows is therefore not reported as success.
+
+### Two defects this job caught that unit tests could not
+
+Worth recording, because both are the failure mode this batch exists to prevent:
+
+1. **`pg_restore` without `--dbname` exits 0 and writes nothing.** It does not fall back to `PGDATABASE`. The restore step had this bug; it "passed" while restoring zero rows.
+2. **A pipeline's exit status is the last command's.** `node verify-restore.mjs | tee log` reported success even when the script failed, so a restore that died at INITIALIZING showed as a green step for several runs before the mismatch between steps 12 and 13 exposed it.
+
+Neither is visible in an archive listing, a mocked test, or a unit test of the guard functions.
+
+## Manual restore template (Windows PowerShell)
+
+Use this when a restore must be demonstrated outside CI, for example on an approved production backup. Use a fresh PowerShell session. Provision the URLs from the approved secret manager as process-scoped values; do not paste credentials into a command or print them.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
 if ($env:RESTORE_VERIFY_ISOLATION_CONFIRMATION -ne 'I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET') {
-  throw 'First verify out of band that this is a new disposable isolated PostgreSQL instance; then set the confirmation value in this PowerShell session.'
+  throw 'First verify out of band that this is a NEW disposable isolated PostgreSQL instance; then set the confirmation value in this session.'
 }
-if (-not $env:RESTORE_VERIFY_ADMIN_URL -or -not $env:RESTORE_VERIFY_DATABASE_URL -or -not $env:RESTORE_VERIFY_EXPECTED_SERVER_ADDRESS) {
-  throw 'Provide the isolated restore URLs and expected server address through the approved secret manager.'
+if (-not $env:RESTORE_VERIFY_ADMIN_URL -or -not $env:RESTORE_VERIFY_EXPECTED_SERVER_ADDRESS) {
+  throw 'Provide the isolated restore URL and expected server address through the approved secret manager.'
 }
 
 $adminUri = [Uri]$env:RESTORE_VERIFY_ADMIN_URL
-$targetUri = [Uri]$env:RESTORE_VERIFY_DATABASE_URL
-if ($adminUri.Scheme -notin @('postgres', 'postgresql') -or $targetUri.Scheme -notin @('postgres', 'postgresql')) {
-  throw 'Both URLs must use the postgres or postgresql scheme.'
-}
+if ($adminUri.Scheme -notin @('postgres', 'postgresql')) { throw 'The URL must use the postgres or postgresql scheme.' }
 $adminDb = [Uri]::UnescapeDataString($adminUri.AbsolutePath.TrimStart('/'))
-$targetDb = [Uri]::UnescapeDataString($targetUri.AbsolutePath.TrimStart('/'))
-if ($adminUri.Port -ne 5433 -or $targetUri.Port -ne 5433) { throw 'Both PostgreSQL URLs must use port 5433.' }
-if ($adminUri.DnsSafeHost -ne $targetUri.DnsSafeHost) { throw 'Admin and target URLs must name the same isolated PostgreSQL host.' }
-if ($targetDb -notmatch '^agencyos_restore_verify_[A-Za-z0-9_]+$') { throw 'Target database name must use the agencyos_restore_verify_ prefix.' }
-if ($adminDb -notmatch '^[A-Za-z0-9_]+$') { throw 'Admin URL must name a simple maintenance database.' }
+if ($adminUri.Port -ne 5433) { throw 'The isolated PostgreSQL URL must use port 5433.' }
+if ($adminDb -notmatch '^[A-Za-z0-9_]+$') { throw 'The URL must name a simple maintenance database.' }
 
 $listener = Get-NetTCPConnection -LocalPort 5433 -State Listen -ErrorAction SilentlyContinue
-if (-not $listener) { throw 'No PostgreSQL listener is available on the reserved port 5433; provision the isolated target first.' }
+if (-not $listener) { throw 'No PostgreSQL listener on the reserved port 5433; provision the isolated target first.' }
 
 # Configure libpq from the secret URL without putting credentials on a command line.
-# Split before URL-decoding so an encoded ':' inside a password stays part of the password.
-$env:PGUSER = $null
-$env:PGPASSWORD = $null
 $rawUserInfo = $adminUri.UserInfo
 $credentialSeparator = $rawUserInfo.IndexOf(':')
 if ($credentialSeparator -ge 0) {
@@ -69,48 +170,24 @@ $env:PGDATABASE = $adminDb
 if ($rawUser) { $env:PGUSER = [Uri]::UnescapeDataString($rawUser) }
 if ($null -ne $rawPassword) { $env:PGPASSWORD = [Uri]::UnescapeDataString($rawPassword) }
 
-$identity = (& psql -X -v ON_ERROR_STOP=1 -At -c "SELECT current_database() || '|' || COALESCE(inet_server_addr()::text, '') || '|' || inet_server_port()::text || '|' || current_setting('server_version')")
-if ($LASTEXITCODE -ne 0) { throw 'Could not identify the isolated PostgreSQL target.' }
-$identityParts = ([string]$identity).Split('|', 4)
-if ($identityParts.Count -ne 4 -or $identityParts[0] -ne $adminDb -or $identityParts[1] -ne $env:RESTORE_VERIFY_EXPECTED_SERVER_ADDRESS -or $identityParts[2] -ne '5433') {
-  throw 'Connected PostgreSQL identity does not match the approved isolated target; stop without creating a database.'
-}
-
-$exists = (& psql -X -v ON_ERROR_STOP=1 -At -c "SELECT 1 FROM pg_database WHERE datname = '$targetDb'")
-if ($LASTEXITCODE -ne 0) { throw 'Could not check whether the target database already exists.' }
-if ($exists) { throw 'Target database already exists; choose a new unique name and never overwrite it.' }
-
-# Verify the approved archive offline against the SHA-256 in its approved manifest.
-$BackupFile = 'C:\path\to\approved\synthetic-backup.dump'
-$ExpectedBackupSha256 = 'REPLACE_WITH_64_HEX_CHARACTERS_FROM_APPROVED_MANIFEST'
-if (-not (Test-Path -LiteralPath $BackupFile -PathType Leaf)) { throw 'Set BackupFile to an approved, readable backup archive.' }
-if ($ExpectedBackupSha256 -notmatch '^[A-Fa-f0-9]{64}$') { throw 'Set ExpectedBackupSha256 from the approved backup manifest.' }
-$actualBackupSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $BackupFile).Hash
-if ($actualBackupSha256 -ne $ExpectedBackupSha256) { throw 'Backup checksum does not match the approved manifest; do not create or restore a target.' }
-Write-Output "Verified backup SHA-256: $actualBackupSha256"
-& pg_restore --list $BackupFile > $null
-if ($LASTEXITCODE -ne 0) { throw 'Backup archive failed pg_restore --list; do not create or restore a target.' }
-
-# Create only the previously confirmed, new verification database.
-& createdb --no-password --maintenance-db=$adminDb $targetDb
-if ($LASTEXITCODE -ne 0) { throw 'Could not create the new verification database; preserve logs and stop.' }
-$env:PGDATABASE = $targetDb
-& pg_restore --exit-on-error --single-transaction --no-owner --no-password --dbname=$targetDb $BackupFile
-if ($LASTEXITCODE -ne 0) { throw 'Restore failed; preserve the disposable target and logs for diagnosis.' }
-
-# Read-only recovery checks. DATABASE_URL is pointed explicitly at the disposable restore.
-$env:DATABASE_URL = $env:RESTORE_VERIFY_DATABASE_URL
-npx prisma migrate status
-if ($LASTEXITCODE -ne 0) { throw 'Prisma migration status failed against the disposable restore.' }
-# Run approved, read-only table/migration checks here; compare them to the backup manifest.
+# The verification script performs the identity check, the prefix check, the
+# existence check, the restore and the data checks itself.
+node scripts/backup/verify-restore.mjs --backup 'C:\path\to\approved\backup.dump' --keep
+if ($LASTEXITCODE -ne 0) { throw "Restore verification failed with exit code $LASTEXITCODE; preserve the disposable target and logs." }
 ```
 
-`BackupFile` above is a documentation placeholder; replace it only with an approved backup path. Do not run the template until the expected server address and an isolated disposable PostgreSQL service have been independently verified. For a read-only app smoke check, first confirm port 3001 is free (if occupied, stop and identify its owner—never terminate it), set `DATABASE_URL` to the disposable target URL, then run `npm run start -- --hostname 0.0.0.0 --port 3001` in the foreground. Do not run write-capable integration or E2E suites against a production or development restore.
+`--keep` leaves the disposable database in place for inspection; drop it manually only after confirming its name carries the `agencyos_restore_verify_` prefix. For a read-only application smoke check, first confirm port 3001 is free (if occupied, stop and identify its owner — never terminate it), set `DATABASE_URL` to the disposable target URL, then run `npm run start -- --hostname 0.0.0.0 --port 3001` in the foreground. Do not run write-capable integration or E2E suites against a production or development restore.
 
-## Current sandbox evidence — 2026-11-11
+## Required before a production recovery claim (Batch 3B)
 
-**Restore not run; environment blocked.** `DATABASE_URL` is unset; no listener is present on ports 3001 or 5433; `psql`, `pg_dump`, `pg_restore`, `postgres`, Docker, and Podman are unavailable; and no backup archive was found in the repository/workspace. No database or backup was opened, created, restored, or modified. This is a documented blocker, not restore evidence. A real verification still requires an approved backup, the isolated port-5433 PostgreSQL instance, and the matching client tools.
+Deliberately out of scope for this batch, and still required:
 
-## Required before production recovery can be claimed
+- An approved backup destination with encryption and key ownership (no backup is uploaded anywhere today; archives land on local disk).
+- A schedule and retention policy, plus pruning that never deletes the newest verified backup.
+- Monitoring and alerting on backup failure, age, and verification failure.
+- Off-site replication and a documented RPO/RTO.
+- Restore automation and an owner for periodic restore drills.
+- Approval of the data owner before verifying against real production data, and a documented sanitization approach if synthetic data is used instead.
+- A decision on whether the CI job's second PostgreSQL service should be replaced by the real isolated environment for drill runs.
 
-Approve the backup destination, encryption/key ownership, schedule, retention, monitoring/alerting, access policy, RPO/RTO, and restore ownership; implement and operationally test the backup job and restore automation; and repeat this workflow on a representative approved backup. A successful restore verification alone does not prove that scheduled backups, off-site retention, or production recovery objectives are met.
+A successful restore verification does not prove that scheduled backups, retention or recovery objectives are met.

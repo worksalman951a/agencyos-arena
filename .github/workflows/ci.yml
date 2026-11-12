@@ -28,8 +28,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
+          node-version: '22'
+          cache: 'npm'
       - run: npm ci
       - run: npm run lint
       # Generate the Prisma client before typechecking: without it @prisma/client
@@ -37,8 +37,8 @@ jobs:
       # Prisma call `any`, which hides schema/code drift from tsc.
       - run: node_modules/.bin/prisma generate
         env:
-          CHECKPOINT_DISABLE: "1"
-          PRISMA_HIDE_UPDATE_MESSAGE: "true"
+          CHECKPOINT_DISABLE: '1'
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true'
       - run: npx tsc --noEmit
       # Prisma client is typed `any` in lib/db.ts, so tsc cannot catch writes to
       # columns that do not exist. This guard statically compares every Prisma
@@ -65,8 +65,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
+          node-version: '22'
+          cache: 'npm'
       - run: npm ci
 
       - run: |
@@ -80,18 +80,18 @@ jobs:
           done
       - run: node_modules/.bin/prisma generate
         env:
-          CHECKPOINT_DISABLE: "1"
-          PRISMA_HIDE_UPDATE_MESSAGE: "true"
+          CHECKPOINT_DISABLE: '1'
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true'
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
       - run: node_modules/.bin/prisma validate
         env:
-          CHECKPOINT_DISABLE: "1"
-          PRISMA_HIDE_UPDATE_MESSAGE: "true"
-          DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public" 
+          CHECKPOINT_DISABLE: '1'
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true'
+          DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
       - run: set -o pipefail && node_modules/.bin/prisma migrate deploy 2>&1
         env:
-          CHECKPOINT_DISABLE: "1"
-          PRISMA_HIDE_UPDATE_MESSAGE: "true"
+          CHECKPOINT_DISABLE: '1'
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true'
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -137,17 +137,17 @@ jobs:
         env:
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET || 'ci_auth_secret_arena_2026' }}
-          BETTER_AUTH_URL: "http://localhost:3001"
-          TEST_SERVER_URL: "http://localhost:3001"
-          NODE_ENV: "test"
-          PORT: "3001"
+          BETTER_AUTH_URL: 'http://localhost:3001'
+          TEST_SERVER_URL: 'http://localhost:3001'
+          NODE_ENV: 'test'
+          PORT: '3001'
           # The integration runner drives hundreds of requests from 127.0.0.1.
           # Trusting the forwarding header here (the runner is the only client,
           # and it is what sets the header) lets each suite claim its own
           # private bucket and exercise the per-address limits without
           # exhausting the shared one. Production does not set this unless a
           # real trusted proxy rewrites the header.
-          TRUST_PROXY_HEADERS: "1"
+          TRUST_PROXY_HEADERS: '1'
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -200,8 +200,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
+          node-version: '22'
+          cache: 'npm'
       - run: npm ci
       - run: |
           for i in $(seq 1 30); do
@@ -214,13 +214,13 @@ jobs:
           done
       - run: node_modules/.bin/prisma generate
         env:
-          CHECKPOINT_DISABLE: "1"
-          PRISMA_HIDE_UPDATE_MESSAGE: "true"
+          CHECKPOINT_DISABLE: '1'
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true'
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
       - run: node_modules/.bin/prisma migrate deploy
         env:
-          CHECKPOINT_DISABLE: "1"
-          PRISMA_HIDE_UPDATE_MESSAGE: "true"
+          CHECKPOINT_DISABLE: '1'
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true'
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
       - name: Record Playwright runner and browser metadata
         run: |
@@ -251,7 +251,7 @@ jobs:
         env:
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET || 'ci_auth_secret_arena_2026' }}
-          BETTER_AUTH_URL: "http://localhost:3001"
+          BETTER_AUTH_URL: 'http://localhost:3001'
       - name: Run Playwright against an isolated test database
         run: |
           npm start > e2e-server-output.log 2>&1 &
@@ -279,13 +279,13 @@ jobs:
         env:
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET || 'ci_auth_secret_arena_2026' }}
-          BETTER_AUTH_URL: "http://localhost:3001"
-          APP_URL: "http://localhost:3001"
-          TEST_SERVER_URL: "http://localhost:3001"
-          PLAYWRIGHT_SKIP_WEBSERVER: "1"
-          PLAYWRIGHT_JSON_OUTPUT_FILE: "playwright-results.json"
-          CI: "true"
-          PORT: "3001"
+          BETTER_AUTH_URL: 'http://localhost:3001'
+          APP_URL: 'http://localhost:3001'
+          TEST_SERVER_URL: 'http://localhost:3001'
+          PLAYWRIGHT_SKIP_WEBSERVER: '1'
+          PLAYWRIGHT_JSON_OUTPUT_FILE: 'playwright-results.json'
+          CI: 'true'
+          PORT: '3001'
       - name: Report exact Playwright result counts
         if: always()
         run: |
@@ -352,11 +352,451 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
+          node-version: '22'
+          cache: 'npm'
       - run: npm ci
       - run: npm run build
         env:
           DATABASE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET || 'ci_auth_secret_arena_2026' }}
-          BETTER_AUTH_URL: "http://localhost:3001"
+          BETTER_AUTH_URL: 'http://localhost:3001'
+
+  # Backup & restore verification (Phase 4D / Batch 3A).
+  #
+  # This is the only place the backup tooling is exercised end to end, because
+  # a backup script can only be proved by a real PostgreSQL server. A mocked
+  # `pg_dump`, a unit test of the guard functions, or `pg_restore --list`
+  # showing a plausible object list would all pass on an archive that restores
+  # to nothing. So this job:
+  #
+  #   1. migrates the service database and writes a small known fixture,
+  #   2. runs scripts/backup/backup.mjs to produce a real custom-format dump,
+  #   3. restores it into a NEW disposable database on a SECOND, isolated
+  #      PostgreSQL service (port 5433) via scripts/backup/verify-restore.mjs,
+  #   4. queries the restored copy directly for the fixture rows,
+  #   5. re-runs the tooling against a corrupted archive to prove it fails.
+  #
+  # Two separate services matter: the restore target is a different server, so
+  # a bug that accidentally wrote to the source cannot hide behind "it worked".
+  # The application database itself is never restored into, reset or dropped.
+  backup-verify:
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agencyos
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}
+          POSTGRES_DB: agencyos
+        options: >-
+          --health-cmd "pg_isready -U agencyos -d agencyos"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      # The isolated target. A distinct container on 5433, so the restore
+      # cannot reach the source database even by accident.
+      postgres-restore-target:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agencyos
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd "pg_isready -U agencyos -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+    env:
+      SOURCE_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5432/agencyos?schema=public"
+      TARGET_URL: "postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:5433/postgres"
+      # The seed step uses these instead of passing a URL on the psql command
+      # line, so the password never appears in the process list.
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: agencyos
+      PGDATABASE: agencyos
+      PGPASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}
+      PG_CLIENT_VERSION: '16'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+
+      # pg_dump/pg_restore/psql are not on the ubuntu-latest image by default.
+      # Install only the client (not a server) so the tools match the
+      # postgres:16 service image.
+      - name: Install PostgreSQL 16 client tools
+        run: |
+          # The client major must match the postgres:16 service image. A newer
+          # client emits `SET transaction_timeout = 0`, which a 16 server
+          # rejects, and the restore then dies while INITIALIZING.
+          #
+          # Neither apt route works on this runner (PGDG has no 16 series for
+          # the release; the distribution repos ship 18 with no versioned 16
+          # package). Copying binaries out of the image is also not enough: the
+          # PGDG binaries need libpq from the same image, so `psql` exits 127
+          # once run on the bare runner.
+          #
+          # So the tools run *inside* the image. A wrapper is written for each
+          # tool, which is what every later step invokes — the PATH looks the
+          # same to the scripts, and the binaries keep their own libraries.
+          mkdir -p "$HOME/pg-client/bin"
+          docker pull -q "postgres:${PG_CLIENT_VERSION}" > /dev/null
+
+          write_wrapper() {
+            local tool="$1"
+            cat > "$HOME/pg-client/bin/$tool" <<WRAPPER
+          #!/bin/bash
+          # Runs the ${PG_CLIENT_VERSION} client from the official image so the
+          # binary always matches the server the dump is restored into.
+          # --network host so `localhost:5432` inside the container is the
+          # runner's localhost, where the service ports are published.
+          exec docker run --rm -i --network host \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            -e PGSSLMODE -e PGCONNECT_TIMEOUT -e PGPASSFILE \
+            -v "\$PWD:\$PWD" -w "\$PWD" \
+            "postgres:${PG_CLIENT_VERSION}" "$tool" "\$@"
+          WRAPPER
+            chmod +x "$HOME/pg-client/bin/$tool"
+          }
+
+          for tool in pg_dump pg_restore psql pg_isready createdb; do
+            write_wrapper "$tool"
+          done
+
+          echo "$HOME/pg-client/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/pg-client/bin:$PATH"
+
+          pg_dump --version
+          pg_restore --version
+          psql --version
+          dump_major="$(pg_dump --version | sed -E 's/.* ([0-9]+)\..*/\1/')"
+          restore_major="$(pg_restore --version | sed -E 's/.* ([0-9]+)\..*/\1/')"
+          echo "client major: pg_dump=$dump_major pg_restore=$restore_major (server image: ${PG_CLIENT_VERSION})"
+          if [ "$dump_major" != "$PG_CLIENT_VERSION" ] || [ "$restore_major" != "$PG_CLIENT_VERSION" ]; then
+            echo "::error title=pg client version::need pg_dump/pg_restore major $PG_CLIENT_VERSION to match the postgres:16 service, got $dump_major/$restore_major"
+            exit 1
+          fi
+
+      - name: Wait for both PostgreSQL services
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U agencyos -d agencyos \
+               && pg_isready -h localhost -p 5433 -U agencyos -d postgres; then
+              echo "Both services are ready"
+              exit 0
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 2
+          done
+          echo "ERROR: PostgreSQL services did not become ready" >&2
+          exit 1
+
+      - name: Migrate the source database
+        run: node_modules/.bin/prisma migrate deploy
+        env:
+          CHECKPOINT_DISABLE: '1'
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true'
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+
+      - name: Seed known fixture rows
+        run: psql -w -v ON_ERROR_STOP=1 -q -f scripts/backup/ci-seed.sql
+
+      # ---------------------------------------------------------------------
+      # 1. Back up.
+      # ---------------------------------------------------------------------
+      - name: Create backup
+        run: |
+          node scripts/backup/backup.mjs --dir backup-artifacts --label "ci-${{ github.run_id }}"
+          echo "--- artifacts ---"
+          ls -l backup-artifacts
+          echo "--- manifest ---"
+          cat backup-artifacts/*.json
+        env:
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+
+      # A second run into the same directory must refuse, not overwrite. This is
+      # the anti-clobber guarantee, checked against the real filesystem.
+      - name: Backup refuses to overwrite an existing archive
+        run: |
+          set +e
+          node scripts/backup/backup.mjs --dir backup-artifacts --output "$(ls backup-artifacts/*.dump | head -1)"
+          status=$?
+          set -e
+          if [ "$status" -ne 2 ]; then
+            echo "ERROR: expected exit 2 (refused to overwrite), got $status" >&2
+            exit 1
+          fi
+          echo "Correctly refused to overwrite (exit 2)"
+        env:
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+
+      # ---------------------------------------------------------------------
+      # 2. Restore into the isolated, disposable database and verify.
+      # ---------------------------------------------------------------------
+      - name: Restore into isolated database and verify
+        run: |
+          set -o pipefail
+          DUMP="$(ls backup-artifacts/*.dump | head -1)"
+          # `set -o pipefail` is load-bearing. Without it a pipeline's status is
+          # `tee`'s, so a failing verification reported SUCCESS — which is how an
+          # earlier run showed "restore passed" while nothing had been restored.
+          if ! node scripts/backup/verify-restore.mjs \
+              --backup "$DUMP" \
+              --label "ci-${{ github.run_id }}" \
+              | tee restore-verification.log; then
+            echo "::error title=restore verification::$(tail -c 1500 restore-verification.log | tr '\n' ' ')"
+            exit 1
+          fi
+          # Publish the evidence as a notice annotation. Artifact and log
+          # storage are not reachable from every environment, but the
+          # annotations API always is, so the proof of what was restored stays
+          # retrievable instead of living only in a blob that may not resolve.
+          evidence="$(grep -h '^\[verify\] OK ' restore-verification.log | tail -1)"
+          echo "::notice title=restore evidence::${evidence:-see restore-verification.log}"
+        env:
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+          RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
+          RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
+          RESTORE_VERIFY_ALLOWED_PORT: '5433'
+
+      # ---------------------------------------------------------------------
+      # 3. Independent proof. The script above could in principle verify itself
+      #    incorrectly, so this step queries the restored rows directly with
+      #    psql and compares them to the source. It runs its own restore into a
+      #    second disposable database that it keeps, so the rows are real.
+      # ---------------------------------------------------------------------
+      - name: Query the restored data independently
+        run: |
+          set -euo pipefail
+
+          # The verification step above could in principle be wrong about its
+          # own success, so this step looks at the restored rows with psql and
+          # nothing else. It asks verify-restore.mjs for a `--keep` run, which
+          # reuses the restore path already proven in the previous step rather
+          # than re-implementing CREATE DATABASE / pg_restore / DROP here.
+          DUMP="$(ls backup-artifacts/*.dump | head -1)"
+          node scripts/backup/verify-restore.mjs --backup "$DUMP" --keep \
+            > keep-restore.log 2>&1 || {
+            echo "::error title=restore verification::--keep restore failed: $(tail -c 1200 keep-restore.log | tr '\n' ' ')"
+            exit 1
+          }
+          cat keep-restore.log
+
+          DB="$(sed -n 's/^\[verify\] kept *\([^ ]*\).*/\1/p' keep-restore.log | tail -1)"
+          if [ -z "$DB" ]; then
+            echo "::error title=restore verification::could not determine the kept database name"
+            exit 1
+          fi
+          echo "Inspecting kept database: $DB"
+
+          # Discrete PG* env: the password is never an argument of psql.
+          export PGHOST=localhost PGPORT=5433 PGUSER=agencyos PGPASSWORD="$TARGET_PASSWORD"
+
+          # -A -t -F'|' so the output is exactly `name|count`, with no heading
+          # or "(N rows)" footer to parse around.
+          psql -w -At -F'|' -v ON_ERROR_STOP=1 -d "$DB" -c "
+            SELECT 'Organization'::text, count(*) FROM \"Organization\" WHERE id = 'bkverify-org-0001'
+            UNION ALL SELECT 'Role', count(*) FROM \"Role\" WHERE id = 'bkverify-role-0001'
+            UNION ALL SELECT 'User', count(*) FROM \"User\" WHERE id = 'bkverify-user-0001'
+            UNION ALL SELECT 'Session', count(*) FROM \"Session\" WHERE id = 'bkverify-session-0001'
+            UNION ALL SELECT 'RateLimitBucket', count(*) FROM \"RateLimitBucket\" WHERE key LIKE 'bkverify:bucket:%'
+            UNION ALL SELECT '_prisma_migrations', count(*) FROM \"_prisma_migrations\" WHERE finished_at IS NOT NULL;" \
+            > restored-rows.txt 2>&1 || {
+            echo "::error title=restore verification::query failed: $(tail -c 1200 restored-rows.txt | tr '\n' ' ')"
+            exit 1
+          }
+          echo "--- restored fixture rows ---"
+          cat restored-rows.txt
+
+          check() {
+            local name="$1" want="$2"
+            local got
+            got="$(awk -F'|' -v n="$name" '$1==n {print $2}' restored-rows.txt | tr -d ' \r')"
+            if [ "$got" != "$want" ]; then
+              echo "::error title=restore verification::$name has '$got' row(s) after restore, expected '$want'. Counts: $(tr '\n' ' ' < restored-rows.txt)"
+              return 1
+            fi
+            echo "  $name: $got (expected $want)"
+          }
+
+          check Organization 1
+          check Role 1
+          check User 1
+          check Session 1
+          check RateLimitBucket 2
+
+          migrations="$(awk -F'|' '$1=="_prisma_migrations" {print $2}' restored-rows.txt | tr -d ' \r')"
+          if [ -z "$migrations" ] || [ "$migrations" -lt 19 ]; then
+            echo "::error title=restore verification::migration history has '$migrations' rows, expected >= 19"
+            exit 1
+          fi
+          echo "  _prisma_migrations: $migrations"
+
+          # Row counts alone would pass on an archive whose foreign keys were
+          # dropped, so this asserts the relationship survived with the data.
+          joins="$(psql -w -At -v ON_ERROR_STOP=1 -d "$DB" -c "
+            SELECT count(*) FROM \"Session\" s
+            JOIN \"User\" u ON u.id = s.\"userId\"
+            JOIN \"Organization\" o ON o.id = u.\"organizationId\"
+            WHERE s.id = 'bkverify-session-0001'
+              AND u.id = 'bkverify-user-0001'
+              AND o.id = 'bkverify-org-0001';" 2>&1)" || {
+            echo "::error title=restore verification::join query failed: $joins"
+            exit 1
+          }
+          echo "Restored session -> user -> organization join rows: $joins"
+          if [ "$joins" != "1" ]; then
+            echo "::error title=restore verification::the restored session no longer joins to its user and organization (got '$joins')"
+            exit 1
+          fi
+
+          # Drop only the database this step inspected, re-checking the prefix.
+          case "$DB" in
+            agencyos_restore_verify_*) psql -w -q -d postgres -c "DROP DATABASE \"$DB\";" ;;
+            *) echo "::error title=restore verification::refusing to drop '$DB' (no disposable prefix)"; exit 1 ;;
+          esac
+          echo "Independent verification passed: fixture rows, migrations and foreign keys intact"
+        env:
+          TARGET_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}
+          # `--keep` still goes through every guard, so it needs the same
+          # isolated-target declaration the verification step used.
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+          RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
+          RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
+          RESTORE_VERIFY_ALLOWED_PORT: '5433'
+
+      # ---------------------------------------------------------------------
+      # 4. Failure paths. A verifier that only ever sees success is untested.
+      # ---------------------------------------------------------------------
+      - name: Corrupted archive is rejected before any restore
+        run: |
+          set -euo pipefail
+          DUMP="$(ls backup-artifacts/*.dump | head -1)"
+          CORRUPT="backup-artifacts/corrupted.dump"
+          cp "$DUMP" "$CORRUPT"
+          cp "$DUMP.json" "$CORRUPT.json"
+          # Flip bytes in the middle: still a file, no longer a valid archive.
+          printf 'XXXXXXXX' | dd of="$CORRUPT" bs=1 seek=2048 conv=notrunc status=none
+          set +e
+          node scripts/backup/verify-restore.mjs --backup "$CORRUPT" > corrupt.log 2>&1
+          status=$?
+          set -e
+          cat corrupt.log
+          if [ "$status" -ne 4 ]; then
+            echo "ERROR: expected exit 4 (integrity), got $status" >&2
+            exit 1
+          fi
+          grep -qi "checksum mismatch" corrupt.log
+          echo "Corrupted archive correctly rejected with exit 4"
+        env:
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+          RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
+          RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
+          RESTORE_VERIFY_ALLOWED_PORT: '5433'
+
+      - name: Restore refuses a non-disposable target
+        run: |
+          set -uo pipefail
+          DUMP="$(ls backup-artifacts/*.dump | head -1)"
+
+          fail() {
+            echo "::error title=refusal matrix::$1"
+            if [ -f refusal.log ]; then echo "--- last output ---"; tail -20 refusal.log; fi
+            exit 1
+          }
+
+          check_refused() {
+            local label="$1"; shift
+            : > refusal.log
+            set +e
+            "$@" > refusal.log 2>&1
+            local status=$?
+            set -e
+            cat refusal.log
+            if [ "$status" -ne 2 ]; then
+              fail "$label — expected exit 2 (unsafe), got $status"
+            fi
+            echo "$label -> refused correctly"
+          }
+
+          # 1. No confirmation string: the operator never declared the target
+          #    disposable.
+          check_refused "missing confirmation" env -u RESTORE_VERIFY_ISOLATION_CONFIRMATION \
+            node scripts/backup/verify-restore.mjs --backup "$DUMP"
+
+          # 2. Pointed at the application database: the exact mistake the guard
+          #    exists to stop. The name is explicitly the live one, so the
+          #    "target is DATABASE_URL" branch is genuinely reached.
+          check_refused "application database as target" env \
+            RESTORE_VERIFY_ADMIN_URL="$DATABASE_URL" \
+            RESTORE_VERIFY_ISOLATION_CONFIRMATION=I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET \
+            node scripts/backup/verify-restore.mjs --backup "$DUMP" \
+              --target-database agencyos
+
+          # 3. Isolated server, but not the approved port.
+          check_refused "wrong isolated port" env \
+            RESTORE_VERIFY_ALLOWED_PORT=5499 \
+            node scripts/backup/verify-restore.mjs --backup "$DUMP"
+
+          # The application database must be untouched by all of the above.
+          # PG* in this step's env point at the SOURCE service on 5432.
+          here="$(psql -w -q -At -v ON_ERROR_STOP=1 -c 'SELECT current_database();' 2>&1)" \
+            || fail "could not query the source database: $here"
+          echo "connected to: $here"
+          [ "$here" = "agencyos" ] || fail "this check is not pointed at the source database (got '$here')"
+
+          rows="$(psql -w -q -At -v ON_ERROR_STOP=1 -c 'SELECT count(*) FROM "Organization";' 2>&1)" \
+            || fail "could not count source rows: $rows"
+          echo "Organization rows still in the source database: $rows"
+          [ "$rows" -ge 1 ] || fail "source database lost its data (Organization rows = $rows)"
+        env:
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+          RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
+          RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
+          RESTORE_VERIFY_ALLOWED_PORT: '5433'
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: agencyos
+          PGDATABASE: agencyos
+          PGPASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}
+
+      # ---------------------------------------------------------------------
+      # 5. Nothing sensitive in the logs.
+      # ---------------------------------------------------------------------
+      - name: Backup output contains no credentials
+        run: |
+          set -euo pipefail
+          PASSWORD="${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}"
+          for f in restore-verification.log restored-rows.txt corrupt.log backup-artifacts/*.json; do
+            [ -f "$f" ] || continue
+            if grep -qF "$PASSWORD" "$f"; then
+              echo "ERROR: credential material found in $f" >&2
+              exit 1
+            fi
+            if grep -qE 'postgresql://[^:]+:[^*@]' "$f"; then
+              echo "ERROR: unredacted connection URL found in $f" >&2
+              exit 1
+            fi
+          done
+          echo "No credentials in any backup/restore output"
+
+      - name: Upload backup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-verify-evidence
+          path: |
+            backup-artifacts/*.json
+            restore-verification.log
+            restored-rows.txt
+          if-no-files-found: ignore
+          retention-days: 7

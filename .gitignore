@@ -55,3 +55,9 @@ next-env.d.ts
 
 # local sandbox Playwright config (uses /tmp/chromium)
 /playwright.local.config.ts
+
+# database backups — may contain production data; must never be committed
+/backups/
+*.dump
+*.dump.json
+*.dump.partial-*
