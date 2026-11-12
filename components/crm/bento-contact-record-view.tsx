@@ -27,6 +27,8 @@ interface ContactAuditUser {
   name: string;
 }
 
+import { ClientPortalAccessWidget } from '@/components/crm/client-portal-access-widget';
+
 export interface ContactDetailRecord {
   id: string;
   organizationId: string;
@@ -293,6 +295,9 @@ export function BentoContactRecordView({
               )}
             </div>
           </Panel>
+
+          {/* Client Portal Access Management (Phase 12B) */}
+          <ClientPortalAccessWidget contactId={contact.id} contactEmail={contact.email} />
 
           <Panel title="Audit & Governance">
             <div className="space-y-3 text-xs">
