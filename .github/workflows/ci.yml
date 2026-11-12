@@ -556,6 +556,12 @@ jobs:
             echo "::error title=restore verification::$(tail -c 1500 restore-verification.log | tr '\n' ' ')"
             exit 1
           fi
+          # Publish the evidence as a notice annotation. Artifact and log
+          # storage are not reachable from every environment, but the
+          # annotations API always is, so the proof of what was restored stays
+          # retrievable instead of living only in a blob that may not resolve.
+          evidence="$(grep -h '^\[verify\] OK ' restore-verification.log | tail -1)"
+          echo "::notice title=restore evidence::${evidence:-see restore-verification.log}"
         env:
           DATABASE_URL: ${{ env.SOURCE_URL }}
           RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
