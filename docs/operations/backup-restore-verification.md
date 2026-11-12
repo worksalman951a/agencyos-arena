@@ -1,6 +1,6 @@
 # Backup and restore verification
 
-**Status: backup creation and isolated restore verification are implemented, and are exercised end to end on real PostgreSQL in CI (`backup-verify` job). Scheduling, retention, off-site storage, encryption/key management, monitoring and restore automation are NOT implemented — they are Batch 3B work, listed at the end of this document.**
+**Status: backup creation and isolated restore verification are implemented, and are exercised end to end on real PostgreSQL in CI (`backup-verify` job). Scheduling, retention and failure reporting are also implemented — see [scheduled backups, retention and failure reporting](backup-scheduling-retention.md). Off-site storage, encryption/key management, monitoring and restore automation are NOT implemented — they are Batch 3C work, listed at the end of this document.**
 
 This document covers three things: the safety invariants that any restore must satisfy, the tooling that implements backup + verification, and the residual work required before a production recovery claim is possible.
 
@@ -20,8 +20,11 @@ This document covers three things: the safety invariants that any restore must s
 | `scripts/backup/backup.mjs`                      | Creates a consistent custom-format dump, validates it, publishes it with a `.json` manifest.                                                                |
 | `scripts/backup/verify-restore.mjs`              | Restores a dump into a new disposable database and verifies schema, tables, row counts, migrations and referential integrity.                               |
 | `scripts/backup/lib.mjs`                         | Shared guardrails: connection parsing/redaction, libpq env, exclusive file creation, checksums, path containment, disposable-target assertions.             |
+| `scripts/backup/scheduled-backup.mjs`            | One-shot scheduled runner (Batch 3B): lock, backup, retention, structured result, exit code. See [the scheduling runbook](backup-scheduling-retention.md).  |
+| `scripts/backup/retention.mjs`                   | Retention pass (Batch 3B): classifies the backup directory and deletes only expired archives it owns.                                                       |
 | `scripts/backup/ci-seed.sql`                     | Small known fixture (organization → user → session, plus a role and rate-limit rows) used by CI to prove real rows survive.                                 |
 | `lib/__tests__/backup/backup-guardrails.test.ts` | Unit tests for the guardrails and the CLI surface.                                                                                                          |
+| `lib/__tests__/backup/backup-scheduling.test.ts` | Unit tests for the scheduled runner and the retention pass.                                                                                                 |
 | `.github/workflows/ci.yml` → `backup-verify`     | The end-to-end job: back up, refuse overwrite, restore into an isolated second PostgreSQL service, verify rows independently, then prove the failure paths. |
 
 Both scripts are dependency-free (Node built-ins only) so they can run during a recovery, before `npm ci`.
@@ -178,16 +181,17 @@ if ($LASTEXITCODE -ne 0) { throw "Restore verification failed with exit code $LA
 
 `--keep` leaves the disposable database in place for inspection; drop it manually only after confirming its name carries the `agencyos_restore_verify_` prefix. For a read-only application smoke check, first confirm port 3001 is free (if occupied, stop and identify its owner — never terminate it), set `DATABASE_URL` to the disposable target URL, then run `npm run start -- --hostname 0.0.0.0 --port 3001` in the foreground. Do not run write-capable integration or E2E suites against a production or development restore.
 
-## Required before a production recovery claim (Batch 3B)
+## Required before a production recovery claim (Batch 3C)
 
-Deliberately out of scope for this batch, and still required:
+Scheduling, retention and failure reporting are implemented — see
+[scheduled backups, retention and failure reporting](backup-scheduling-retention.md).
+Deliberately out of scope for that batch, and still required:
 
 - An approved backup destination with encryption and key ownership (no backup is uploaded anywhere today; archives land on local disk).
-- A schedule and retention policy, plus pruning that never deletes the newest verified backup.
-- Monitoring and alerting on backup failure, age, and verification failure.
 - Off-site replication and a documented RPO/RTO.
+- Monitoring of backup _age_ (not only failure), dashboards and alerting beyond the exit code, the result file and the webhook.
 - Restore automation and an owner for periodic restore drills.
 - Approval of the data owner before verifying against real production data, and a documented sanitization approach if synthetic data is used instead.
 - A decision on whether the CI job's second PostgreSQL service should be replaced by the real isolated environment for drill runs.
 
-A successful restore verification does not prove that scheduled backups, retention or recovery objectives are met.
+A successful restore verification does not prove that the archive is recoverable from another site, and a green scheduled run does not prove the retention window is long enough.

@@ -540,6 +540,160 @@ jobs:
           DATABASE_URL: ${{ env.SOURCE_URL }}
 
       # ---------------------------------------------------------------------
+      # 1b. The scheduled runner (Phase 4D / Batch 3B), against real
+      #     PostgreSQL.
+      #
+      # The unit suite mocks the backup command, so only a real server can
+      # show that the scheduled path produces a genuine archive, that
+      # retention behaves on real files, and that the failure paths report
+      # the documented exit codes.
+      # ---------------------------------------------------------------------
+      - name: Scheduled runner creates a verified backup
+        run: |
+          set -euo pipefail
+          node scripts/backup/scheduled-backup.mjs \
+            --dir scheduled-artifacts \
+            --keep 3 \
+            --label "ci-scheduled-${{ github.run_id }}"
+          echo "--- structured result ---"
+          cat scheduled-artifacts/last-run.json
+          node <<'NODE'
+          const fs = require('node:fs');
+          const result = JSON.parse(fs.readFileSync('scheduled-artifacts/last-run.json', 'utf8'));
+          const problems = [];
+          if (result.status !== 'succeeded') problems.push(`status=${result.status}`);
+          if (result.backup.status !== 'succeeded') problems.push(`backup=${result.backup.status}`);
+          if (!/^[0-9a-f]{64}$/.test(result.backup.archive?.sha256 ?? '')) problems.push('no sha256');
+          if (!result.startedAt || !result.finishedAt) problems.push('missing timestamps');
+          if (result.retention.status !== 'applied') problems.push(`retention=${result.retention.status}`);
+          if (problems.length) {
+            console.error(`::error title=scheduled backup::${problems.join(', ')}`);
+            process.exit(1);
+          }
+          console.log(`::notice title=scheduled backup::status=${result.status} archive=${result.backup.archive.name} sha256=${result.backup.archive.sha256}`);
+          NODE
+        env:
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+
+      - name: Scheduled runner applies retention and keeps the newest backup
+        run: |
+          set -euo pipefail
+
+          # Two more archives, so the policy has something to expire.
+          for i in 1 2; do
+            node scripts/backup/scheduled-backup.mjs \
+              --dir scheduled-artifacts --keep 3 --label "ci-retention-$i" > /dev/null
+          done
+          before="$(ls scheduled-artifacts/*.dump | wc -l)"
+          echo "archives before retention: $before"
+          [ "$before" -eq 3 ] || { echo "::error title=retention::expected 3 archives, got $before"; exit 1; }
+
+          # A dry run must plan deletions and change nothing.
+          node scripts/backup/scheduled-backup.mjs \
+            --dir scheduled-artifacts --retention-only --keep 1 --dry-run > retention-dry-run.log
+          after_dry="$(ls scheduled-artifacts/*.dump | wc -l)"
+          [ "$after_dry" -eq "$before" ] || {
+            echo "::error title=retention::the dry run changed the archive set ($before -> $after_dry)"
+            exit 1
+          }
+          node <<'NODE'
+          const fs = require('node:fs');
+          const result = JSON.parse(fs.readFileSync('scheduled-artifacts/last-run.json', 'utf8'));
+          const problems = [];
+          if (result.retention.status !== 'dry-run') problems.push(`status=${result.retention.status}`);
+          if (!result.retention.planned.length) problems.push('nothing was planned');
+          if (result.retention.deleted.length) problems.push('the dry run reported deletions');
+          if (problems.length) {
+            console.error(`::error title=retention::dry run: ${problems.join(', ')}`);
+            process.exit(1);
+          }
+          NODE
+
+          # Applying the policy must leave exactly the newest archive.
+          newest_before="$(ls -t scheduled-artifacts/*.dump | head -1)"
+          node scripts/backup/scheduled-backup.mjs \
+            --dir scheduled-artifacts --retention-only --keep 1 > retention.log
+          after="$(ls scheduled-artifacts/*.dump | wc -l)"
+          [ "$after" -eq 1 ] || {
+            echo "::error title=retention::expected 1 archive after retention, got $after"
+            exit 1
+          }
+          survivor="$(ls scheduled-artifacts/*.dump | head -1)"
+          if [ "$survivor" != "$newest_before" ]; then
+            echo "::error title=retention::retention deleted the newest verified backup ($newest_before -> $survivor)"
+            exit 1
+          fi
+          echo "Retention kept the newest verified backup: $survivor"
+        env:
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+
+      - name: Scheduled runner refuses an overlapping run
+        run: |
+          set -euo pipefail
+          before="$(ls scheduled-artifacts/*.dump | wc -l)"
+          # The shell's own PID is alive, so this lock is a live run.
+          printf '{"pid": %d, "startedAt": "%s"}\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            > scheduled-artifacts/.agencyos-backup.lock
+          set +e
+          node scripts/backup/scheduled-backup.mjs --dir scheduled-artifacts --keep 1 \
+            > overlap.log 2>&1
+          status=$?
+          set -e
+          cat overlap.log
+          rm -f scheduled-artifacts/.agencyos-backup.lock
+          if [ "$status" -ne 6 ]; then
+            echo "::error title=scheduled backup::expected exit 6 (locked), got $status"
+            exit 1
+          fi
+          after="$(ls scheduled-artifacts/*.dump | wc -l)"
+          [ "$after" -eq "$before" ] || {
+            echo "::error title=scheduled backup::the refused run changed the archive set"
+            exit 1
+          }
+          echo "Correctly refused the overlapping run (exit 6)"
+        env:
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+
+      - name: A failed backup is reported and deletes nothing
+        run: |
+          set -euo pipefail
+          before="$(ls scheduled-artifacts/*.dump | wc -l)"
+          set +e
+          # Port 1 is closed, so pg_dump fails: the runner must report the
+          # failure and must not prune the archives it already has.
+          DATABASE_URL="postgresql://agencyos:${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}@localhost:1/agencyos?schema=public" \
+            node scripts/backup/scheduled-backup.mjs \
+              --dir scheduled-artifacts --keep 1 \
+              --result-file scheduled-artifacts/failed-run.json > failed-backup.log 2>&1
+          status=$?
+          set -e
+          cat failed-backup.log
+          if [ "$status" -ne 3 ]; then
+            echo "::error title=scheduled backup::expected exit 3 (tool failed), got $status"
+            exit 1
+          fi
+          after="$(ls scheduled-artifacts/*.dump | wc -l)"
+          [ "$after" -eq "$before" ] || {
+            echo "::error title=scheduled backup::a failed backup changed the archive set ($before -> $after)"
+            exit 1
+          }
+          node <<'NODE'
+          const fs = require('node:fs');
+          const result = JSON.parse(fs.readFileSync('scheduled-artifacts/failed-run.json', 'utf8'));
+          const problems = [];
+          if (result.status !== 'failed') problems.push(`status=${result.status}`);
+          if (result.backup.status !== 'failed') problems.push(`backup=${result.backup.status}`);
+          if (result.backup.lastStatus !== 'failed') problems.push(`lastStatus=${result.backup.lastStatus}`);
+          if (result.retention.status !== 'skipped') problems.push(`retention=${result.retention.status}`);
+          if (result.retention.reason !== 'backup_failed') problems.push(`reason=${result.retention.reason}`);
+          if (problems.length) {
+            console.error(`::error title=scheduled backup::${problems.join(', ')}`);
+            process.exit(1);
+          }
+          NODE
+          echo "Failed backup reported as exit 3, nothing deleted"
+
+      # ---------------------------------------------------------------------
       # 2. Restore into the isolated, disposable database and verify.
       # ---------------------------------------------------------------------
       - name: Restore into isolated database and verify
@@ -776,7 +930,8 @@ jobs:
         run: |
           set -euo pipefail
           PASSWORD="${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}"
-          for f in restore-verification.log restored-rows.txt corrupt.log backup-artifacts/*.json; do
+          for f in restore-verification.log restored-rows.txt corrupt.log backup-artifacts/*.json \
+                   scheduled-artifacts/*.json retention.log retention-dry-run.log overlap.log failed-backup.log; do
             [ -f "$f" ] || continue
             if grep -qF "$PASSWORD" "$f"; then
               echo "ERROR: credential material found in $f" >&2
@@ -796,7 +951,9 @@ jobs:
           name: backup-verify-evidence
           path: |
             backup-artifacts/*.json
+            scheduled-artifacts/*.json
             restore-verification.log
             restored-rows.txt
+            retention.log
           if-no-files-found: ignore
           retention-days: 7
