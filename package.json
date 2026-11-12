@@ -22,6 +22,7 @@
     "db:backup": "node scripts/backup/backup.mjs",
     "db:backup:scheduled": "node scripts/backup/scheduled-backup.mjs",
     "db:verify-restore": "node scripts/backup/verify-restore.mjs",
+    "db:backup:ship": "node scripts/backup/ship.mjs",
     "prepare": "husky"
   },
   "lint-staged": {

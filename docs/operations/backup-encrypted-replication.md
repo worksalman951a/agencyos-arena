@@ -44,3 +44,5 @@ Record each replica's key version in an **independent protected inventory**; no 
 ## Batch 3C-2 / deployment decisions
 
 Select and validate an independent off-host storage provider/mount and failure domain; establish retention/immutability, capacity, object inventory and rollback detection, credentials and network controls. Establish key ownership, version inventory, escrow and tested recovery, rotation/re-encryption process, RPO/RTO, alerting on replication failure and backup age, and scheduled isolated recovery drills. Production readiness depends on those decisions and successful representative recovery tests, not this reference adapter or a green upload.
+
+Batch 3C-2B adds an opt-in S3-compatible shipping adapter and a hash-chained inventory for these replicas; see [backup-offsite-shipping.md](./backup-offsite-shipping.md). The provider, immutability, key custody and monitoring decisions above remain open.

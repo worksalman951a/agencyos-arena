@@ -744,6 +744,154 @@ jobs:
           RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
           RESTORE_VERIFY_ALLOWED_PORT: '5433'
 
+      # Off-site shipping (Batch 3C-2B). No real provider credentials exist in
+      # CI, so an isolated, TLS-terminated S3-compatible server (Versity S3
+      # Gateway, a separate implementation that checks SigV4 signatures) with
+      # throwaway credentials stands in. Real-provider verification is pending;
+      # see docs/operations/backup-offsite-shipping.md.
+      - name: Shipped replica is verified, protected from overwrite and restorable
+        run: |
+          set -euo pipefail
+          # Throwaway credentials. The mask command is issued before output is
+          # captured, so the secret is not written to the step log file.
+          S3_USER="ci$(openssl rand -hex 8)"
+          S3_SECRET="$(openssl rand -hex 24)"
+          echo "::add-mask::$S3_SECRET"
+          exec > >(tee shipping-step.log) 2>&1
+          trap 'echo "::error title=off-site shipping::failed near line $LINENO: $(tail -n 6 shipping-step.log | tr "\n" "|" | head -c 1500)"' ERR
+
+          # Pinned release of the Versity S3 Gateway, checked against its
+          # published SHA-256 before it is executed.
+          curl -fsSL -o s3-gateway.tar.gz "$S3_GATEWAY_URL"
+          echo "$S3_GATEWAY_SHA256  s3-gateway.tar.gz" | sha256sum -c -
+          mkdir s3-gateway s3-certs s3-data
+          tar -xzf s3-gateway.tar.gz -C s3-gateway
+          GATEWAY="$(find s3-gateway -type f -name versitygw | head -1)"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+            -keyout s3-certs/private.key -out s3-certs/public.crt 2>/dev/null
+          CA="$PWD/s3-certs/public.crt"
+          ROOT_ACCESS_KEY="$S3_USER" ROOT_SECRET_KEY="$S3_SECRET" "$GATEWAY" \
+            --port 127.0.0.1:9000 --region us-east-1 \
+            --cert "$CA" --key "$PWD/s3-certs/private.key" \
+            posix "$PWD/s3-data" > s3-gateway.log 2>&1 &
+          S3_PID=$!
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null --cacert "$CA" https://localhost:9000/ && break
+            [ "$i" -lt 30 ] || { tail -20 s3-gateway.log; false; }
+            sleep 1
+          done
+
+          # Administrative access, used only to create the bucket and to play
+          # the part of someone tampering with storage. Never given to ship.mjs
+          # children: these variables are scoped to this function.
+          s3admin() {
+            AWS_ACCESS_KEY_ID="$S3_USER" AWS_SECRET_ACCESS_KEY="$S3_SECRET" \
+            AWS_DEFAULT_REGION=us-east-1 AWS_CA_BUNDLE="$CA" AWS_EC2_METADATA_DISABLED=true \
+              aws --endpoint-url https://localhost:9000 "$@"
+          }
+          s3admin s3api create-bucket --bucket "$BUCKET" > /dev/null
+
+          mkdir -m 700 shipping-state
+          export BACKUP_SHIPPING_ENDPOINT=https://localhost:9000
+          export BACKUP_SHIPPING_REGION=us-east-1
+          export BACKUP_SHIPPING_BUCKET="$BUCKET"
+          export BACKUP_SHIPPING_PREFIX=ci
+          export BACKUP_SHIPPING_ACCESS_KEY_ID="$S3_USER"
+          export BACKUP_SHIPPING_SECRET_ACCESS_KEY="$S3_SECRET"
+          export BACKUP_SHIPPING_CA_FILE="$CA"
+          export BACKUP_SHIPPING_INVENTORY="$PWD/shipping-state/inventory.jsonl"
+          export BACKUP_SHIPPING_ATTEMPTS=2
+
+          REPLICA="$(ls replica-artifacts/*.age)"
+          NAME="$(basename "$REPLICA" .age)"
+          KEY="ci/$NAME.age"
+          TEMP="$(realpath recovery-temp)"
+          expect_exit() {
+            local want="$1"; shift
+            set +e; "$@"; local got=$?; set -e
+            if [ "$got" -ne "$want" ]; then echo "expected exit $want, got $got: $*"; false; fi
+          }
+
+          echo "--- TLS is mandatory"
+          expect_exit 3 env BACKUP_SHIPPING_ENDPOINT=http://localhost:9000 \
+            node scripts/backup/ship.mjs ship --name "$NAME"
+          expect_exit 3 env -u BACKUP_SHIPPING_CA_FILE \
+            node scripts/backup/ship.mjs ship --name "$NAME"
+
+          echo "--- ship, then retry"
+          node scripts/backup/ship.mjs ship --name "$NAME" | tee ship.log
+          grep -q '"status":"uploaded"' ship.log
+          node scripts/backup/ship.mjs ship --name "$NAME" | grep -q '"status":"already-present"'
+
+          echo "--- independent read: the stored object is the local ciphertext, not plaintext"
+          s3admin s3api get-object --bucket "$BUCKET" --key "$KEY" remote.age > /dev/null
+          cmp remote.age "$REPLICA"
+          if grep -aqF 'bkverify-org-0001' remote.age; then echo "plaintext in object"; false; fi
+          test "$(s3admin s3api list-objects-v2 --bucket "$BUCKET" --query 'length(Contents)')" = "1"
+
+          echo "--- the store itself refuses a second create of the same key"
+          expect_exit 254 s3admin s3api put-object --bucket "$BUCKET" --key "$KEY" \
+            --body remote.age --if-none-match '*' 2> conditional.log
+          cat conditional.log
+          grep -q PreconditionFailed conditional.log
+
+          echo "--- inventory"
+          node scripts/backup/ship.mjs verify --name "$NAME"
+          node scripts/backup/ship.mjs inventory | tee inventory.log
+          HEAD="$(sed -n 's/.*"head":"\([0-9a-f]\{64\}\)".*/\1/p' inventory.log)"
+          node scripts/backup/ship.mjs inventory --anchor "$HEAD"
+          grep -q "\"sha256\":\"$(sha256sum "$REPLICA" | cut -d' ' -f1)\"" shipping-state/inventory.jsonl
+
+          echo "--- recovery from the bucket alone, into the isolated PostgreSQL target"
+          mv "$REPLICA" held-replica.age
+          node scripts/backup/ship.mjs recover --name "$NAME" --temp-dir "$TEMP" --verify-restore \
+            | tee shipped-restore.log
+          grep -q '"status":"restore-verified"' shipped-restore.log
+          grep -q '\[verify\] restored' shipped-restore.log
+          test -z "$(ls -A recovery-temp)"
+
+          echo "--- wrong key and wrong key version"
+          expect_exit 3 env BACKUP_REPLICATION_KEY="$(printf 'f%.0s' $(seq 64))" \
+            node scripts/backup/ship.mjs recover --name "$NAME" --temp-dir "$TEMP"
+          expect_exit 3 env BACKUP_REPLICATION_KEY_ID=ci-key-other \
+            node scripts/backup/ship.mjs recover --name "$NAME" --temp-dir "$TEMP"
+          test -z "$(ls -A recovery-temp)"
+          mv held-replica.age "$REPLICA"
+
+          echo "--- a tampered remote object is detected and never overwritten"
+          cp remote.age tampered.age
+          printf 'XXXXXXXX' | dd of=tampered.age bs=1 seek=4096 conv=notrunc status=none
+          s3admin s3api put-object --bucket "$BUCKET" --key "$KEY" --body tampered.age > /dev/null
+          expect_exit 4 node scripts/backup/ship.mjs verify --name "$NAME"
+          expect_exit 4 node scripts/backup/ship.mjs recover --name "$NAME" --temp-dir "$TEMP" --verify-restore
+          expect_exit 4 node scripts/backup/ship.mjs ship --name "$NAME"
+          s3admin s3api get-object --bucket "$BUCKET" --key "$KEY" after.age > /dev/null
+          cmp after.age tampered.age
+          test -z "$(ls -A recovery-temp)"
+          tail -n 1 shipping-state/inventory.jsonl | grep -q '"status":"failed"'
+          node scripts/backup/ship.mjs inventory --anchor "$HEAD"
+
+          echo "--- no storage credential in any output or the inventory"
+          kill "$S3_PID"
+          sleep 1
+          if grep -qF -e "$S3_SECRET" -e "$S3_USER" shipping-step.log ship.log inventory.log \
+               shipped-restore.log conditional.log shipping-state/inventory.jsonl; then
+            echo "storage credential found in output"; false
+          fi
+          echo "Off-site shipping verified against an isolated S3-compatible service"
+        env:
+          S3_GATEWAY_URL: https://github.com/versity/versitygw/releases/download/v1.11.0/versitygw_v1.11.0_Linux_x86_64.tar.gz
+          S3_GATEWAY_SHA256: 1f075c9dc92fef232f5b3c7465711ddc5e1b062b2b6df4a3bd246a4be5b35b52
+          BUCKET: agencyos-ci-backups
+          BACKUP_REPLICATION_DIR: ${{ github.workspace }}/replica-artifacts
+          BACKUP_REPLICATION_KEY: ${{ secrets.CI_BACKUP_REPLICATION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }}
+          BACKUP_REPLICATION_KEY_ID: ci-key-1
+          DATABASE_URL: ${{ env.SOURCE_URL }}
+          RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
+          RESTORE_VERIFY_ISOLATION_CONFIRMATION: I_CONFIRMED_A_DISPOSABLE_ISOLATED_TARGET
+          RESTORE_VERIFY_ALLOWED_PORT: '5433'
+
       # ---------------------------------------------------------------------
       # 3. Independent proof. The script above could in principle verify itself
       #    incorrectly, so this step queries the restored rows directly with
@@ -953,6 +1101,7 @@ jobs:
           set -euo pipefail
           PASSWORD="${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}"
           for f in restore-verification.log restored-rows.txt corrupt.log backup-artifacts/*.json \
+                   shipping-step.log shipping-state/inventory.jsonl \
                    scheduled-artifacts/*.json retention.log retention-dry-run.log overlap.log failed-backup.log; do
             [ -f "$f" ] || continue
             if grep -qF "$PASSWORD" "$f"; then
@@ -977,5 +1126,7 @@ jobs:
             restore-verification.log
             restored-rows.txt
             retention.log
+            shipping-step.log
+            shipping-state/inventory.jsonl
           if-no-files-found: ignore
           retention-days: 7

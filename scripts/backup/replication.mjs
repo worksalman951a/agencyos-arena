@@ -9,6 +9,8 @@ import { Encrypter, Decrypter } from 'age-encryption';
 import { ARCHIVE_NAME_PATTERN, MANIFEST_FORMAT, isInside } from './retention.mjs';
 import { runTool, sha256File } from './lib.mjs';
 import { createInterface } from 'node:readline';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const MAX_MANIFEST = 1024 * 1024;
 const fail = (message) => {
@@ -303,4 +305,34 @@ export async function recover({ name, destination, tempDir, key, verify = null }
   } finally {
     await rm(work, { recursive: true, force: true });
   }
+}
+
+/**
+ * Run the existing guarded verifier (`verify-restore.mjs`) on a recovered
+ * archive. The child never receives the replication key or storage credentials.
+ *
+ * @param {Record<string, string | undefined>} [parentEnv]
+ * @returns {(archive: string) => Promise<void>}
+ */
+export function restoreVerifier(parentEnv = process.env) {
+  return (archive) =>
+    new Promise((resolve, reject) => {
+      const env = { ...parentEnv };
+      for (const name of Object.keys(env))
+        if (name.startsWith('BACKUP_REPLICATION_KEY') || name.startsWith('BACKUP_SHIPPING_'))
+          delete env[name];
+      const child = spawn(
+        process.execPath,
+        [
+          path.join(path.dirname(fileURLToPath(import.meta.url)), 'verify-restore.mjs'),
+          '--backup',
+          archive,
+        ],
+        { stdio: 'inherit', env }
+      );
+      child.on('error', reject);
+      child.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error('Isolated restore verification failed'))
+      );
+    });
 }
