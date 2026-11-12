@@ -1,23 +1,16 @@
-# AgencyOS — Scheduled backup runner image (Phase 4D / Batch 3B)
-#
-# The backup tooling is dependency-free (Node built-ins only), so this image
-# carries nothing but Node, the PostgreSQL client tools and the backup
-# scripts. It contains no application code and no credentials: the connection
-# string is supplied through the environment at run time.
-#
-# The image is a one-shot job, not a service. It is started by whatever the
-# platform schedules (host cron, Task Scheduler, a container platform's
-# scheduler) and exits when the backup is done.
-FROM node:22-alpine
-
-# The client major must match the server major (postgres:16 in
-# docker-compose.yml). A newer client emits statements a 16 server rejects.
-RUN apk add --no-cache postgresql16-client
-
+# One-shot backup runner. Install the pinned age implementation separately so
+# the runtime contains only the backup scripts and their crypto dependencies.
+FROM node:22-alpine AS deps
 WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
+FROM node:22-alpine
+RUN apk add --no-cache postgresql16-client
+WORKDIR /app
+COPY --from=deps /app/node_modules/age-encryption ./node_modules/age-encryption
+COPY --from=deps /app/node_modules/@noble ./node_modules/@noble
+COPY --from=deps /app/node_modules/@scure ./node_modules/@scure
 COPY scripts/backup ./scripts/backup
-
-# Backups are written to the mounted volume, never into the image.
 ENV BACKUP_DIR=/backups
-
 ENTRYPOINT ["node", "scripts/backup/scheduled-backup.mjs"]

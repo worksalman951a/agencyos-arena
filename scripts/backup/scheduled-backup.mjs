@@ -689,6 +689,7 @@ export async function runScheduledBackup(argv = [], deps = {}) {
       manifestPath: null,
       reason: null,
     },
+    replication: { status: 'not-configured', lastStatus: 'unknown', object: null, sha256: null },
     retention: {
       status: 'not-run',
       reason: null,
@@ -761,18 +762,31 @@ export async function runScheduledBackup(argv = [], deps = {}) {
     try {
       // 3. The backup itself, unless this run only prunes.
       let carriedStatus = 'unknown';
+      let previousReplicationFailed = false;
       if (config.retentionOnly) {
         const previous = await readPreviousResult(config.resultFile);
         carriedStatus = previous?.backup?.lastStatus ?? 'unknown';
+        previousReplicationFailed =
+          (previous?.replication?.lastStatus ?? previous?.replication?.status) === 'failed';
+        if (previousReplicationFailed)
+          result.replication = {
+            status: 'skipped',
+            lastStatus: 'failed',
+            object: null,
+            sha256: null,
+          };
         result.backup.status = 'skipped';
         result.backup.reason = 'retention_only';
       } else {
         const backupStartedMs = Date.now();
+        const backupEnv = { ...env };
+        delete backupEnv.BACKUP_REPLICATION_KEY;
+        delete backupEnv.BACKUP_REPLICATION_KEY_FILE;
         const outcome = await runBackup({
           scriptPath: config.backupScript,
           directory: config.directory,
           label: config.label,
-          env,
+          env: backupEnv,
           onOutput: (text) => process.stdout.write(text),
         });
 
@@ -806,11 +820,57 @@ export async function runScheduledBackup(argv = [], deps = {}) {
       result.backup.lastStatus =
         result.backup.status === 'skipped' ? carriedStatus : result.backup.lastStatus;
 
+      // Opt-in replication is performed while the local backup lock is held.
+      // A failure must not erase local recovery points or hide backup success.
+      if (
+        !config.retentionOnly &&
+        (env.BACKUP_REPLICATION_DIR !== undefined ||
+          env.BACKUP_REPLICATION_KEY !== undefined ||
+          env.BACKUP_REPLICATION_KEY_FILE !== undefined)
+      ) {
+        if (result.backup.status === 'succeeded') {
+          try {
+            if (!result.backup.archive) throw new Error('Missing archive');
+            const { assertKeySeparation, loadKey, replicate } = await import('./replication.mjs');
+            assertKeySeparation(env, [config.directory, env.BACKUP_REPLICATION_DIR]);
+            const key = await loadKey(env);
+            const replica = await replicate({
+              archive: result.backup.archive.path,
+              destination: env.BACKUP_REPLICATION_DIR,
+              key,
+            });
+            result.replication = {
+              status: 'succeeded',
+              lastStatus: 'succeeded',
+              object: replica.object,
+              sha256: replica.sha256,
+            };
+          } catch {
+            result.replication.status = 'failed';
+            result.replication.lastStatus = 'failed';
+            exitCode = EXIT.TOOL_FAILED;
+            result.error = {
+              code: 'replication_failed',
+              message: 'Encrypted replication failed; local backups retained.',
+              exitCode,
+            };
+          }
+        } else result.replication.status = 'skipped';
+      }
+
       // 4. Retention. Never after a failed backup: the previous verified
       //    backups are the only known-good history left at that point.
-      if (result.backup.status === 'failed') {
+      if (result.replication.status === 'failed') {
+        result.retention.status = 'skipped';
+        result.retention.reason = 'replication_failed';
+        result.status = 'failed';
+      } else if (result.backup.status === 'failed') {
         result.retention.status = 'skipped';
         result.retention.reason = 'backup_failed';
+      } else if (previousReplicationFailed) {
+        result.retention.status = 'skipped';
+        result.retention.reason = 'latest_replication_failed';
+        result.status = 'skipped';
       } else if (result.backup.lastStatus === 'failed') {
         result.retention.status = 'skipped';
         result.retention.reason = 'latest_backup_failed';
@@ -922,6 +982,7 @@ export function printResult(result, logger = console) {
       result.backup.archive ? ` (${result.backup.archive.name})` : ''
     }`
   );
+  logger.log?.(`[scheduled-backup] replication ${result.replication.status}`);
   logger.log?.(
     `[scheduled-backup] retention ${result.retention.status}${
       result.retention.reason ? ` (${result.retention.reason})` : ''
