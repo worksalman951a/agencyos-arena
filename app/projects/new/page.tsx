@@ -13,6 +13,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoProjectFormView } from '@/components/projects/bento-project-form-view';
 
 interface ContactSummary {
   id: string;
@@ -34,6 +36,7 @@ interface FieldErrors {
 function NewProjectFormInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isBento = useBentoShell();
   const initialTemplateId = searchParams.get('templateId') ?? '';
   const initialName = searchParams.get('name') ?? '';
   const initialClientId = searchParams.get('clientId') ?? '';
@@ -200,6 +203,39 @@ function NewProjectFormInner() {
     `w-full border rounded-md px-3 py-2 text-sm bg-background ${
       fieldErrors[field] ? 'border-destructive' : 'border-input'
     }`;
+
+  if (isBento) {
+    return (
+      <BentoProjectFormView
+        mode="new"
+        name={name}
+        setName={setName}
+        clientId={clientId}
+        setClientId={setClientId}
+        contactOptions={contactOptions}
+        contactsLoading={contactsLoading}
+        contactsError={contactsError}
+        onSearchChange={setContactQuery}
+        status={status}
+        setStatus={setStatus}
+        templateId={templateId}
+        setTemplateId={handleTemplateChange}
+        templates={templates}
+        budget={budget}
+        setBudget={setBudget}
+        startDate={startDate}
+        setStartDate={setStartDate}
+        endDate={endDate}
+        setEndDate={setEndDate}
+        description={description}
+        setDescription={setDescription}
+        onSubmit={handleSubmit}
+        isLoading={loading}
+        error={formError}
+        fieldErrors={fieldErrors}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">

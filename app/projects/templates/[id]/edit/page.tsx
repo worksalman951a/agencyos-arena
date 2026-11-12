@@ -9,15 +9,19 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoProjectTemplateFormView } from '@/components/projects/bento-project-template-form-view';
 
 export default function EditProjectTemplatePage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
+  const isBento = useBentoShell();
   const [id, setId] = useState<string>('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -52,6 +56,7 @@ export default function EditProjectTemplatePage({ params }: { params: Promise<{ 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setError(null);
     try {
       const res = await fetch(`/api/v1/projects/templates/${encodeURIComponent(id)}`, {
         method: 'PUT',
@@ -71,7 +76,9 @@ export default function EditProjectTemplatePage({ params }: { params: Promise<{ 
       router.push(`/projects/templates/${id}`);
       router.refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -91,6 +98,22 @@ export default function EditProjectTemplatePage({ params }: { params: Promise<{ 
           Back to Templates
         </Link>
       </div>
+    );
+  }
+
+  if (isBento) {
+    return (
+      <BentoProjectTemplateFormView
+        mode="edit"
+        templateId={id}
+        name={name}
+        setName={setName}
+        description={description}
+        setDescription={setDescription}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        error={error}
+      />
     );
   }
 

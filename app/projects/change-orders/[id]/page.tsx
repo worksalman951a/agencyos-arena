@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoChangeOrderFormView } from '@/components/projects/bento-change-order-form-view';
 
 interface MemberOption {
   id: string;
@@ -18,6 +20,7 @@ interface MemberOption {
 
 export default function EditChangeOrderPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
+  const isBento = useBentoShell();
   const [id, setId] = useState<string>('');
   const [projectId, setProjectId] = useState<string>('');
   const [projectName, setProjectName] = useState<string>('');
@@ -30,6 +33,7 @@ export default function EditChangeOrderPage({ params }: { params: Promise<{ id: 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -89,6 +93,7 @@ export default function EditChangeOrderPage({ params }: { params: Promise<{ id: 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setError(null);
     try {
       const res = await fetch(`/api/v1/projects/change-orders/${encodeURIComponent(id)}`, {
         method: 'PUT',
@@ -110,7 +115,9 @@ export default function EditChangeOrderPage({ params }: { params: Promise<{ id: 
       router.push('/projects/change-orders');
       router.refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -152,6 +159,31 @@ export default function EditChangeOrderPage({ params }: { params: Promise<{ id: 
   }
 
   const isTerminal = initialStatus === 'approved' || initialStatus === 'rejected';
+
+  if (isBento) {
+    return (
+      <BentoChangeOrderFormView
+        mode="edit"
+        changeOrderId={id}
+        projectId={projectId}
+        projectName={projectName}
+        description={description}
+        setDescription={setDescription}
+        amount={amount}
+        setAmount={setAmount}
+        status={status}
+        setStatus={setStatus}
+        isTerminalStatus={isTerminal}
+        approvedBy={approvedBy}
+        setApprovedBy={setApprovedBy}
+        members={members}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        error={error}
+        onDelete={handleDelete}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">

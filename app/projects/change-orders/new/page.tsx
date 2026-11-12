@@ -10,6 +10,8 @@ import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoChangeOrderFormView } from '@/components/projects/bento-change-order-form-view';
 
 interface ProjectOption {
   id: string;
@@ -25,6 +27,7 @@ interface MemberOption {
 function NewChangeOrderFormInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isBento = useBentoShell();
   const initialProjectId = searchParams.get('projectId') ?? '';
 
   const [projectId, setProjectId] = useState(initialProjectId);
@@ -35,6 +38,7 @@ function NewChangeOrderFormInner() {
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -63,6 +67,7 @@ function NewChangeOrderFormInner() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch('/api/v1/projects/change-orders', {
         method: 'POST',
@@ -85,11 +90,39 @@ function NewChangeOrderFormInner() {
       toast.success('Change order created');
       router.push(`/projects/change-orders/${data.id}`);
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
+
+  const selectedProj = projects.find((p) => p.id === projectId);
+
+  if (isBento) {
+    return (
+      <BentoChangeOrderFormView
+        mode="new"
+        projectId={projectId}
+        setProjectId={setProjectId}
+        projectName={selectedProj?.name}
+        projects={projects}
+        description={description}
+        setDescription={setDescription}
+        amount={amount}
+        setAmount={setAmount}
+        status={status}
+        setStatus={setStatus}
+        approvedBy={approvedBy}
+        setApprovedBy={setApprovedBy}
+        members={members}
+        onSubmit={handleSubmit}
+        isLoading={loading}
+        error={error}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">

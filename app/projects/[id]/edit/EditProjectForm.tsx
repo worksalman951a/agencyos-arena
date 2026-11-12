@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoProjectFormView } from '@/components/projects/bento-project-form-view';
 
 interface ContactSummary {
   id: string;
@@ -49,6 +51,7 @@ function toDateInputValue(value: Date | string | null | undefined): string {
 
 export function EditProjectForm({ project }: EditProjectFormProps) {
   const router = useRouter();
+  const isBento = useBentoShell();
   const [clientId, setClientId] = useState(project.clientId ?? '');
   const [templateId, setTemplateId] = useState(project.templateId ?? '');
   const [name, setName] = useState(project.name);
@@ -238,6 +241,43 @@ export function EditProjectForm({ project }: EditProjectFormProps) {
     `w-full border rounded-md px-3 py-2 text-sm bg-background ${
       fieldErrors[field] ? 'border-destructive' : 'border-input'
     }`;
+
+  if (isBento) {
+    return (
+      <BentoProjectFormView
+        mode="edit"
+        projectId={project.id}
+        name={name}
+        setName={setName}
+        clientId={clientId}
+        setClientId={setClientId}
+        contactOptions={contactOptions}
+        contactsLoading={contactsLoading}
+        contactsError={contactsError}
+        onSearchChange={setContactQuery}
+        status={status}
+        setStatus={setStatus}
+        templateId={templateId}
+        setTemplateId={setTemplateId}
+        templates={templates}
+        budget={budget}
+        setBudget={setBudget}
+        startDate={startDate}
+        setStartDate={setStartDate}
+        endDate={endDate}
+        setEndDate={setEndDate}
+        description={description}
+        setDescription={setDescription}
+        isDeleted={Boolean(project.deletedAt)}
+        onDelete={handleDelete}
+        isDeleting={deleting}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        error={formError}
+        fieldErrors={fieldErrors}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">

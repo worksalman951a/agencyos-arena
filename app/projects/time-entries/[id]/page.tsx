@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoTimeEntryFormView } from '@/components/projects/bento-time-entry-form-view';
 
 interface MemberOption {
   id: string;
@@ -24,8 +26,10 @@ interface ProjectWithTasks {
 
 export default function EditTimeEntryPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
+  const isBento = useBentoShell();
   const [id, setId] = useState('');
   const [userId, setUserId] = useState('');
+  const [projectId, setProjectId] = useState('');
   const [taskId, setTaskId] = useState('');
   const [date, setDate] = useState('');
   const [hours, setHours] = useState('');
@@ -36,6 +40,7 @@ export default function EditTimeEntryPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -78,7 +83,17 @@ export default function EditTimeEntryPage({ params }: { params: Promise<{ id: st
         }
         if (projRes.ok) {
           const projData = (await projRes.json()) as { projects?: ProjectWithTasks[] };
-          if (active && Array.isArray(projData.projects)) setProjects(projData.projects);
+          if (active && Array.isArray(projData.projects)) {
+            setProjects(projData.projects);
+            if (entry.taskId) {
+              const matchedProj = projData.projects.find((p) =>
+                p.tasks.some((t) => t.id === entry.taskId)
+              );
+              if (matchedProj) {
+                setProjectId(matchedProj.id);
+              }
+            }
+          }
         }
       } catch (err) {
         if (!active) return;
@@ -101,6 +116,7 @@ export default function EditTimeEntryPage({ params }: { params: Promise<{ id: st
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setError(null);
     try {
       const res = await fetch(`/api/v1/projects/time-entries/${encodeURIComponent(id)}`, {
         method: 'PUT',
@@ -122,7 +138,9 @@ export default function EditTimeEntryPage({ params }: { params: Promise<{ id: st
       router.push('/projects/time-entries');
       router.refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -160,6 +178,46 @@ export default function EditTimeEntryPage({ params }: { params: Promise<{ id: st
           Back to Time Entries
         </Link>
       </div>
+    );
+  }
+
+  const availableTasks = projectId
+    ? (projects.find((p) => p.id === projectId)?.tasks ?? [])
+    : projects.flatMap((p) => p.tasks.map((t) => ({ id: t.id, title: `${p.name}: ${t.title}` })));
+
+  const tasksForBento = availableTasks.map((t) => ({
+    id: t.id,
+    title: t.title,
+    projectId,
+  }));
+
+  if (isBento) {
+    return (
+      <BentoTimeEntryFormView
+        mode="edit"
+        entryId={id}
+        userId={userId}
+        setUserId={setUserId}
+        members={members}
+        projectId={projectId}
+        setProjectId={setProjectId}
+        projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+        taskId={taskId}
+        setTaskId={setTaskId}
+        tasks={tasksForBento}
+        date={date}
+        setDate={setDate}
+        hours={hours}
+        setHours={setHours}
+        billable={billable}
+        setBillable={setBillable}
+        description={description}
+        setDescription={setDescription}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        error={error}
+        onDelete={handleDelete}
+      />
     );
   }
 

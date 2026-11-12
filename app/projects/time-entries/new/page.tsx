@@ -10,6 +10,8 @@ import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoTimeEntryFormView } from '@/components/projects/bento-time-entry-form-view';
 
 interface MemberOption {
   id: string;
@@ -26,6 +28,7 @@ interface ProjectWithTasks {
 function LogTimeFormInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isBento = useBentoShell();
   const initialProjectId = searchParams.get('projectId') ?? '';
 
   const [userId, setUserId] = useState('');
@@ -38,6 +41,7 @@ function LogTimeFormInner() {
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [projects, setProjects] = useState<ProjectWithTasks[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -70,6 +74,7 @@ function LogTimeFormInner() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch('/api/v1/projects/time-entries', {
         method: 'POST',
@@ -93,11 +98,47 @@ function LogTimeFormInner() {
       toast.success('Time entry logged');
       router.push(`/projects/time-entries/${data.id}`);
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
+
+  const tasksForBento = availableTasks.map((t) => ({
+    id: t.id,
+    title: t.title,
+    projectId: selectedProjectId,
+  }));
+
+  if (isBento) {
+    return (
+      <BentoTimeEntryFormView
+        mode="new"
+        userId={userId}
+        setUserId={setUserId}
+        members={members}
+        projectId={selectedProjectId}
+        setProjectId={setSelectedProjectId}
+        projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+        taskId={taskId}
+        setTaskId={setTaskId}
+        tasks={tasksForBento}
+        date={date}
+        setDate={setDate}
+        hours={hours}
+        setHours={setHours}
+        billable={billable}
+        setBillable={setBillable}
+        description={description}
+        setDescription={setDescription}
+        onSubmit={handleSubmit}
+        isLoading={loading}
+        error={error}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">

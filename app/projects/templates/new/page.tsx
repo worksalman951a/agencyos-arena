@@ -9,16 +9,21 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoProjectTemplateFormView } from '@/components/projects/bento-project-template-form-view';
 
 export default function NewProjectTemplatePage() {
   const router = useRouter();
+  const isBento = useBentoShell();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch('/api/v1/projects/templates', {
         method: 'POST',
@@ -38,11 +43,28 @@ export default function NewProjectTemplatePage() {
       toast.success('Template created');
       router.push(`/projects/templates/${data.id}`);
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
+
+  if (isBento) {
+    return (
+      <BentoProjectTemplateFormView
+        mode="new"
+        name={name}
+        setName={setName}
+        description={description}
+        setDescription={setDescription}
+        onSubmit={handleSubmit}
+        isLoading={loading}
+        error={error}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">
