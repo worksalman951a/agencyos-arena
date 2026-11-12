@@ -21,6 +21,8 @@ import { cookies } from 'next/headers';
 import { auth } from '@/lib/auth-server';
 import { prisma } from '@/lib/db';
 import { requireActiveInternalUser } from '@/lib/permissions';
+import { consumeRateLimit, rateLimitedResponse, RATE_LIMITS } from '@/lib/security/rate-limit';
+import { sessionRateLimitKey } from '@/lib/security/rate-limit-subject';
 
 const bootstrapSchema = z.object({
   organizationName: z.string().min(1, 'Organization name is required').max(200),
@@ -194,8 +196,24 @@ async function ensureCrmPermissions(tx: typeof prisma) {
   });
 }
 
-/** POST /api/auth/bootstrap-organization */
+/**
+ * POST /api/auth/bootstrap-organization
+ *
+ * Protected by two controls that Better Auth cannot apply to this handler:
+ *  - Origin validation: this route lives outside `/api/auth/[...slug]`, so
+ *    Better Auth's CSRF middleware never sees it. `middleware.ts` applies the
+ *    same trusted-origin rule to it.
+ *  - Rate limiting (`organization-bootstrap`, per **session**): one legitimate
+ *    call per account, ever. Keying on the address would let one busy office
+ *    NAT (or a shared corporate egress) lock out everybody else behind it.
+ */
 export async function POST(request: Request) {
+  const decision = await consumeRateLimit(
+    await sessionRateLimitKey('organization-bootstrap', request),
+    RATE_LIMITS['organization-bootstrap']
+  );
+  if (!decision.allowed) return rateLimitedResponse(decision);
+
   try {
     const user = await getAuthenticatedUser();
 

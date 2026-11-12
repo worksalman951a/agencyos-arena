@@ -141,6 +141,13 @@ jobs:
           TEST_SERVER_URL: "http://localhost:3001"
           NODE_ENV: "test"
           PORT: "3001"
+          # The integration runner drives hundreds of requests from 127.0.0.1.
+          # Trusting the forwarding header here (the runner is the only client,
+          # and it is what sets the header) lets each suite claim its own
+          # private bucket and exercise the per-address limits without
+          # exhausting the shared one. Production does not set this unless a
+          # real trusted proxy rewrites the header.
+          TRUST_PROXY_HEADERS: "1"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
