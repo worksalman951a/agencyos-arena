@@ -71,6 +71,7 @@ const mocks = vi.hoisted(() => ({
       delete: vi.fn(),
     },
     contact: { findFirst: vi.fn() },
+    organization: { findUnique: vi.fn() },
     user: { findFirst: vi.fn(), findMany: vi.fn() },
     userRole: { findFirst: vi.fn() },
     auditLog: { create: vi.fn(), findMany: vi.fn() },
@@ -145,7 +146,13 @@ import {
   downloadProjectFile,
   deleteProjectFile,
 } from '@/lib/services/projects/project-file-service';
-import { createTimeEntry, listTimeEntries } from '@/lib/services/projects/time-entry-service';
+import {
+  createTimeEntry,
+  deleteTimeEntry,
+  getTimeEntrySummary,
+  listTimeEntries,
+  updateTimeEntry,
+} from '@/lib/services/projects/time-entry-service';
 import { createProjectTemplate } from '@/lib/services/projects/project-template-service';
 import { updateProjectTask, listProjectMembers } from '@/lib/services/crm/project-service';
 
@@ -525,7 +532,11 @@ describe('Approvals, Change Orders, Milestones, Tasks & Time Entries', () => {
     await listTimeEntries(undefined, CUID_1, true);
     expect(mocks.prisma.timeEntry.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { organizationId: 'org-1', task: { projectId: CUID_1 }, billable: true },
+        where: {
+          organizationId: 'org-1',
+          OR: [{ projectId: CUID_1 }, { task: { projectId: CUID_1 } }],
+          billable: true,
+        },
       })
     );
 
@@ -657,5 +668,358 @@ describe('Project File upload, download, and cleanup security', () => {
       else process.env.STORAGE_LOCAL_PATH = prevStorage;
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Phase 5B-1 TimeEntry project linking, billing rates, and ownership', () => {
+  it('validates strict create/update schemas and prevents partial default leakage', () => {
+    // Rejects client-supplied organizationId
+    expect(
+      timeEntryCreateSchema.safeParse({
+        organizationId: 'org-evil',
+        date: '2026-06-01',
+        hours: '2',
+      }).success
+    ).toBe(false);
+
+    // Rejects invalid currency & negative/3-decimal rate
+    expect(
+      timeEntryCreateSchema.safeParse({
+        date: '2026-06-01',
+        hours: '2',
+        billable: true,
+        hourlyRate: '100.123',
+        currency: 'USD',
+      }).success
+    ).toBe(false);
+    expect(
+      timeEntryCreateSchema.safeParse({
+        date: '2026-06-01',
+        hours: '2',
+        billable: true,
+        hourlyRate: '100',
+        currency: 'INVALID',
+      }).success
+    ).toBe(false);
+
+    // Normalizes lowercase currency
+    const valid = timeEntryCreateSchema.parse({
+      projectId: CUID_1,
+      date: '2026-06-01',
+      hours: '2.5',
+      billable: true,
+      hourlyRate: '150',
+      currency: 'eur',
+    });
+    expect(valid.currency).toBe('EUR');
+
+    // Partial update must NOT inject billable: false default
+    expect(timeEntryUpdateSchema.parse({ description: 'Clarified note' })).toEqual({
+      description: 'Clarified note',
+    });
+  });
+
+  it('creates direct project time entries and resolves org default currency when rate currency omitted', async () => {
+    mocks.prisma.project.findFirst.mockResolvedValue({
+      id: CUID_1,
+      status: 'active',
+    });
+    mocks.prisma.organization.findUnique.mockResolvedValue({
+      settings: { defaultCurrency: 'PKR' },
+    });
+    mocks.prisma.timeEntry.create.mockResolvedValue({
+      id: 'te-1',
+      organizationId: 'org-1',
+      userId: 'user-1',
+      projectId: CUID_1,
+      taskId: null,
+      date: new Date('2026-06-01T00:00:00.000Z'),
+      hours: { toString: () => '2.5' },
+      description: 'Architecture call',
+      billable: true,
+      hourlyRate: { toString: () => '150' },
+      currency: 'PKR',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      user: { id: 'user-1', name: 'Alice', email: 'member@agency.test' },
+      project: { id: CUID_1, name: 'Apollo', status: 'active', deletedAt: null },
+      task: null,
+    });
+
+    const created = await createTimeEntry({
+      projectId: CUID_1,
+      taskId: null,
+      date: '2026-06-01',
+      hours: '2.5',
+      description: 'Architecture call',
+      billable: true,
+      hourlyRate: '150',
+    });
+
+    expect(mocks.prisma.timeEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organizationId: 'org-1',
+          userId: 'user-1',
+          projectId: CUID_1,
+          taskId: null,
+          billable: true,
+          hourlyRate: '150.00',
+          currency: 'PKR',
+        }),
+      })
+    );
+    expect(created.projectId).toBe(CUID_1);
+    expect(created.hourlyRate).toBe('150.00');
+    expect(created.currency).toBe('PKR');
+    expect(created.billableAmount).toBe('375.00');
+  });
+
+  it('ignores billing fields on non-billable create and enforces currency/rate pairing', async () => {
+    await expect(
+      createTimeEntry({
+        date: '2026-06-01',
+        hours: '2',
+        billable: true,
+        currency: 'USD',
+      })
+    ).rejects.toMatchObject({ statusCode: 400 });
+
+    mocks.prisma.timeEntry.create.mockResolvedValue({
+      id: 'te-nonbill',
+      organizationId: 'org-1',
+      userId: 'user-1',
+      projectId: null,
+      taskId: null,
+      date: new Date('2026-06-01T00:00:00.000Z'),
+      hours: { toString: () => '1.5' },
+      description: null,
+      billable: false,
+      hourlyRate: null,
+      currency: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      user: { id: 'user-1', name: 'Alice', email: 'member@agency.test' },
+      project: null,
+      task: null,
+    });
+
+    const created = await createTimeEntry({
+      date: '2026-06-01',
+      hours: '1.5',
+      billable: false,
+      hourlyRate: '120',
+      currency: 'USD',
+    });
+    expect(mocks.prisma.timeEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          billable: false,
+          hourlyRate: null,
+          currency: null,
+        }),
+      })
+    );
+    expect(created.billableAmount).toBeNull();
+  });
+
+  it('rejects archived projects, deleted projects, and mismatched task/project pairs', async () => {
+    mocks.prisma.project.findFirst.mockResolvedValue({ id: CUID_1, status: 'archived' });
+    await expect(
+      createTimeEntry({ projectId: CUID_1, date: '2026-06-01', hours: '1', billable: true })
+    ).rejects.toMatchObject({ statusCode: 400 });
+
+    mocks.prisma.project.findFirst.mockResolvedValue(null);
+    await expect(
+      createTimeEntry({ projectId: CUID_1, date: '2026-06-01', hours: '1', billable: true })
+    ).rejects.toMatchObject({ statusCode: 404 });
+
+    mocks.prisma.task.findFirst.mockResolvedValue({
+      id: CUID_2,
+      projectId: CUID_1,
+      project: { id: CUID_1, status: 'active', deletedAt: null },
+    });
+    await expect(
+      createTimeEntry({
+        projectId: 'clccccccccccccccccccccccc',
+        taskId: CUID_2,
+        date: '2026-06-01',
+        hours: '1',
+        billable: true,
+      })
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('enforces ownership on create/update/delete unless Administrator', async () => {
+    mocks.prisma.userRole.findFirst.mockResolvedValue(null);
+
+    await expect(
+      createTimeEntry({
+        userId: 'other-user',
+        date: '2026-06-01',
+        hours: '1',
+        billable: false,
+      })
+    ).rejects.toMatchObject({ statusCode: 403 });
+
+    mocks.prisma.timeEntry.findFirst.mockResolvedValue({
+      id: 'te-other',
+      organizationId: 'org-1',
+      userId: 'other-user',
+      projectId: null,
+      taskId: null,
+      date: new Date('2026-06-01T00:00:00.000Z'),
+      hours: { toString: () => '2' },
+      description: 'Other user work',
+      billable: true,
+      hourlyRate: { toString: () => '100' },
+      currency: 'USD',
+      task: null,
+    });
+
+    await expect(updateTimeEntry('te-other', { description: 'Hijack' })).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    await expect(deleteTimeEntry('te-other')).rejects.toMatchObject({ statusCode: 403 });
+
+    // Administrator can modify and delete another user's entry
+    mocks.prisma.userRole.findFirst.mockResolvedValue({ id: 'ur-admin' });
+    mocks.prisma.timeEntry.update.mockResolvedValue({
+      id: 'te-other',
+      organizationId: 'org-1',
+      userId: 'other-user',
+      projectId: null,
+      taskId: null,
+      date: new Date('2026-06-01T00:00:00.000Z'),
+      hours: { toString: () => '2' },
+      description: 'Admin edit',
+      billable: true,
+      hourlyRate: { toString: () => '100' },
+      currency: 'USD',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      user: { id: 'other-user', name: 'Bob', email: 'bob@agency.test' },
+      project: null,
+      task: null,
+    });
+
+    const updated = await updateTimeEntry('te-other', { description: 'Admin edit' });
+    // Snapshotted rate and currency remain intact on unrelated edit
+    expect(updated.hourlyRate).toBe('100.00');
+    expect(updated.currency).toBe('USD');
+    expect(updated.billableAmount).toBe('200.00');
+
+    mocks.prisma.timeEntry.delete.mockResolvedValue({ id: 'te-other' });
+    const deleted = await deleteTimeEntry('te-other');
+    expect(deleted.id).toBe('te-other');
+  });
+
+  it('preserves snapshotted currency when org settings change and clears rate when toggling non-billable', async () => {
+    // Organization later switched defaultCurrency to GBP
+    mocks.prisma.organization.findUnique.mockResolvedValue({
+      settings: { defaultCurrency: 'GBP' },
+    });
+    mocks.prisma.timeEntry.findFirst.mockResolvedValue({
+      id: 'te-eur',
+      organizationId: 'org-1',
+      userId: 'user-1',
+      projectId: CUID_1,
+      taskId: null,
+      date: new Date('2026-06-01T00:00:00.000Z'),
+      hours: { toString: () => '2' },
+      description: 'Original',
+      billable: true,
+      hourlyRate: { toString: () => '120' },
+      currency: 'EUR',
+      task: null,
+    });
+    mocks.prisma.timeEntry.update.mockResolvedValue({
+      id: 'te-eur',
+      organizationId: 'org-1',
+      userId: 'user-1',
+      projectId: CUID_1,
+      taskId: null,
+      date: new Date('2026-06-01T00:00:00.000Z'),
+      hours: { toString: () => '3' },
+      description: 'Original',
+      billable: true,
+      hourlyRate: { toString: () => '120' },
+      currency: 'EUR',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      user: { id: 'user-1', name: 'Alice', email: 'member@agency.test' },
+      project: { id: CUID_1, name: 'Apollo', status: 'active', deletedAt: null },
+      task: null,
+    });
+
+    const updated = await updateTimeEntry('te-eur', { hours: '3' });
+    expect(mocks.prisma.timeEntry.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          billable: true,
+          hourlyRate: '120.00',
+          currency: 'EUR',
+        }),
+      })
+    );
+    expect(updated.currency).toBe('EUR');
+    expect(updated.billableAmount).toBe('360.00');
+
+    // Toggling billable: false clears hourlyRate and currency
+    mocks.prisma.timeEntry.update.mockResolvedValue({
+      id: 'te-eur',
+      organizationId: 'org-1',
+      userId: 'user-1',
+      projectId: CUID_1,
+      taskId: null,
+      date: new Date('2026-06-01T00:00:00.000Z'),
+      hours: { toString: () => '3' },
+      description: 'Original',
+      billable: false,
+      hourlyRate: null,
+      currency: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      user: { id: 'user-1', name: 'Alice', email: 'member@agency.test' },
+      project: { id: CUID_1, name: 'Apollo', status: 'active', deletedAt: null },
+      task: null,
+    });
+
+    await updateTimeEntry('te-eur', { billable: false });
+    expect(mocks.prisma.timeEntry.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          billable: false,
+          hourlyRate: null,
+          currency: null,
+        }),
+      })
+    );
+  });
+
+  it('summarizes project time entries via getTimeEntrySummary with multi-currency separation', async () => {
+    mocks.prisma.project.findFirst.mockResolvedValue({ id: CUID_1, organizationId: 'org-1' });
+    mocks.prisma.timeEntry.findMany.mockResolvedValue([
+      {
+        hours: { toString: () => '2' },
+        billable: true,
+        hourlyRate: { toString: () => '100' },
+        currency: 'USD',
+      },
+      {
+        hours: { toString: () => '1.5' },
+        billable: true,
+        hourlyRate: { toString: () => '80' },
+        currency: 'EUR',
+      },
+      { hours: { toString: () => '1' }, billable: false, hourlyRate: null, currency: null },
+    ]);
+
+    const summary = await getTimeEntrySummary(undefined, CUID_1);
+    expect(summary.entryCount).toBe(3);
+    expect(summary.totalHours).toBe(4.5);
+    expect(summary.billableHours).toBe(3.5);
+    expect(summary.nonBillableHours).toBe(1);
+    expect(summary.billableAmountsByCurrency).toHaveLength(2);
   });
 });

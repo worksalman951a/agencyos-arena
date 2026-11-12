@@ -641,10 +641,11 @@ model Project {
   approvals    ProjectApproval[]
   contracts    Contract[]
   invoices     Invoice[]
+  timeEntries  TimeEntry[]
 
-  // Target of the composite Invoice -> Project foreign key. `id` is already the
-  // primary key, so this adds no new restriction on projects; it only lets a
-  // child row prove "same organization" at the database level.
+  // Target of composite Project foreign keys (Invoice -> Project, TimeEntry -> Project).
+  // `id` is already the primary key, so this adds no new restriction on projects;
+  // it only lets a child row prove "same organization" at the database level.
   @@unique([id, organizationId])
 }
 
@@ -702,16 +703,24 @@ model TimeEntry {
   id             String   @id @default(cuid())
   organizationId String
   userId         String
+  projectId      String?
   taskId         String?
   date           DateTime
   hours          Decimal
   description    String?
   billable       Boolean  @default(false)
+  hourlyRate     Decimal?
+  currency       String?
   createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId, organizationId], references: [id, organizationId], onDelete: NoAction, onUpdate: NoAction)
   task         Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, projectId])
+  @@index([organizationId, userId, date])
 }
 
 model ProjectFile {
