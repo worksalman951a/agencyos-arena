@@ -112,35 +112,38 @@ async function activateThroughInvitePage(
   // The address appears in the invitation copy and again in the sign-in hint.
   await expect(page.getByText(fixture.email).first()).toBeVisible();
 
+  await submitPortalSignIn(page, fixture.email, fixture.password);
+
   const acceptButton = page.getByTestId('accept-invitation');
+  await expect(acceptButton).toBeVisible({ timeout: 30_000 });
+  await acceptButton.click();
+  await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
+  return page;
+}
+
+/**
+ * Submit the portal sign-in form, tolerating Better Auth's per-IP rate limit.
+ *
+ * A deliberate 429 is not a product failure: when the form reports an error the test
+ * waits for the window and submits once more. A successful attempt leaves the form,
+ * so no error appears within the short window.
+ */
+async function submitPortalSignIn(page: Page, email: string, password: string): Promise<void> {
   const formError = page.locator('form [role="alert"]');
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    await page.getByLabel('E-mail').fill(fixture.email);
-    await page.getByLabel('Password').fill(fixture.password);
+    await page.getByLabel('E-mail').fill(email);
+    await page.getByLabel('Password').fill(password);
     await page.getByRole('button', { name: 'Sign in' }).click();
 
-    const signedIn = await acceptButton
-      .waitFor({ state: 'visible', timeout: 20_000 })
+    const reported = await formError
+      .first()
+      .waitFor({ state: 'visible', timeout: 10_000 })
       .then(() => true)
       .catch(() => false);
-    if (signedIn) break;
-
-    // Better Auth rate-limits sign-in per IP; a deliberate 429 is not a product
-    // failure, so wait for the window and try once more.
-    const message = await formError
-      .first()
-      .textContent()
-      .catch(() => null);
-    if (!message) break;
-    await page.waitForTimeout(8_000);
+    if (!reported) return;
+    if (attempt === 0) await page.waitForTimeout(8_000);
   }
-
-  await expect(acceptButton).toBeVisible({ timeout: 30_000 });
-  await acceptButton.click();
-
-  await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
-  return page;
 }
 
 async function grantProject(
@@ -273,9 +276,7 @@ test.describe('Client portal end-to-end journeys', () => {
     await expect(page).toHaveURL(/\/portal\/login/, { timeout: 20_000 });
 
     // --- and logging back in through the portal form works
-    await page.getByLabel('E-mail').fill(fixture.email);
-    await page.getByLabel('Password').fill(fixture.password);
-    await page.getByRole('button', { name: 'Sign in' }).click();
+    await submitPortalSignIn(page, fixture.email, fixture.password);
     await expect(page).toHaveURL(/\/portal$/, { timeout: 20_000 });
     await expect(page.getByText(/signed in as/i)).toBeVisible();
 
@@ -415,9 +416,7 @@ test.describe('Client portal end-to-end journeys', () => {
     await expect(page).toHaveURL(/\/portal\/login/, { timeout: 20_000 });
 
     // Re-entry is refused: the account can no longer mint a session.
-    await page.getByLabel('E-mail').fill(fixture.email);
-    await page.getByLabel('Password').fill(fixture.password);
-    await page.getByRole('button', { name: 'Sign in' }).click();
+    await submitPortalSignIn(page, fixture.email, fixture.password);
     const formError = page.locator('form [role="alert"]');
     await expect(formError).toBeVisible({ timeout: 20_000 });
     await expect(formError).not.toBeEmpty();
