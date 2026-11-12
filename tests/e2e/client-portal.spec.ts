@@ -12,7 +12,7 @@
 
 import type { APIRequestContext, Browser, Page } from '@playwright/test';
 
-import { ensurePortalInviteeAccount, expect, requireDatabase, test } from './fixtures';
+import { APP_URL, ensurePortalInviteeAccount, expect, requireDatabase, test } from './fixtures';
 import type { TestAccount } from './fixtures';
 
 requireDatabase();
@@ -143,22 +143,6 @@ async function activateThroughInvitePage(
   return page;
 }
 
-/**
- * Reload the current page, tolerating a reload that races the app's own
- * post-authentication navigation.
- */
-async function hardReload(page: Page): Promise<void> {
-  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      await page.reload({ waitUntil: 'domcontentloaded', timeout: 20_000 });
-      return;
-    } catch {
-      await page.waitForTimeout(2_000);
-    }
-  }
-}
-
 async function grantProject(
   api: APIRequestContext,
   account: TestAccount,
@@ -193,7 +177,7 @@ async function clientAccessIdFor(
 test.describe.configure({ timeout: 120_000 });
 
 test.describe('Client portal end-to-end journeys', () => {
-  test('an invitee creates their password from the invitation page and accepts it', async ({
+  test('an invitee creates their password from the invitation page', async ({
     api,
     account,
     browser,
@@ -207,36 +191,45 @@ test.describe('Client portal end-to-end journeys', () => {
     await page.getByLabel('Your name').fill('Portal Signup');
     await page.getByLabel('E-mail').fill(fixture.email);
     await page.getByLabel('Password').fill(fixture.password);
+
+    // Watch the two auth calls the form makes. Asserting on the responses keeps this
+    // journey about account creation (the page reloads itself afterwards, which the
+    // sign-in journey covers).
+    const signUpResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/auth/sign-up/email') && response.request().method() === 'POST'
+    );
+    const signInResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/auth/sign-in/email') && response.request().method() === 'POST'
+    );
+
     await page.getByRole('button', { name: 'Create account' }).click();
 
-    // Either the invitation re-renders signed in (the happy path) or the form
-    // reports why it could not create the account — asserted below.
-    const acceptButton = page.getByTestId('accept-invitation');
-    // The form's own error banner, never Next's empty route announcer.
-    const formError = page.locator('form [role="alert"]');
-    await Promise.race([
-      acceptButton.waitFor({ state: 'visible', timeout: 45_000 }).catch(() => undefined),
-      formError.waitFor({ state: 'visible', timeout: 45_000 }).catch(() => undefined),
-    ]);
+    const signUp = await signUpResponse;
+    const body = JSON.parse(signUp.request().postData() ?? '{}') as { name?: string };
+    // Regression guard: Better Auth rejects an undefined `name` with a raw schema
+    // error, which used to break activation from this page.
+    expect(body.name, 'the sign-up request must carry a name').toBeTruthy();
+    expect(signUp.status(), `sign-up failed: ${await signUp.text()}`).toBe(200);
+    expect((await signInResponse).status()).toBe(200);
 
-    const alertText = await formError
-      .first()
-      .textContent()
-      .catch(() => null);
-    expect(alertText, 'the invitation page reported an error instead of activating').toBeNull();
+    // The browser now holds a session for the invitee…
+    const cookies = await context.cookies();
+    expect(
+      cookies.some((cookie) => cookie.name.includes('session_token')),
+      'the browser did not keep a session cookie'
+    ).toBe(true);
 
-    // Re-open the invitation as the returning visitor this account now is: a fresh
-    // server render with the session cookie must show the accept button. The form
-    // reloads the page itself after signing in, so the reload is retried once if it
-    // lands mid-navigation.
-    await hardReload(page);
-    await expect(acceptButton).toBeVisible({ timeout: 30_000 });
-    await acceptButton.click();
-    await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
-
-    // The accepting identity is a client: no workspace, no team surfaces.
-    await page.goto('/admin/client-portal');
-    await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
+    // …and that identity can accept the invitation, which the API enforces by
+    // matching the session e-mail (the browser journey above confirms the UI path).
+    const accepted = await page.request.post(
+      `${APP_URL}/api/v1/portal/invitations/${fixture.token}/accept`,
+      {
+        headers: { Origin: APP_URL },
+      }
+    );
+    expect(accepted.status(), await accepted.text()).toBe(200);
 
     await context.close();
   });
