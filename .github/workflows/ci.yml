@@ -435,22 +435,42 @@ jobs:
       # postgres:16 service image.
       - name: Install PostgreSQL 16 client tools
         run: |
-          # The client major must match the postgres:16 service image, and must
-          # come from a source guaranteed to contain exactly that series.
-          # Neither apt route is reliable here: PGDG does not publish 16 for
-          # every Ubuntu release, and the distribution repos on this runner ship
-          # 18 with no versioned 16 package (both tried; both failed with 100).
+          # The client major must match the postgres:16 service image. A newer
+          # client emits `SET transaction_timeout = 0`, which a 16 server
+          # rejects, and the restore then dies while INITIALIZING.
           #
-          # The server image is the authoritative source. Use the Debian-based
-          # `postgres:16` rather than `postgres:16-alpine`: alpine binaries
-          # are linked against musl and exit 127 when run on this glibc-based
-          # runner, so the Debian image is the one that works here.
+          # Neither apt route works on this runner (PGDG has no 16 series for
+          # the release; the distribution repos ship 18 with no versioned 16
+          # package). Copying binaries out of the image is also not enough: the
+          # PGDG binaries need libpq from the same image, so `psql` exits 127
+          # once run on the bare runner.
+          #
+          # So the tools run *inside* the image. A wrapper is written for each
+          # tool, which is what every later step invokes — the PATH looks the
+          # same to the scripts, and the binaries keep their own libraries.
           mkdir -p "$HOME/pg-client/bin"
-          docker create --name pg-client-src postgres:16 > /dev/null
-          for tool in pg_dump pg_restore psql pg_isready; do
-            docker cp "pg-client-src:/usr/lib/postgresql/16/bin/$tool" "$HOME/pg-client/bin/"
+          docker pull -q "postgres:${PG_CLIENT_VERSION}" > /dev/null
+
+          write_wrapper() {
+            local tool="$1"
+            cat > "$HOME/pg-client/bin/$tool" <<WRAPPER
+          #!/bin/bash
+          # Runs the ${PG_CLIENT_VERSION} client from the official image so the
+          # binary always matches the server the dump is restored into.
+          # --network host so `localhost:5432` inside the container is the
+          # runner's localhost, where the service ports are published.
+          exec docker run --rm -i --network host \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            -e PGSSLMODE -e PGCONNECT_TIMEOUT -e PGPASSFILE \
+            -v "\$PWD:\$PWD" -w "\$PWD" \
+            "postgres:${PG_CLIENT_VERSION}" "$tool" "\$@"
+          WRAPPER
+            chmod +x "$HOME/pg-client/bin/$tool"
+          }
+
+          for tool in pg_dump pg_restore psql pg_isready createdb; do
+            write_wrapper "$tool"
           done
-          docker rm pg-client-src > /dev/null
 
           echo "$HOME/pg-client/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/pg-client/bin:$PATH"
@@ -679,24 +699,31 @@ jobs:
 
       - name: Restore refuses a non-disposable target
         run: |
-          set -euo pipefail
+          set -uo pipefail
           DUMP="$(ls backup-artifacts/*.dump | head -1)"
+
+          fail() {
+            echo "::error title=refusal matrix::$1"
+            if [ -f refusal.log ]; then echo "--- last output ---"; tail -20 refusal.log; fi
+            exit 1
+          }
 
           check_refused() {
             local label="$1"; shift
+            : > refusal.log
             set +e
             "$@" > refusal.log 2>&1
             local status=$?
             set -e
             cat refusal.log
             if [ "$status" -ne 2 ]; then
-              echo "ERROR: $label — expected exit 2 (unsafe), got $status" >&2
-              exit 1
+              fail "$label — expected exit 2 (unsafe), got $status"
             fi
             echo "$label -> refused correctly"
           }
 
-          # 1. No confirmation string: the operator never declared the target disposable.
+          # 1. No confirmation string: the operator never declared the target
+          #    disposable.
           check_refused "missing confirmation" env -u RESTORE_VERIFY_ISOLATION_CONFIRMATION \
             node scripts/backup/verify-restore.mjs --backup "$DUMP"
 
@@ -709,24 +736,22 @@ jobs:
             node scripts/backup/verify-restore.mjs --backup "$DUMP" \
               --target-database agencyos
 
-          # 3. Isolated server, but the runbook port is not the port we reached.
+          # 3. Isolated server, but not the approved port.
           check_refused "wrong isolated port" env \
             RESTORE_VERIFY_ALLOWED_PORT=5499 \
             node scripts/backup/verify-restore.mjs --backup "$DUMP"
 
           # The application database must be untouched by all of the above.
-          # (PGPASSWORD/PGHOST are the *source* service in this step's env; the
-          # deliberate 5432 attempts above went through RESTORE_VERIFY_ADMIN_URL.)
-          if [ "$(psql -w -q -At -v ON_ERROR_STOP=1 -c 'SELECT current_database();')" != "agencyos" ]; then
-            echo "ERROR: this check is not pointed at the source database" >&2
-            exit 1
-          fi
-          rows="$(psql -w -q -At -v ON_ERROR_STOP=1 -c 'SELECT count(*) FROM \"Organization\";')"
+          # PG* in this step's env point at the SOURCE service on 5432.
+          here="$(psql -w -q -At -v ON_ERROR_STOP=1 -c 'SELECT current_database();' 2>&1)" \
+            || fail "could not query the source database: $here"
+          echo "connected to: $here"
+          [ "$here" = "agencyos" ] || fail "this check is not pointed at the source database (got '$here')"
+
+          rows="$(psql -w -q -At -v ON_ERROR_STOP=1 -c 'SELECT count(*) FROM \"Organization\";' 2>&1)" \
+            || fail "could not count source rows: $rows"
           echo "Organization rows still in the source database: $rows"
-          if [ "$rows" -lt 1 ]; then
-            echo "ERROR: source database lost its data" >&2
-            exit 1
-          fi
+          [ "$rows" -ge 1 ] || fail "source database lost its data (Organization rows = $rows)"
         env:
           DATABASE_URL: ${{ env.SOURCE_URL }}
           RESTORE_VERIFY_ADMIN_URL: ${{ env.TARGET_URL }}
