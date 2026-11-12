@@ -54,7 +54,9 @@ INSERT INTO "User" (
 VALUES (
   'bkverify-user-0001',
   'backup-verify@example.test',
-  '2026-01-01 00:00:00',
+  -- BOOLEAN since migration 0003 (it started life as a timestamp); an INSERT
+  -- with a timestamp literal here is what made the first CI run fail.
+  true,
   'Backup Verify User',
   NULL,
   '2026-01-01 00:00:00',
