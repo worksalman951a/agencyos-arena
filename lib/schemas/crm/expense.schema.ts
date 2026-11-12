@@ -37,10 +37,25 @@ export const expenseUpdateSchema = expenseCreateSchema
     'At least one field must be provided for update'
   );
 
-export const expenseReconcileSchema = z.object({
-  expenseIds: z.array(z.string().cuid()).min(1, 'At least one expense ID is required'),
-  currency: z.string().length(3, 'Currency must be a 3-letter ISO code').toUpperCase(),
-});
+export const expenseReconcileSchema = z
+  .object({
+    expenseIds: z.array(z.string().cuid()).min(1, 'At least one expense ID is required'),
+    currency: z.string().length(3, 'Currency must be a 3-letter ISO code').toUpperCase(),
+    allowOverwrite: z.boolean().default(false),
+    reason: z
+      .string()
+      .trim()
+      .min(
+        5,
+        'A justification of at least 5 characters is required when overwriting verified currencies'
+      )
+      .max(500)
+      .optional(),
+  })
+  .refine((data) => !data.allowOverwrite || (data.reason && data.reason.trim().length >= 5), {
+    message: 'An explicit reason is required when allowOverwrite is true',
+    path: ['reason'],
+  });
 
 export type ExpenseCreateInput = z.infer<typeof expenseCreateSchema>;
 export type ExpenseUpdateInput = z.infer<typeof expenseUpdateSchema>;

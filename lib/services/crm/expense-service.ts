@@ -512,17 +512,38 @@ export async function deleteExpense(id: string) {
 
 /**
  * Reconciles historical or unassigned expense records with an authoritative ISO currency.
- * Accessible only by administrators with 'expense.update' or 'settings.update' permissions.
- * Protects already verified expenses from unintended overwrites unless explicit allowOverwrite is requested.
+ * Accessible only by administrators with 'settings.update' or role admin/owner permissions.
+ * Protects already verified expenses from unintended overwrites unless explicit allowOverwrite is requested with reason.
  */
 export async function reconcileHistoricalExpenses(input: {
   expenseIds: string[];
   currency: string;
   allowOverwrite?: boolean;
+  reason?: string;
 }) {
-  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
+  const { userId, organizationId, email: actorEmail, role } = await getAuthorizedUser();
 
-  await requirePermission(userId, organizationId, 'expense.update');
+  // Require admin role or settings.update permission for currency reconciliation
+  const isAdmin = role === 'admin' || role === 'owner';
+  if (!isAdmin) {
+    await requirePermission(userId, organizationId, 'settings.update');
+  }
+
+  // Exceptional verified-currency overwrite strictly requires admin/owner authority and justification
+  if (input.allowOverwrite) {
+    if (!isAdmin) {
+      throw codedError(
+        'Overwriting previously verified expense currencies requires organization administrator authority.',
+        403
+      );
+    }
+    if (!input.reason || input.reason.trim().length < 5) {
+      throw codedError(
+        'An explicit justification reason is required to correct previously verified expense currencies.',
+        400
+      );
+    }
+  }
 
   const normalizedCurrency = normalizeCurrencyCode(input.currency);
   if (!normalizedCurrency) {
@@ -548,7 +569,7 @@ export async function reconcileHistoricalExpenses(input: {
 
   if (eligibleTargets.length === 0) {
     throw codedError(
-      'Selected expenses already have verified currencies. Pass allowOverwrite=true to re-reconcile.',
+      'Selected expenses already have verified currencies. Pass allowOverwrite=true with an administrator reason to re-reconcile.',
       400
     );
   }
@@ -575,6 +596,12 @@ export async function reconcileHistoricalExpenses(input: {
     metadata: {
       reconciledCount: eligibleTargets.length,
       assignedCurrency: normalizedCurrency,
+      previousCurrencies: eligibleTargets.map((t: { id: string; currency: string | null }) => ({
+        id: t.id,
+        previousCurrency: t.currency,
+      })),
+      allowOverwrite: Boolean(input.allowOverwrite),
+      reason: input.reason ?? null,
       expenseIds: eligibleTargets.map((t: { id: string }) => t.id),
       skippedCount: targets.length - eligibleTargets.length,
     },

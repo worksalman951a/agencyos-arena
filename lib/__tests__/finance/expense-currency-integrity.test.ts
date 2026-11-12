@@ -276,7 +276,7 @@ describe('Phase 11E: Historical Expense Currency Integrity', () => {
       );
     });
 
-    it('skips already-verified expenses unless allowOverwrite is explicitly specified', async () => {
+    it('skips already-verified expenses unless allowOverwrite is explicitly specified with reason', async () => {
       vi.mocked(prisma.expenseItem.findMany).mockResolvedValue([
         { id: 'exp-verified', organizationId: 'org-fin-1', currency: 'USD' },
       ] as unknown as Awaited<ReturnType<typeof prisma.expenseItem.findMany>>);
@@ -287,6 +287,67 @@ describe('Phase 11E: Historical Expense Currency Integrity', () => {
           currency: 'EUR',
         })
       ).rejects.toThrow('Selected expenses already have verified currencies');
+    });
+
+    it('rejects verified currency overwrite if caller is not an administrator', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue({
+        session: { id: 's1', userId: 'u2' },
+        user: { id: 'u2', email: 'staff@example.com', role: 'member' },
+      } as unknown as Awaited<ReturnType<typeof auth.api.getSession>>);
+
+      await expect(
+        reconcileHistoricalExpenses({
+          expenseIds: ['exp-verified'],
+          currency: 'EUR',
+          allowOverwrite: true,
+          reason: 'Correcting errant currency assignment',
+        })
+      ).rejects.toThrow(
+        'Overwriting previously verified expense currencies requires organization administrator authority'
+      );
+    });
+
+    it('rejects verified currency overwrite if explicit justification is missing', async () => {
+      vi.mocked(prisma.expenseItem.findMany).mockResolvedValue([
+        { id: 'exp-verified', organizationId: 'org-fin-1', currency: 'USD' },
+      ] as unknown as Awaited<ReturnType<typeof prisma.expenseItem.findMany>>);
+
+      await expect(
+        reconcileHistoricalExpenses({
+          expenseIds: ['exp-verified'],
+          currency: 'EUR',
+          allowOverwrite: true,
+        })
+      ).rejects.toThrow('An explicit justification reason is required');
+    });
+
+    it('allows administrator to overwrite verified currency when justified, capturing audit trail', async () => {
+      vi.mocked(prisma.expenseItem.findMany).mockResolvedValue([
+        { id: 'exp-verified', organizationId: 'org-fin-1', currency: 'USD' },
+      ] as unknown as Awaited<ReturnType<typeof prisma.expenseItem.findMany>>);
+
+      vi.mocked(prisma.expenseItem.updateMany).mockResolvedValue({ count: 1 });
+
+      const res = await reconcileHistoricalExpenses({
+        expenseIds: ['exp-verified'],
+        currency: 'EUR',
+        allowOverwrite: true,
+        reason: 'Invoice audit showed billing was actually EUR',
+      });
+
+      expect(res.reconciledCount).toBe(1);
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'expense.currency.reconcile',
+            metadata: expect.objectContaining({
+              allowOverwrite: true,
+              reason: 'Invoice audit showed billing was actually EUR',
+              previousCurrencies: [{ id: 'exp-verified', previousCurrency: 'USD' }],
+            }),
+          }),
+        })
+      );
     });
 
     it('rejects cross-tenant reconciliation attempts', async () => {
