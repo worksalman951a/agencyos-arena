@@ -14,6 +14,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoConvertEstimateView } from '@/components/finance/bento-convert-estimate-view';
 
 interface ConvertedInvoice {
   invoiceId: string;
@@ -21,6 +23,7 @@ interface ConvertedInvoice {
 }
 
 export default function ConvertEstimatePage({ params }: { params: Promise<{ id: string }> }) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [id, setId] = useState<string>('');
   const [estimate, setEstimate] = useState<{
@@ -31,6 +34,8 @@ export default function ConvertEstimatePage({ params }: { params: Promise<{ id: 
   const [loading, setLoading] = useState(true);
   const [converting, setConverting] = useState(false);
   const [converted, setConverted] = useState<ConvertedInvoice | null>(null);
+  const [invoiceTitle, setInvoiceTitle] = useState('');
+  const [dueDate, setDueDate] = useState('');
 
   useEffect(() => {
     params.then(async ({ id: pid }) => {
@@ -50,6 +55,7 @@ export default function ConvertEstimatePage({ params }: { params: Promise<{ id: 
           number: data.number,
           status: data.status,
         });
+        setInvoiceTitle(`Invoice for Estimate ${data.number}`);
       } catch (err) {
         toast.error((err as Error).message);
         router.push('/finance/estimates');
@@ -59,48 +65,15 @@ export default function ConvertEstimatePage({ params }: { params: Promise<{ id: 
     });
   }, [params, router]);
 
-  if (loading) {
-    return (
-      <div className="p-6">
-        <div className="flex items-center gap-2 text-muted-foreground">Loading estimate...</div>
-      </div>
-    );
-  }
-
-  if (!estimate) {
-    return null;
-  }
-
-  if (estimate.status !== 'accepted') {
-    return (
-      <div className="space-y-6 p-6">
-        <h1 className="text-2xl font-bold">Convert Estimate</h1>
-        <div className="rounded-md border bg-amber-50 p-4">
-          <h2 className="text-lg font-semibold mb-2">Cannot Convert</h2>
-          <p className="text-sm text-amber-800">
-            Only accepted estimates can be converted to invoices. This estimate is currently
-            {estimate.status}.
-          </p>
-        </div>
-        <Link
-          href={`/finance/estimates/${id}`}
-          className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
-        >
-          Back to Estimate
-        </Link>
-      </div>
-    );
-  }
-
-  const handleConvert = async (invoiceTitle: string, dueDate: string) => {
+  const handleConvert = async (titleToConvert: string, dueDateToConvert: string) => {
     setConverting(true);
     try {
       const res = await fetch(`/api/v1/finance/estimates/${id}/convert`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          invoiceTitle,
-          dueDate: dueDate || undefined,
+          invoiceTitle: titleToConvert,
+          dueDate: dueDateToConvert || undefined,
         }),
       });
 
@@ -118,6 +91,58 @@ export default function ConvertEstimatePage({ params }: { params: Promise<{ id: 
       setConverting(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center gap-2 text-muted-foreground">Loading estimate...</div>
+      </div>
+    );
+  }
+
+  if (!estimate) {
+    return null;
+  }
+
+  if (isBento) {
+    return (
+      <BentoConvertEstimateView
+        estimate={estimate}
+        invoiceTitle={invoiceTitle}
+        setInvoiceTitle={setInvoiceTitle}
+        dueDate={dueDate}
+        setDueDate={setDueDate}
+        onConvert={(e) => {
+          e.preventDefault();
+          void handleConvert(invoiceTitle, dueDate);
+        }}
+        converting={converting}
+        converted={converted}
+      />
+    );
+  }
+
+  // Legacy fallback view
+  if (estimate.status !== 'accepted') {
+    return (
+      <div className="space-y-6 p-6">
+        <h1 className="text-2xl font-bold">Convert Estimate</h1>
+        <div className="rounded-md border bg-amber-50 p-4">
+          <h2 className="text-lg font-semibold mb-2">Cannot Convert</h2>
+          <p className="text-sm text-amber-800">
+            Only accepted estimates can be converted to invoices. This estimate is currently{' '}
+            {estimate.status}.
+          </p>
+        </div>
+        <Link
+          href={`/finance/estimates/${id}`}
+          className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+        >
+          Back to Estimate
+        </Link>
+      </div>
+    );
+  }
 
   if (converted) {
     return (
@@ -196,7 +221,7 @@ export default function ConvertEstimatePage({ params }: { params: Promise<{ id: 
           onSubmit={(e) => {
             e.preventDefault();
             const formData = new FormData(e.target as HTMLFormElement);
-            handleConvert(
+            void handleConvert(
               formData.get('invoiceTitle') as string,
               formData.get('dueDate') as string
             );

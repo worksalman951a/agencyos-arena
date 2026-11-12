@@ -9,8 +9,11 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoExpenseFormView } from '@/components/finance/bento-expense-form-view';
 
 export default function NewExpensePage() {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [projectId, setProjectId] = useState('');
   const [category, setCategory] = useState('');
@@ -19,9 +22,11 @@ export default function NewExpensePage() {
   const [receiptUrl, setReceiptUrl] = useState('');
   const [billable, setBillable] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e?.preventDefault) e.preventDefault();
+    setError(null);
     setLoading(true);
     try {
       const res = await fetch('/api/v1/finance/expenses', {
@@ -38,8 +43,10 @@ export default function NewExpensePage() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to create expense');
+        const err = await res.json().catch(() => ({}));
+        const msg = (err as { error?: string }).error || 'Failed to create expense';
+        setError(msg);
+        throw new Error(msg);
       }
 
       const data = await res.json();
@@ -52,6 +59,30 @@ export default function NewExpensePage() {
     }
   };
 
+  if (isBento) {
+    return (
+      <BentoExpenseFormView
+        mode="new"
+        projectId={projectId}
+        setProjectId={setProjectId}
+        category={category}
+        setCategory={setCategory}
+        amount={amount}
+        setAmount={setAmount}
+        expenseDate={expenseDate}
+        setExpenseDate={setExpenseDate}
+        receiptUrl={receiptUrl}
+        setReceiptUrl={setReceiptUrl}
+        billable={billable}
+        setBillable={setBillable}
+        onSubmit={handleSubmit}
+        isLoading={loading}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

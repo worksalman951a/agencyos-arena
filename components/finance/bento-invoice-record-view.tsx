@@ -2,9 +2,19 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Calendar, CreditCard, Clock, CheckCircle2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import {
+  ArrowLeft,
+  Calendar,
+  CreditCard,
+  Clock,
+  CheckCircle2,
+  Plus,
+  AlertTriangle,
+} from 'lucide-react';
 import { Panel, KeyValueRow, StatusPill, StatStrip } from '@/components/ui/premium/primitives';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { ExportPdfButton } from '@/components/invoices/export-pdf-button';
 import { sumDecimalAmounts, formatDecimalMoney } from '@/lib/finance/decimal-utils';
 import type { InvoiceResponse } from '@/lib/services/crm/invoice-service';
@@ -17,7 +27,27 @@ interface BentoInvoiceRecordViewProps {
   isEditable: boolean;
 }
 
-export function BentoInvoiceRecordView({ invoice, isEditable }: BentoInvoiceRecordViewProps) {
+export function BentoInvoiceRecordView({
+  invoice,
+  canUpdate,
+  isEditable,
+}: BentoInvoiceRecordViewProps) {
+  let router: ReturnType<typeof useRouter> | null = null;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    router = useRouter();
+  } catch {
+    // Graceful fallback for non-Next router test harnesses
+  }
+
+  const [showPaymentForm, setShowPaymentForm] = React.useState(false);
+  const [paymentAmount, setPaymentAmount] = React.useState('');
+  const [paymentMethod, setPaymentMethod] = React.useState('bank_transfer');
+  const [paymentReference, setPaymentReference] = React.useState('');
+  const [paymentPaidAt, setPaymentPaidAt] = React.useState('');
+  const [isRecording, setIsRecording] = React.useState(false);
+  const [paymentError, setPaymentError] = React.useState<string | null>(null);
+
   const clientFullName = invoice.client
     ? `${invoice.client.firstName ?? ''} ${invoice.client.lastName ?? ''}`.trim() ||
       'Unnamed Client'
@@ -30,6 +60,40 @@ export function BentoInvoiceRecordView({ invoice, isEditable }: BentoInvoiceReco
   const balanceDecimal = Decimal.max(0, grossTotal.minus(paidTotal));
   const balanceStr = balanceDecimal.toFixed(2);
   const isSettled = invoice.status === 'paid' || balanceDecimal.isZero();
+
+  const handleRecordPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPaymentError(null);
+    setIsRecording(true);
+    try {
+      const res = await fetch(`/api/v1/crm/invoices/${invoice.id}/payments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          amount: paymentAmount.trim(),
+          method: paymentMethod,
+          reference: paymentReference.trim() || undefined,
+          paidAt: paymentPaidAt ? `${paymentPaidAt}T00:00:00Z` : undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to record payment');
+      }
+
+      setShowPaymentForm(false);
+      setPaymentAmount('');
+      setPaymentReference('');
+      setPaymentPaidAt('');
+      router?.refresh();
+    } catch (err) {
+      setPaymentError((err as Error).message);
+    } finally {
+      setIsRecording(false);
+    }
+  };
 
   const getStatusTone = (status: string): 'ok' | 'warn' | 'danger' | undefined => {
     switch (status.toLowerCase()) {
@@ -182,7 +246,111 @@ export function BentoInvoiceRecordView({ invoice, isEditable }: BentoInvoiceReco
           </Panel>
 
           {/* Payment History */}
-          <Panel title={`Recorded Payments (${invoice.payments.length})`}>
+          <Panel
+            title={`Recorded Payments (${invoice.payments.length})`}
+            action={
+              canUpdate &&
+              !isSettled && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setPaymentAmount(balanceStr);
+                    setShowPaymentForm(!showPaymentForm);
+                  }}
+                  className="h-7 text-xs"
+                >
+                  <Plus size={12} className="mr-1" /> Record Payment
+                </Button>
+              )
+            }
+          >
+            {showPaymentForm && (
+              <form
+                onSubmit={handleRecordPayment}
+                className="p-4 border-b border-border bg-muted/20 space-y-3"
+              >
+                <div className="font-semibold text-xs text-foreground">Record Incoming Payment</div>
+                {paymentError && (
+                  <div className="p-2 text-xs bg-destructive/10 text-destructive rounded border border-destructive/20 flex items-center gap-2">
+                    <AlertTriangle size={14} />
+                    <span>{paymentError}</span>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="space-y-1">
+                    <label htmlFor="pay-amount" className="font-medium">
+                      Amount ({invoice.currency}) <span className="text-destructive">*</span>
+                    </label>
+                    <Input
+                      id="pay-amount"
+                      type="text"
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="h-8 text-xs font-mono"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="pay-method" className="font-medium">
+                      Payment Method <span className="text-destructive">*</span>
+                    </label>
+                    <select
+                      id="pay-method"
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value)}
+                      className="w-full h-8 border border-input rounded-md px-2 text-xs bg-background"
+                      required
+                    >
+                      <option value="bank_transfer">Bank Transfer / Wire</option>
+                      <option value="credit_card">Credit Card / Stripe</option>
+                      <option value="cash">Cash / Check</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="pay-ref" className="font-medium">
+                      Transaction Reference
+                    </label>
+                    <Input
+                      id="pay-ref"
+                      value={paymentReference}
+                      onChange={(e) => setPaymentReference(e.target.value)}
+                      placeholder="e.g. TXN-998822"
+                      className="h-8 text-xs font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="pay-date" className="font-medium">
+                      Payment Date
+                    </label>
+                    <Input
+                      id="pay-date"
+                      type="date"
+                      value={paymentPaidAt}
+                      onChange={(e) => setPaymentPaidAt(e.target.value)}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowPaymentForm(false)}
+                    className="h-7 text-xs"
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" size="sm" disabled={isRecording} className="h-7 text-xs">
+                    {isRecording ? 'Recording…' : 'Submit Payment'}
+                  </Button>
+                </div>
+              </form>
+            )}
+
             {invoice.payments.length === 0 ? (
               <div className="text-center py-6 text-muted-foreground text-xs space-y-1">
                 <CreditCard size={24} className="mx-auto mb-1 opacity-40" />

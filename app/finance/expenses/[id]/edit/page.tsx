@@ -9,8 +9,11 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoExpenseFormView } from '@/components/finance/bento-expense-form-view';
 
 export default function EditExpensePage({ params }: { params: Promise<{ id: string }> }) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [id, setId] = useState<string>('');
   const [projectId, setProjectId] = useState('');
@@ -20,6 +23,7 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
   const [receiptUrl, setReceiptUrl] = useState('');
   const [billable, setBillable] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     params.then(async ({ id: pid }) => {
@@ -42,8 +46,9 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
     });
   }, [params]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e?.preventDefault) e.preventDefault();
+    setError(null);
     setSaving(true);
     try {
       const res = await fetch(`/api/v1/finance/expenses/${id}`, {
@@ -60,8 +65,10 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to update expense');
+        const err = await res.json().catch(() => ({}));
+        const msg = (err as { error?: string }).error || 'Failed to update expense';
+        setError(msg);
+        throw new Error(msg);
       }
 
       toast.success('Expense updated');
@@ -87,6 +94,32 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
     }
   };
 
+  if (isBento) {
+    return (
+      <BentoExpenseFormView
+        mode="edit"
+        expenseId={id}
+        projectId={projectId}
+        setProjectId={setProjectId}
+        category={category}
+        setCategory={setCategory}
+        amount={amount}
+        setAmount={setAmount}
+        expenseDate={expenseDate}
+        setExpenseDate={setExpenseDate}
+        receiptUrl={receiptUrl}
+        setReceiptUrl={setReceiptUrl}
+        billable={billable}
+        setBillable={setBillable}
+        onSubmit={handleSubmit}
+        onDelete={handleDelete}
+        isLoading={saving}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

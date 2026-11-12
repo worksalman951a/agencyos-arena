@@ -16,6 +16,8 @@ import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/ui/use-toast';
 import { Combobox } from '@/components/ui/combobox';
 import { listCurrencies } from '@/lib/currencies';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoInvoiceFormView } from '@/components/finance/bento-invoice-form-view';
 
 const CURRENCY_OPTIONS = listCurrencies().map((option) => ({
   value: option.code,
@@ -53,6 +55,7 @@ export function NewInvoiceForm({
   /** Organization default tax rate (%) applied to new line items. */
   defaultTaxRate?: number;
 }) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const { toast } = useToast();
   const [clientId, setClientId] = useState('');
@@ -63,6 +66,7 @@ export function NewInvoiceForm({
   const [notes, setNotes] = useState('');
   const [lineItems, setLineItems] = useState<LineItem[]>([emptyLineItem(defaultTaxRate)]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const addLineItem = () => setLineItems([...lineItems, emptyLineItem(defaultTaxRate)]);
 
@@ -74,8 +78,9 @@ export function NewInvoiceForm({
     setLineItems(lineItems.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e?.preventDefault) e.preventDefault();
+    setError(null);
     setLoading(true);
     try {
       const res = await fetch('/api/v1/crm/invoices', {
@@ -105,11 +110,12 @@ export function NewInvoiceForm({
 
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(
+        const msg =
           res.status === 403
             ? 'You do not have permission to create invoices.'
-            : (err.error ?? 'Failed to create invoice')
-        );
+            : (err.error ?? 'Failed to create invoice');
+        setError(msg);
+        throw new Error(msg);
       }
 
       const data = (await res.json()) as { id: string };
@@ -126,6 +132,36 @@ export function NewInvoiceForm({
     }
   };
 
+  if (isBento) {
+    return (
+      <BentoInvoiceFormView
+        mode="new"
+        clientId={clientId}
+        setClientId={setClientId}
+        contacts={contacts}
+        title={title}
+        setTitle={setTitle}
+        status={status}
+        setStatus={setStatus}
+        currency={currency}
+        setCurrency={setCurrency}
+        currencyOptions={CURRENCY_OPTIONS}
+        dueDate={dueDate}
+        setDueDate={setDueDate}
+        notes={notes}
+        setNotes={setNotes}
+        lineItems={lineItems}
+        onAddLineItem={addLineItem}
+        onRemoveLineItem={removeLineItem}
+        onUpdateLineItem={updateLineItem}
+        onSubmit={handleSubmit}
+        isLoading={loading}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

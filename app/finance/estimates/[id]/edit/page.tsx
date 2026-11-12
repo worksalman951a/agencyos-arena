@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoEstimateFormView } from '@/components/finance/bento-estimate-form-view';
 
 interface ContactOption {
   id: string;
@@ -20,6 +22,7 @@ interface ContactOption {
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'PKR', 'INR', 'AED', 'SGD', 'JPY'];
 
 export default function EditEstimatePage({ params }: { params: Promise<{ id: string }> }) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [id, setId] = useState<string>('');
   const [contacts, setContacts] = useState<ContactOption[]>([]);
@@ -33,6 +36,7 @@ export default function EditEstimatePage({ params }: { params: Promise<{ id: str
   const [validUntil, setValidUntil] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -76,9 +80,10 @@ export default function EditEstimatePage({ params }: { params: Promise<{ id: str
 
   const isLocked = !['draft', 'sent'].includes(savedStatus);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e?.preventDefault) e.preventDefault();
     if (isLocked) return;
+    setError(null);
     setSaving(true);
     try {
       const res = await fetch(`/api/v1/finance/estimates/${id}`, {
@@ -97,7 +102,9 @@ export default function EditEstimatePage({ params }: { params: Promise<{ id: str
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error || 'Failed to update estimate');
+        const msg = (err as { error?: string }).error || 'Failed to update estimate';
+        setError(msg);
+        throw new Error(msg);
       }
 
       toast.success('Estimate updated');
@@ -113,6 +120,35 @@ export default function EditEstimatePage({ params }: { params: Promise<{ id: str
     return <div className="p-6 text-sm text-muted-foreground">Loading estimate…</div>;
   }
 
+  if (isBento) {
+    return (
+      <BentoEstimateFormView
+        mode="edit"
+        estimateId={id}
+        clientId={clientId}
+        setClientId={setClientId}
+        contacts={contacts}
+        number={number}
+        setNumber={setNumber}
+        status={status}
+        setStatus={setStatus}
+        savedStatus={savedStatus}
+        total={total}
+        setTotal={setTotal}
+        currency={currency}
+        setCurrency={setCurrency}
+        validUntil={validUntil}
+        setValidUntil={setValidUntil}
+        notes={notes}
+        setNotes={setNotes}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

@@ -14,6 +14,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { useToast } from '@/components/ui/use-toast';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoInvoiceFormView } from '@/components/finance/bento-invoice-form-view';
 
 interface ContactOption {
   id: string;
@@ -49,6 +51,7 @@ export function EditInvoiceForm({
   /** Current status plus the transitions the service will accept. */
   statusOptions: Array<{ value: string; label: string }>;
 }) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const { toast } = useToast();
 
@@ -62,6 +65,7 @@ export function EditInvoiceForm({
     invoice.items.length > 0 ? invoice.items : [{ ...emptyLine() }]
   );
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function emptyLine(): LineItem {
     return { description: '', quantity: '1', unitPrice: '0', taxRate: '0' };
@@ -77,8 +81,9 @@ export function EditInvoiceForm({
     setLineItems(lineItems.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e?.preventDefault) e.preventDefault();
+    setError(null);
     setSaving(true);
     try {
       const res = await fetch(`/api/v1/crm/invoices/${invoice.id}`, {
@@ -108,11 +113,12 @@ export function EditInvoiceForm({
 
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(
+        const msg =
           res.status === 403
             ? 'You do not have permission to edit invoices.'
-            : (err.error ?? 'Failed to update invoice')
-        );
+            : (err.error ?? 'Failed to update invoice');
+        setError(msg);
+        throw new Error(msg);
       }
 
       toast({ title: 'Invoice updated', description: `Invoice ${invoice.number} saved.` });
@@ -128,6 +134,38 @@ export function EditInvoiceForm({
     }
   };
 
+  if (isBento) {
+    return (
+      <BentoInvoiceFormView
+        mode="edit"
+        invoiceId={invoice.id}
+        invoiceNumber={invoice.number}
+        clientId={clientId}
+        setClientId={setClientId}
+        contacts={contacts}
+        title={title}
+        setTitle={setTitle}
+        status={status}
+        setStatus={setStatus}
+        statusOptions={statusOptions}
+        currency={currency}
+        setCurrency={setCurrency}
+        dueDate={dueDate}
+        setDueDate={setDueDate}
+        notes={notes}
+        setNotes={setNotes}
+        lineItems={lineItems}
+        onAddLineItem={addLineItem}
+        onRemoveLineItem={removeLineItem}
+        onUpdateLineItem={updateLineItem}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
