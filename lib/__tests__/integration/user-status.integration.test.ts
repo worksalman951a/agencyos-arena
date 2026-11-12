@@ -175,6 +175,16 @@ const BOOTSTRAP_PERMISSION_CODES = [
   'role.delete',
 ];
 
+/**
+ * Guard against a silent skip. The suite below is skipped when no database is
+ * configured, which keeps local runs usable but would also let a green CI run
+ * hide an unexercised security suite. CI always provisions PostgreSQL, so a
+ * missing `DATABASE_URL` there is a hard failure rather than a skip.
+ */
+it('has a real database available when running in CI', () => {
+  if (process.env.CI) expect(canRun).toBe(true);
+});
+
 describeIfDb('internal user status enforcement and session revocation', () => {
   let admin: TestAccount;
   let adminRoleId: string;
