@@ -372,9 +372,11 @@ async function main() {
     // error rolls the whole thing back. `--no-owner` avoids role dependencies.
     // No `--clean` — the target is empty by construction.
     // -------------------------------------------------------------------------
-    // The connection travels in the child environment (PGHOST/PGPORT/PGDATABASE
-    // /PGPASSWORD), so the password never appears in argv where `ps` could read
-    // it. Only the archive path is positional.
+    // `pg_restore` does NOT fall back to PGDATABASE: without an explicit
+    // database it reads the archive and writes nothing, exiting 0. That is a
+    // silent no-op that looks exactly like a successful restore, so `--dbname`
+    // is mandatory here rather than implied by the environment. The name is a
+    // separate argv entry and carries no credential.
     const restore = await runTool(
       'pg_restore',
       [
@@ -384,6 +386,8 @@ async function main() {
         '--no-privileges',
         '--no-password',
         '--verbose',
+        '--dbname',
+        target.database,
         options.backup,
       ],
       { env: libpqEnv(target) }
