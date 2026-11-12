@@ -269,6 +269,16 @@ export async function POST(request: Request) {
           data: { organizationId: organization.id },
         });
 
+        // 9. Seed the organization-scoped Bento shell feature flag enabled by default
+        await tx.featureFlag.create({
+          data: {
+            organizationId: organization.id,
+            flagKey: 'bento_shell',
+            enabled: true,
+            description: 'Modern Premium Bento application shell and unified design system',
+          },
+        });
+
         return { organization, role, userRole, user: updatedUser };
       },
       { maxWait: 5000, timeout: 10000 }

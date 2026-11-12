@@ -10,15 +10,15 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-describe('Bento Shell Server Rollout Evaluation', () => {
+describe('Bento Shell Server Rollout Evaluation (Phase 13B)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('returns false when organizationId is undefined or null', async () => {
-    expect(await isBentoShellEnabled(undefined)).toBe(false);
-    expect(await isBentoShellEnabled(null)).toBe(false);
-    expect(await isBentoShellEnabled('')).toBe(false);
+  it('defaults to true when organizationId is undefined, null, or empty', async () => {
+    expect(await isBentoShellEnabled(undefined)).toBe(true);
+    expect(await isBentoShellEnabled(null)).toBe(true);
+    expect(await isBentoShellEnabled('')).toBe(true);
     expect(prisma.featureFlag.findFirst).not.toHaveBeenCalled();
   });
 
@@ -41,7 +41,7 @@ describe('Bento Shell Server Rollout Evaluation', () => {
     });
   });
 
-  it('evaluates false when bento_shell flag is disabled for organization', async () => {
+  it('evaluates false when bento_shell flag is explicitly disabled for organization (opt-out)', async () => {
     vi.mocked(prisma.featureFlag.findFirst).mockResolvedValue({
       id: 'flag-1',
       organizationId: 'org-123',
@@ -56,17 +56,17 @@ describe('Bento Shell Server Rollout Evaluation', () => {
     expect(enabled).toBe(false);
   });
 
-  it('falls back safely to false when feature flag record is absent', async () => {
+  it('defaults safely to true when feature flag record is absent for an organization', async () => {
     vi.mocked(prisma.featureFlag.findFirst).mockResolvedValue(null);
 
     const enabled = await isBentoShellEnabled('org-unknown');
-    expect(enabled).toBe(false);
+    expect(enabled).toBe(true);
   });
 
-  it('fails safely to false if database throws an exception (fail-closed fallback)', async () => {
+  it('defaults safely to true if database throws an exception (safe Bento fallback)', async () => {
     vi.mocked(prisma.featureFlag.findFirst).mockRejectedValue(new Error('DB Connection Timeout'));
 
     const enabled = await isBentoShellEnabled('org-123');
-    expect(enabled).toBe(false);
+    expect(enabled).toBe(true);
   });
 });
