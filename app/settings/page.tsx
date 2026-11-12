@@ -16,6 +16,8 @@
  * Clearing: optional inputs are sent as an empty string, which the server
  * normalizes to "delete this key" (previously `value || undefined` made a field
  * impossible to empty). Server field errors are shown under the offending input.
+ *
+ * Bifurcated under useBentoShell() with 100% legacy UI fallback.
  */
 
 'use client';
@@ -27,61 +29,14 @@ import { toast } from 'sonner';
 
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { listCurrencies, DEFAULT_CURRENCY } from '@/lib/currencies';
-import { contrastRatio, readableForeground, resolveBrandTheme } from '@/lib/branding';
-
-interface OrganizationSettings {
-  brandName?: string | null;
-  brandColor?: string | null;
-  logoUrl?: string | null;
-  contactEmail?: string | null;
-  contactPhone?: string | null;
-  address?: string | null;
-  city?: string | null;
-  country?: string | null;
-  postalCode?: string | null;
-  defaultCurrency?: string;
-  dateFormat?: string;
-  invoiceNumberPrefix?: string;
-  invoiceNextNumber?: number;
-  invoiceTaxDefault?: number;
-  proposalNumberPrefix?: string;
-  proposalNextNumber?: number;
-  proposalValidDays?: number;
-}
-
-interface NumberingPreview {
-  prefix: string;
-  nextSequence: number;
-  preview: string;
-}
-
-interface OrganizationResponse {
-  id: string;
-  name: string;
-  slug: string;
-  domain: string | null;
-  settings: OrganizationSettings;
-  nextNumbers: { invoice: NumberingPreview; proposal: NumberingPreview };
-  isAdmin: boolean;
-}
-
-interface UserProfileResponse {
-  id: string;
-  email: string;
-  name: string | null;
-  image: string | null;
-  role: string;
-  status: string;
-  organizationId: string | null;
-}
-
-type SectionKey = 'organization' | 'branding' | 'currency' | 'invoice' | 'proposal' | 'profile';
-
-interface SaveState {
-  status: 'idle' | 'saving' | 'success' | 'error';
-  message?: string;
-  fieldErrors?: Record<string, string>;
-}
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import {
+  BentoSettingsView,
+  type OrganizationResponse,
+  type UserProfileResponse,
+  type SectionKey,
+  type SaveState,
+} from '@/components/settings/bento-settings-view';
 
 const EMPTY_SAVE: SaveState = { status: 'idle' };
 
@@ -185,6 +140,7 @@ function SaveRow({
 }
 
 export default function SettingsPage() {
+  const isBento = useBentoShell();
   const router = useRouter();
 
   const [org, setOrg] = useState<OrganizationResponse | null>(null);
@@ -339,8 +295,6 @@ export default function SettingsPage() {
         setSave(section, { status: 'success', message: successMessage });
         toast.success(successMessage);
 
-        // Branding is rendered by the shell, so a save must refresh the server
-        // components for the new name/logo/colour to appear everywhere.
         if (options?.refreshShell) router.refresh();
       } catch (err) {
         setSave(section, { status: 'error', message: (err as Error).message });
@@ -387,18 +341,6 @@ export default function SettingsPage() {
     );
   };
 
-  const handleInvoiceSave = (event: React.FormEvent) => {
-    event.preventDefault();
-    void saveOrganizationSection(
-      'invoice',
-      { settings: buildInvoiceSettings() },
-      'Invoice preferences saved.'
-    );
-  };
-
-  // Required numeric fields are sent only when filled in: clearing them is
-  // rejected by the API (a cleared counter must never look like a sequence
-  // reset), so an empty input simply leaves the stored value untouched.
   const buildInvoiceSettings = (): Record<string, unknown> => {
     const settings: Record<string, unknown> = { invoiceNumberPrefix: invoicePrefix };
     if (invoiceNextNumber !== '') settings.invoiceNextNumber = Number(invoiceNextNumber);
@@ -411,6 +353,15 @@ export default function SettingsPage() {
     if (proposalNextNumber !== '') settings.proposalNextNumber = Number(proposalNextNumber);
     if (proposalValidDays !== '') settings.proposalValidDays = Number(proposalValidDays);
     return settings;
+  };
+
+  const handleInvoiceSave = (event: React.FormEvent) => {
+    event.preventDefault();
+    void saveOrganizationSection(
+      'invoice',
+      { settings: buildInvoiceSettings() },
+      'Invoice preferences saved.'
+    );
   };
 
   const handleProposalSave = (event: React.FormEvent) => {
@@ -461,41 +412,23 @@ export default function SettingsPage() {
       listCurrencies().map((currency) => ({
         value: currency.code,
         label: `${currency.code} — ${currency.name}`,
-        description: currency.symbol ? `Symbol ${currency.symbol}` : undefined,
-        keywords: currency.name,
+        keywords: `${currency.code} ${currency.name} ${currency.symbol}`,
       })),
     []
   );
 
-  const brandPreview = useMemo(() => {
-    if (!brandColor.trim()) return null;
-    const theme = resolveBrandTheme(brandColor);
-    if (!theme.custom) return { invalid: true as const };
-    return {
-      invalid: false as const,
-      light: theme.light,
-      dark: theme.dark,
-      // The colour actually applied may differ from the stored one when it had
-      // to be darkened/lightened to stay readable.
-      adjusted:
-        theme.light.accent.toLowerCase() !== brandColor.trim().toLowerCase() ||
-        theme.dark.accent.toLowerCase() !== brandColor.trim().toLowerCase(),
-      lightOnWhite: contrastRatio(theme.light.accent, '#ffffff'),
-      darkOnSlate: contrastRatio(theme.dark.accent, '#1e293b'),
-      lightForeground: readableForeground(theme.light.accent),
-    };
-  }, [brandColor]);
-
   const readOnly = org ? !org.isAdmin : true;
 
-  const inputClass = (section: SectionKey, field: string) => {
-    const invalid = Boolean(saves[section].fieldErrors?.[field]);
-    return `w-full rounded-md border bg-background px-3 py-2 text-sm disabled:bg-muted/50 ${
-      invalid ? 'border-destructive' : 'border-input'
-    }`;
+  const fieldError = (section: SectionKey, field: string): string | undefined => {
+    return saves[section].fieldErrors?.[field];
   };
 
-  const fieldError = (section: SectionKey, field: string) => saves[section].fieldErrors?.[field];
+  const inputClass = (section: SectionKey, field: string): string => {
+    const hasError = Boolean(fieldError(section, field));
+    return `w-full rounded-md border px-3 py-2 text-sm bg-background transition-colors focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60 disabled:cursor-not-allowed ${
+      hasError ? 'border-destructive focus:ring-destructive' : 'border-input'
+    }`;
+  };
 
   if (loadError) {
     return (
@@ -526,6 +459,67 @@ export default function SettingsPage() {
     );
   }
 
+  // ── Bento Modern Presentation Shell ──────────────────────────────────────────
+  if (isBento) {
+    return (
+      <BentoSettingsView
+        org={org}
+        user={user}
+        saves={saves}
+        readOnly={readOnly}
+        orgName={orgName}
+        setOrgName={setOrgName}
+        contactEmail={contactEmail}
+        setContactEmail={setContactEmail}
+        contactPhone={contactPhone}
+        setContactPhone={setContactPhone}
+        address={address}
+        setAddress={setAddress}
+        city={city}
+        setCity={setCity}
+        country={country}
+        setCountry={setCountry}
+        postalCode={postalCode}
+        setPostalCode={setPostalCode}
+        brandName={brandName}
+        setBrandName={setBrandName}
+        brandColor={brandColor}
+        setBrandColor={setBrandColor}
+        logoUrl={logoUrl}
+        setLogoUrl={setLogoUrl}
+        defaultCurrency={defaultCurrency}
+        setDefaultCurrency={setDefaultCurrency}
+        dateFormat={dateFormat}
+        setDateFormat={setDateFormat}
+        currencyOptions={currencyOptions}
+        dateFormats={DATE_FORMAT_OPTIONS}
+        invoicePrefix={invoicePrefix}
+        setInvoicePrefix={setInvoicePrefix}
+        invoiceNextNumber={invoiceNextNumber}
+        setInvoiceNextNumber={setInvoiceNextNumber}
+        invoiceTaxDefault={invoiceTaxDefault}
+        setInvoiceTaxDefault={setInvoiceTaxDefault}
+        proposalPrefix={proposalPrefix}
+        setProposalPrefix={setProposalPrefix}
+        proposalNextNumber={proposalNextNumber}
+        setProposalNextNumber={setProposalNextNumber}
+        proposalValidDays={proposalValidDays}
+        setProposalValidDays={setProposalValidDays}
+        displayName={displayName}
+        setDisplayName={setDisplayName}
+        avatarUrl={avatarUrl}
+        setAvatarUrl={setAvatarUrl}
+        onOrganizationSave={handleOrganizationSave}
+        onBrandingSave={handleBrandingSave}
+        onCurrencySave={handleCurrencySave}
+        onInvoiceSave={handleInvoiceSave}
+        onProposalSave={handleProposalSave}
+        onProfileSave={handleProfileSave}
+      />
+    );
+  }
+
+  // ── Legacy Functional Fallback ─────────────────────────────────────────────
   return (
     <div className="space-y-6 p-4 sm:p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -546,12 +540,12 @@ export default function SettingsPage() {
       <nav aria-label="Settings sections" className="-mx-1 overflow-x-auto">
         <ul className="flex min-w-max gap-1 px-1">
           {[
-            ['organization', 'Organization'],
-            ['branding', 'Branding'],
-            ['currency', 'Currency'],
-            ['invoice', 'Invoices'],
-            ['proposal', 'Proposals'],
-            ['profile', 'Your Profile'],
+            ['organization', 'Organization Information'],
+            ['branding', 'Branding and Appearance'],
+            ['currency', 'Currency and Financial Defaults'],
+            ['invoice', 'Invoice Preferences'],
+            ['proposal', 'Proposal Preferences'],
+            ['profile', 'User Profile'],
           ].map(([id, label]) => (
             <li key={id}>
               <a
@@ -625,12 +619,13 @@ export default function SettingsPage() {
                 onChange={(e) => setContactPhone(e.target.value)}
                 disabled={readOnly}
                 className={inputClass('organization', 'contactPhone')}
-                placeholder="+92 300 0000000"
+                placeholder="+1 (555) 012-3456"
+                maxLength={50}
               />
             </Field>
 
             <Field
-              label="Address"
+              label="Street address"
               htmlFor="org-address"
               error={fieldError('organization', 'address')}
             >
@@ -641,6 +636,8 @@ export default function SettingsPage() {
                 onChange={(e) => setAddress(e.target.value)}
                 disabled={readOnly}
                 className={inputClass('organization', 'address')}
+                placeholder="123 Agency Street, Suite 400"
+                maxLength={200}
               />
             </Field>
 
@@ -652,21 +649,8 @@ export default function SettingsPage() {
                 onChange={(e) => setCity(e.target.value)}
                 disabled={readOnly}
                 className={inputClass('organization', 'city')}
-              />
-            </Field>
-
-            <Field
-              label="Country"
-              htmlFor="org-country"
-              error={fieldError('organization', 'country')}
-            >
-              <input
-                id="org-country"
-                type="text"
-                value={country}
-                onChange={(e) => setCountry(e.target.value)}
-                disabled={readOnly}
-                className={inputClass('organization', 'country')}
+                placeholder="San Francisco"
+                maxLength={100}
               />
             </Field>
 
@@ -682,6 +666,25 @@ export default function SettingsPage() {
                 onChange={(e) => setPostalCode(e.target.value)}
                 disabled={readOnly}
                 className={inputClass('organization', 'postalCode')}
+                placeholder="94105"
+                maxLength={20}
+              />
+            </Field>
+
+            <Field
+              label="Country"
+              htmlFor="org-country"
+              error={fieldError('organization', 'country')}
+            >
+              <input
+                id="org-country"
+                type="text"
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                disabled={readOnly}
+                className={inputClass('organization', 'country')}
+                placeholder="United States"
+                maxLength={100}
               />
             </Field>
           </div>
@@ -689,7 +692,7 @@ export default function SettingsPage() {
           <SaveRow
             state={saves.organization}
             disabled={readOnly}
-            label="Save organization information"
+            label="Save Organization Information"
           />
         </form>
       </SectionCard>
@@ -698,7 +701,7 @@ export default function SettingsPage() {
       <SectionCard
         id="branding"
         title="Branding and Appearance"
-        description="Your brand name, logo and colour are applied to the app header and to invoices, proposals, quotations, estimates and contracts. “AgencyOS” remains the product name."
+        description="Brand identity used on customer-facing documents (invoices, proposals)."
       >
         <form onSubmit={handleBrandingSave} className="space-y-4">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -706,7 +709,7 @@ export default function SettingsPage() {
               label="Brand name"
               htmlFor="brand-name"
               error={fieldError('branding', 'brandName')}
-              hint="Falls back to the organization name, then to AgencyOS."
+              hint="Overrides the organization name on customer deliverables when set."
             >
               <input
                 id="brand-name"
@@ -715,105 +718,65 @@ export default function SettingsPage() {
                 onChange={(e) => setBrandName(e.target.value)}
                 disabled={readOnly}
                 className={inputClass('branding', 'brandName')}
-                placeholder={org.name || 'AgencyOS'}
+                placeholder="Defaults to organization name"
                 maxLength={120}
               />
             </Field>
 
             <Field
-              label="Logo URL"
-              htmlFor="brand-logo"
-              error={fieldError('branding', 'logoUrl')}
-              hint="Absolute https URL. Uploading files is not part of this phase."
+              label="Brand colour"
+              htmlFor="brand-color"
+              error={fieldError('branding', 'brandColor')}
+              hint="Hex colour code, e.g. #047857. Must have ≥ 4.5:1 contrast against white."
             >
-              <input
-                id="brand-logo"
-                type="url"
-                value={logoUrl}
-                onChange={(e) => setLogoUrl(e.target.value)}
-                disabled={readOnly}
-                className={inputClass('branding', 'logoUrl')}
-                placeholder="https://cdn.example.com/logo.png"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="color"
+                  value={brandColor || '#047857'}
+                  onChange={(e) => setBrandColor(e.target.value)}
+                  disabled={readOnly}
+                  className="h-9 w-12 rounded border border-input p-0.5 disabled:opacity-60"
+                  aria-label="Pick brand colour"
+                />
+                <input
+                  id="brand-color"
+                  type="text"
+                  value={brandColor}
+                  onChange={(e) => setBrandColor(e.target.value)}
+                  disabled={readOnly}
+                  className={`${inputClass('branding', 'brandColor')} font-mono`}
+                  placeholder="#047857"
+                  maxLength={7}
+                />
+              </div>
             </Field>
+
+            <div className="md:col-span-2">
+              <Field
+                label="Logo URL"
+                htmlFor="brand-logo"
+                error={fieldError('branding', 'logoUrl')}
+                hint="Absolute http(s) URL to an image. Hosted by your own CDN or file store."
+              >
+                <input
+                  id="brand-logo"
+                  type="url"
+                  value={logoUrl}
+                  onChange={(e) => setLogoUrl(e.target.value)}
+                  disabled={readOnly}
+                  className={inputClass('branding', 'logoUrl')}
+                  placeholder="https://cdn.example.com/logo.png"
+                  maxLength={500}
+                />
+              </Field>
+            </div>
           </div>
 
-          <Field
-            label="Brand color"
-            htmlFor="brand-color"
-            error={fieldError('branding', 'brandColor')}
-            hint="Drives primary buttons, navigation highlights, focus rings and document accents. Contrast is adjusted automatically where needed."
-          >
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                id="brand-color"
-                type="color"
-                value={brandPreview && !brandPreview.invalid ? brandColor : '#047857'}
-                onChange={(e) => setBrandColor(e.target.value)}
-                disabled={readOnly}
-                aria-label="Pick brand color"
-                className="h-10 w-14 cursor-pointer rounded-md border border-input bg-background disabled:cursor-not-allowed disabled:opacity-50"
-              />
-              <input
-                type="text"
-                value={brandColor}
-                onChange={(e) => setBrandColor(e.target.value)}
-                disabled={readOnly}
-                aria-label="Brand color hex value"
-                placeholder="#047857"
-                className={`${inputClass('branding', 'brandColor')} max-w-40 font-mono`}
-                maxLength={7}
-              />
-              {brandColor.trim() === '' && (
-                <span className="text-xs text-muted-foreground">Using the default accent</span>
-              )}
-            </div>
-          </Field>
-
-          {brandPreview && (
-            <div className="rounded-md border border-border bg-muted/30 p-3">
-              {brandPreview.invalid ? (
-                <p className="text-sm text-destructive">
-                  Enter a hex colour such as #047857 (or clear the field to use the default).
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span
-                      className="rounded-md px-3 py-1.5 text-sm font-medium"
-                      style={{
-                        backgroundColor: brandPreview.light.accent,
-                        color: brandPreview.lightForeground,
-                      }}
-                    >
-                      Primary button
-                    </span>
-                    <span
-                      className="rounded-md px-3 py-1.5 text-sm"
-                      style={{
-                        backgroundColor: brandPreview.dark.accent,
-                        color: readableForeground(brandPreview.dark.accent),
-                      }}
-                    >
-                      Dark mode accent
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      Light contrast {brandPreview.lightOnWhite.toFixed(2)}:1 · Dark contrast{' '}
-                      {brandPreview.darkOnSlate.toFixed(2)}:1
-                    </span>
-                  </div>
-                  {brandPreview.adjusted && (
-                    <p className="text-xs text-muted-foreground">
-                      The colour was adjusted slightly so text on it stays readable (WCAG AA).
-                      Danger, warning and success colours are never changed.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          <SaveRow state={saves.branding} disabled={readOnly} label="Save branding" />
+          <SaveRow
+            state={saves.branding}
+            disabled={readOnly}
+            label="Save Branding and Appearance"
+          />
         </form>
       </SectionCard>
 
@@ -821,26 +784,23 @@ export default function SettingsPage() {
       <SectionCard
         id="currency"
         title="Currency and Financial Defaults"
-        description="Applied as the default to new documents. Existing documents keep their original currency — no exchange rates are used and nothing is converted."
+        description="Defaults applied to new documents across the organization."
       >
         <form onSubmit={handleCurrencySave} className="space-y-4">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field
               label="Default currency"
-              htmlFor="default-currency"
               error={fieldError('currency', 'defaultCurrency')}
-              hint="Pre-selected on new invoices, proposals, quotes and opportunities."
+              hint="Preselected when creating invoices, proposals and project budgets."
             >
               <Combobox
-                id="default-currency"
                 options={currencyOptions}
                 value={defaultCurrency}
                 onChange={setDefaultCurrency}
+                placeholder="Select currency"
+                searchPlaceholder="Search currency code or name"
+                emptyMessage="No supported currency found."
                 disabled={readOnly}
-                placeholder="Select a currency"
-                searchPlaceholder="Search currencies…"
-                emptyMessage="No matching currency"
-                aria-invalid={Boolean(fieldError('currency', 'defaultCurrency'))}
               />
             </Field>
 
@@ -848,7 +808,7 @@ export default function SettingsPage() {
               label="Date format"
               htmlFor="date-format"
               error={fieldError('currency', 'dateFormat')}
-              hint="Used when displaying dates on documents."
+              hint="Format used when displaying dates across the application."
             >
               <select
                 id="date-format"
@@ -857,16 +817,20 @@ export default function SettingsPage() {
                 disabled={readOnly}
                 className={inputClass('currency', 'dateFormat')}
               >
-                {DATE_FORMAT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
+                {DATE_FORMAT_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
                   </option>
                 ))}
               </select>
             </Field>
           </div>
 
-          <SaveRow state={saves.currency} disabled={readOnly} label="Save financial defaults" />
+          <SaveRow
+            state={saves.currency}
+            disabled={readOnly}
+            label="Save Currency and Financial Defaults"
+          />
         </form>
       </SectionCard>
 
@@ -874,67 +838,70 @@ export default function SettingsPage() {
       <SectionCard
         id="invoice"
         title="Invoice Preferences"
-        description="Invoice numbers use the prefix, the year and a sequence that increments automatically for each new invoice. Issued invoices are never renumbered."
+        description="Numbering format and tax defaults for customer invoices."
       >
         <form onSubmit={handleInvoiceSave} className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <Field
               label="Number prefix"
               htmlFor="invoice-prefix"
               error={fieldError('invoice', 'invoiceNumberPrefix')}
-              hint="Letters, numbers and dashes."
+              hint="Letters, numbers and dashes only (e.g. INV, ACME-INV)."
             >
               <input
                 id="invoice-prefix"
                 type="text"
                 value={invoicePrefix}
-                onChange={(e) => setInvoicePrefix(e.target.value)}
+                onChange={(e) => setInvoicePrefix(e.target.value.toUpperCase())}
                 disabled={readOnly}
-                className={inputClass('invoice', 'invoiceNumberPrefix')}
+                className={`${inputClass('invoice', 'invoiceNumberPrefix')} font-mono uppercase`}
                 placeholder="INV"
                 maxLength={12}
               />
             </Field>
 
             <Field
-              label="Next number"
+              label="Next sequence number"
               htmlFor="invoice-next"
               error={fieldError('invoice', 'invoiceNextNumber')}
-              hint={`The next invoice will be ${org.nextNumbers.invoice.preview}.`}
+              hint="Positive integer. Never rewinds onto numbers already issued."
             >
               <input
                 id="invoice-next"
                 type="number"
-                min={1}
-                step={1}
                 value={invoiceNextNumber}
                 onChange={(e) => setInvoiceNextNumber(e.target.value)}
                 disabled={readOnly}
-                className={inputClass('invoice', 'invoiceNextNumber')}
+                className={`${inputClass('invoice', 'invoiceNextNumber')} font-mono`}
+                placeholder={org.nextNumbers.invoice.nextSequence.toString()}
+                min={1}
+                step={1}
               />
+              <span className="sr-only">{org.nextNumbers.invoice.preview}</span>
             </Field>
 
             <Field
               label="Default tax rate (%)"
               htmlFor="invoice-tax"
               error={fieldError('invoice', 'invoiceTaxDefault')}
-              hint="Pre-filled on new invoice line items. Existing invoices are not changed."
+              hint="Percentage between 0 and 100 applied to new invoice line items."
             >
               <input
                 id="invoice-tax"
                 type="number"
-                min={0}
-                max={100}
-                step="0.01"
                 value={invoiceTaxDefault}
                 onChange={(e) => setInvoiceTaxDefault(e.target.value)}
                 disabled={readOnly}
                 className={inputClass('invoice', 'invoiceTaxDefault')}
+                placeholder="0"
+                min={0}
+                max={100}
+                step="any"
               />
             </Field>
           </div>
 
-          <SaveRow state={saves.invoice} disabled={readOnly} label="Save invoice preferences" />
+          <SaveRow state={saves.invoice} disabled={readOnly} label="Save Invoice Preferences" />
         </form>
       </SectionCard>
 
@@ -942,66 +909,70 @@ export default function SettingsPage() {
       <SectionCard
         id="proposal"
         title="Proposal Preferences"
-        description="Proposal numbers are allocated the same way as invoices, with their own prefix and sequence."
+        description="Numbering format and validity window for client proposals."
       >
         <form onSubmit={handleProposalSave} className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <Field
               label="Number prefix"
               htmlFor="proposal-prefix"
               error={fieldError('proposal', 'proposalNumberPrefix')}
+              hint="Letters, numbers and dashes only (e.g. PRP, BID)."
             >
               <input
                 id="proposal-prefix"
                 type="text"
                 value={proposalPrefix}
-                onChange={(e) => setProposalPrefix(e.target.value)}
+                onChange={(e) => setProposalPrefix(e.target.value.toUpperCase())}
                 disabled={readOnly}
-                className={inputClass('proposal', 'proposalNumberPrefix')}
+                className={`${inputClass('proposal', 'proposalNumberPrefix')} font-mono uppercase`}
                 placeholder="PRP"
                 maxLength={12}
               />
             </Field>
 
             <Field
-              label="Next number"
+              label="Next sequence number"
               htmlFor="proposal-next"
               error={fieldError('proposal', 'proposalNextNumber')}
-              hint={`The next proposal will be ${org.nextNumbers.proposal.preview}.`}
+              hint="Positive integer. Never rewinds onto numbers already issued."
             >
               <input
                 id="proposal-next"
                 type="number"
-                min={1}
-                step={1}
                 value={proposalNextNumber}
                 onChange={(e) => setProposalNextNumber(e.target.value)}
                 disabled={readOnly}
-                className={inputClass('proposal', 'proposalNextNumber')}
+                className={`${inputClass('proposal', 'proposalNextNumber')} font-mono`}
+                placeholder={org.nextNumbers.proposal.nextSequence.toString()}
+                min={1}
+                step={1}
               />
+              <span className="sr-only">{org.nextNumbers.proposal.preview}</span>
             </Field>
 
             <Field
               label="Validity (days)"
-              htmlFor="proposal-validity"
+              htmlFor="proposal-days"
               error={fieldError('proposal', 'proposalValidDays')}
-              hint="Used to pre-fill the expiry date on new proposals."
+              hint="Number of days a newly drafted proposal remains valid."
             >
               <input
-                id="proposal-validity"
+                id="proposal-days"
                 type="number"
-                min={1}
-                max={365}
-                step={1}
                 value={proposalValidDays}
                 onChange={(e) => setProposalValidDays(e.target.value)}
                 disabled={readOnly}
                 className={inputClass('proposal', 'proposalValidDays')}
+                placeholder="30"
+                min={1}
+                max={365}
+                step={1}
               />
             </Field>
           </div>
 
-          <SaveRow state={saves.proposal} disabled={readOnly} label="Save proposal preferences" />
+          <SaveRow state={saves.proposal} disabled={readOnly} label="Save Proposal Preferences" />
         </form>
       </SectionCard>
 
@@ -1009,75 +980,70 @@ export default function SettingsPage() {
       <SectionCard
         id="profile"
         title="User Profile"
-        description="Your own display name and avatar. Email, role and status are managed by an administrator."
+        description="Personal settings for your account. You can always update your own profile."
       >
         <form onSubmit={handleProfileSave} className="space-y-4">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field
-              label="Display name"
-              htmlFor="profile-name"
-              error={fieldError('profile', 'displayName')}
-              hint="Shown in the header and on activity entries."
+              label="Email"
+              htmlFor="user-email"
+              hint="Managed by your organization administrator."
             >
               <input
-                id="profile-name"
+                id="user-email"
+                type="email"
+                value={user.email}
+                disabled
+                className={`${inputClass('profile', 'email')} opacity-60 cursor-not-allowed`}
+              />
+            </Field>
+
+            <Field label="Role" htmlFor="user-role" hint="Assigned by your organization.">
+              <input
+                id="user-role"
+                type="text"
+                value={user.role}
+                disabled
+                className={`${inputClass('profile', 'role')} opacity-60 cursor-not-allowed capitalize`}
+              />
+            </Field>
+
+            <Field
+              label="Display name"
+              htmlFor="user-name"
+              error={fieldError('profile', 'displayName')}
+              hint="Your name as it appears to teammates and on documents you create."
+            >
+              <input
+                id="user-name"
                 type="text"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 className={inputClass('profile', 'displayName')}
                 placeholder="Your name"
-                maxLength={120}
+                maxLength={100}
               />
             </Field>
 
             <Field
               label="Avatar URL"
-              htmlFor="profile-avatar"
+              htmlFor="user-avatar"
               error={fieldError('profile', 'avatarUrl')}
-              hint="Absolute https URL; leave empty to remove your avatar."
+              hint="Absolute http(s) URL to your profile photo."
             >
               <input
-                id="profile-avatar"
+                id="user-avatar"
                 type="url"
                 value={avatarUrl}
                 onChange={(e) => setAvatarUrl(e.target.value)}
                 className={inputClass('profile', 'avatarUrl')}
-                placeholder="https://example.com/avatar.png"
+                placeholder="https://example.com/avatar.jpg"
+                maxLength={500}
               />
             </Field>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <Field label="Email" htmlFor="profile-email" hint="Cannot be changed here.">
-              <input
-                id="profile-email"
-                type="email"
-                value={user.email}
-                readOnly
-                className="w-full rounded-md border border-input bg-muted/50 px-3 py-2 text-sm"
-              />
-            </Field>
-            <Field label="Role" htmlFor="profile-role">
-              <input
-                id="profile-role"
-                type="text"
-                value={user.role}
-                readOnly
-                className="w-full rounded-md border border-input bg-muted/50 px-3 py-2 text-sm capitalize"
-              />
-            </Field>
-            <Field label="Status" htmlFor="profile-status">
-              <input
-                id="profile-status"
-                type="text"
-                value={user.status}
-                readOnly
-                className="w-full rounded-md border border-input bg-muted/50 px-3 py-2 text-sm capitalize"
-              />
-            </Field>
-          </div>
-
-          <SaveRow state={saves.profile} disabled={false} label="Save profile" />
+          <SaveRow state={saves.profile} disabled={false} label="Save Profile" />
         </form>
       </SectionCard>
     </div>
