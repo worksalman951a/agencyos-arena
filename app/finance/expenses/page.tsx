@@ -48,12 +48,13 @@ export default async function ExpensesPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { q, category, billable, from, to, sort, page, pageSize } = await searchParams;
+  const { q, category, billable, projectId, from, to, sort, page, pageSize } = await searchParams;
 
   const filters = {
     q: first(q),
     category: first(category),
     billable: first(billable),
+    projectId: first(projectId),
     from: first(from),
     to: first(to),
     sort: first(sort) || 'date_desc',
@@ -68,6 +69,7 @@ export default async function ExpensesPage({
       q: filters.q || undefined,
       category: filters.category || undefined,
       billable: filters.billable || undefined,
+      projectId: filters.projectId || undefined,
       from: filters.from || undefined,
       to: filters.to || undefined,
       sort: filters.sort,
@@ -83,6 +85,7 @@ export default async function ExpensesPage({
       q: parsed.data.q,
       category: parsed.data.category,
       billable: parsed.data.billable === undefined ? undefined : parsed.data.billable === 'true',
+      projectId: parsed.data.projectId,
       from: parsed.data.from,
       to: parsed.data.to,
       sort: parsed.data.sort,
@@ -95,7 +98,12 @@ export default async function ExpensesPage({
   const data = result.data;
 
   const isFiltered = Boolean(
-    filters.q || filters.category || filters.billable || filters.from || filters.to
+    filters.q ||
+    filters.category ||
+    filters.billable ||
+    filters.projectId ||
+    filters.from ||
+    filters.to
   );
 
   const pageHref = (page: number) => {
@@ -103,6 +111,7 @@ export default async function ExpensesPage({
     if (filters.q) next.set('q', filters.q);
     if (filters.category) next.set('category', filters.category);
     if (filters.billable) next.set('billable', filters.billable);
+    if (filters.projectId) next.set('projectId', filters.projectId);
     if (filters.from) next.set('from', filters.from);
     if (filters.to) next.set('to', filters.to);
     if (filters.sort) next.set('sort', filters.sort);
@@ -138,6 +147,9 @@ export default async function ExpensesPage({
         action="/finance/expenses"
         className="rounded-md border bg-background p-4 grid grid-cols-1 md:grid-cols-6 gap-3 items-end"
       >
+        {filters.projectId ? (
+          <input type="hidden" name="projectId" value={filters.projectId} />
+        ) : null}
         <div className="md:col-span-2 space-y-1">
           <label className="text-xs font-medium text-muted-foreground" htmlFor="q">
             Search
@@ -276,6 +288,7 @@ export default async function ExpensesPage({
               <th className="pb-3 font-medium text-right">Amount</th>
               <th className="pb-3 font-medium w-24">Date</th>
               <th className="pb-3 font-medium w-20">Billable</th>
+              <th className="pb-3 font-medium w-28">Billing status</th>
               <th className="pb-3 font-medium text-right">Created</th>
               <th className="pb-3 font-medium w-32">Actions</th>
             </tr>
@@ -283,7 +296,7 @@ export default async function ExpensesPage({
           <tbody>
             {data.rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-center py-8 text-muted-foreground">
+                <td colSpan={8} className="text-center py-8 text-muted-foreground">
                   {isFiltered
                     ? 'No expenses match these filters.'
                     : 'No expenses found. Add an expense to get started.'}
@@ -293,7 +306,18 @@ export default async function ExpensesPage({
               data.rows.map((expense) => (
                 <tr key={expense.id} className="border-b border-border hover:bg-muted/50">
                   <td className="py-4 font-medium">{expense.category}</td>
-                  <td className="py-4 text-sm text-muted-foreground">{expense.projectId ?? '—'}</td>
+                  <td className="py-4 text-sm text-muted-foreground">
+                    {expense.projectId ? (
+                      <Link
+                        href={`/projects/${expense.projectId}`}
+                        className="text-accent hover:underline"
+                      >
+                        Open project
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td className="py-4 text-right text-sm font-medium">
                     {money(expense.amount, currency)}
                   </td>
@@ -310,6 +334,13 @@ export default async function ExpensesPage({
                     >
                       {expense.billable ? 'Yes' : 'No'}
                     </span>
+                  </td>
+                  <td className="py-4 text-sm">
+                    {expense.billed
+                      ? 'Billed'
+                      : expense.billable && expense.projectId
+                        ? 'Unbilled'
+                        : '—'}
                   </td>
                   <td className="py-4 text-right text-sm text-muted-foreground">
                     {new Date(expense.createdAt).toLocaleDateString()}

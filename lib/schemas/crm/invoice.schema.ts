@@ -122,3 +122,52 @@ export const invoicePaymentSchema = z.object({
 });
 
 export type InvoicePaymentInput = z.infer<typeof invoicePaymentSchema>;
+
+/** Explicit source selection for controlled project-linked billing. */
+export const invoiceBillableSourcesSchema = z
+  .object({
+    expenses: z
+      .array(
+        z
+          .object({
+            id: z.string().cuid(),
+            taxRate: z
+              .string()
+              .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0)
+              .default('0'),
+          })
+          .strict()
+      )
+      .max(50)
+      .default([]),
+    changeOrders: z
+      .array(
+        z
+          .object({
+            id: z.string().cuid(),
+            taxRate: z
+              .string()
+              .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0)
+              .default('0'),
+          })
+          .strict()
+      )
+      .max(50)
+      .default([]),
+  })
+  .strict()
+  .refine(
+    (value) => value.expenses.length + value.changeOrders.length > 0,
+    'Select at least one billable source'
+  )
+  .refine(
+    (value) => new Set(value.expenses.map((source) => source.id)).size === value.expenses.length,
+    'Duplicate expense source'
+  )
+  .refine(
+    (value) =>
+      new Set(value.changeOrders.map((source) => source.id)).size === value.changeOrders.length,
+    'Duplicate change-order source'
+  );
+
+export type InvoiceBillableSourcesInput = z.infer<typeof invoiceBillableSourcesSchema>;

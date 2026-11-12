@@ -9,13 +9,9 @@ import { z } from 'zod';
 export const expenseCreateSchema = z.object({
   projectId: z.string().cuid().optional().nullable(),
   category: z.string().min(1, 'Category is required').max(100),
-  amount: z.string().refine(
-    (val) => {
-      const n = Number(val);
-      return !isNaN(n) && n > 0;
-    },
-    { message: 'Amount must be a positive number' }
-  ),
+  amount: z.string().refine((val) => /^\d+(?:\.\d{1,2})?$/.test(val.trim()) && Number(val) > 0, {
+    message: 'Amount must be positive and have at most two decimal places',
+  }),
   expenseDate: z.string().datetime('Valid date is required'),
   receiptUrl: z.string().url().optional().nullable(),
   billable: z.boolean().default(false),
@@ -59,6 +55,7 @@ export const expenseListQuerySchema = z.object({
   q: z.string().trim().max(100).optional(),
   category: z.string().trim().max(100).optional(),
   billable: z.enum(['true', 'false']).optional(),
+  projectId: z.string().cuid().optional(),
   from: z.string().trim().optional(),
   to: z.string().trim().optional(),
   sort: z.enum(EXPENSE_SORT_OPTIONS).optional(),

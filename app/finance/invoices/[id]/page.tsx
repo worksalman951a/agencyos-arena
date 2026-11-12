@@ -10,6 +10,7 @@ import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { ExportPdfButton } from '@/components/invoices/export-pdf-button';
 import { DocumentBrandHeader } from '@/components/documents/document-brand-header';
+import { BillableSourcesPanel } from './BillableSourcesPanel';
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -157,6 +158,16 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           </div>
         </div>
       </div>
+
+      {invoice.status === 'draft' &&
+      !invoice.deletedAt &&
+      invoice.projectId &&
+      canUpdate &&
+      permissions.has('project.read') &&
+      permissions.has('expense.read') &&
+      permissions.has('change.order.read') ? (
+        <BillableSourcesPanel invoiceId={invoice.id} />
+      ) : null}
 
       {invoice.notes && (
         <div className="rounded-md border bg-background p-4">

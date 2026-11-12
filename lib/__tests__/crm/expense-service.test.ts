@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/db', () => ({
   prisma: {
+    invoiceItem: { findFirst: vi.fn() },
     expenseItem: {
       findMany: vi.fn(),
       count: vi.fn(),

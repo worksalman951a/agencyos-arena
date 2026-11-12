@@ -130,6 +130,67 @@ test.describe('project invoices', () => {
     await expect(page.getByRole('row', { name: new RegExp(unrelatedTitle) })).toBeVisible();
   });
 
+  test('explicitly adds a billable expense and an approved change order to a project draft invoice', async ({
+    authedPage: page,
+    api,
+    account,
+  }) => {
+    const suffix = Date.now();
+    const contact = await createContact(api, account, `SourceBilling${suffix}`);
+    const project = await createProject(api, account, {
+      name: `E2E Source Billing ${suffix}`,
+      clientId: contact.id,
+    });
+    const expenseResponse = await api.post('/api/v1/finance/expenses', {
+      headers: authHeader(account),
+      data: {
+        projectId: project.id,
+        category: 'Travel expense',
+        amount: '18.75',
+        expenseDate: new Date().toISOString(),
+        billable: true,
+      },
+    });
+    expect(expenseResponse.status(), await expenseResponse.text()).toBe(201);
+    const changeOrderResponse = await api.post('/api/v1/projects/change-orders', {
+      headers: authHeader(account),
+      data: {
+        projectId: project.id,
+        description: 'Approved extra scope',
+        amount: '25.00',
+        status: 'approved',
+      },
+    });
+    expect(changeOrderResponse.status(), await changeOrderResponse.text()).toBe(201);
+
+    const invoiceResponse = await api.post('/api/v1/crm/invoices', {
+      headers: authHeader(account),
+      data: {
+        title: `E2E Source Invoice ${suffix}`,
+        projectId: project.id,
+        clientId: contact.id,
+        currency: 'USD',
+        lineItems: [
+          { description: 'Initial work', quantity: '1', unitPrice: '10.00', taxRate: '0' },
+        ],
+      },
+    });
+    expect(invoiceResponse.status(), await invoiceResponse.text()).toBe(201);
+    const invoice = (await invoiceResponse.json()) as { id: string };
+
+    await page.goto(`/finance/invoices/${invoice.id}`);
+    const billingPanel = page.getByRole('region', { name: 'Billable project sources' });
+    await expect(billingPanel.getByText('Travel expense')).toBeVisible();
+    await expect(billingPanel.getByText('Approved extra scope')).toBeVisible();
+    await billingPanel.getByLabel(/Travel expense/).check();
+    await billingPanel.getByLabel(/Approved extra scope/).check();
+    await billingPanel.getByRole('button', { name: 'Add selected to invoice' }).click();
+    await expect(billingPanel.getByRole('status')).toContainText('added to the draft invoice');
+    await expect(page.getByText('53.75').first()).toBeVisible();
+    await expect(page.getByText('Expense: Travel expense')).toBeVisible();
+    await expect(page.getByText('Change order: Approved extra scope')).toBeVisible();
+  });
+
   test('does not preselect an archived project in the invoice form', async ({
     authedPage: page,
     api,

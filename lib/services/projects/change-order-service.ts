@@ -17,6 +17,7 @@ export interface ChangeOrderResponse {
   amount: string;
   status: string;
   approvedBy: string | null;
+  billed: boolean;
   createdAt: Date;
   updatedAt: Date;
   project?: { id: string; name: string } | null;
@@ -24,6 +25,20 @@ export interface ChangeOrderResponse {
 }
 
 const CHANGE_ORDER_STATUSES = ['pending', 'approved', 'rejected'] as const;
+
+function isBilledSourceConflict(error: unknown): boolean {
+  const value = error as { code?: string; message?: string; meta?: { code?: string; message?: string } } | null;
+  return Boolean(
+    value &&
+      (['P2003', 'P2004', 'P2010'].includes(value.code ?? '') ||
+        value.meta?.code === '23514' ||
+        /billed change order is immutable/i.test(`${value.message ?? ''} ${value.meta?.message ?? ''}`))
+  );
+}
+
+function billedConflictError(message: string) {
+  return Object.assign(new Error(message), { statusCode: 409 });
+}
 
 const VALID_CHANGE_ORDER_TRANSITIONS: Record<string, readonly string[]> = {
   pending: ['approved', 'rejected'],
@@ -39,6 +54,7 @@ interface ChangeOrderRecord {
   amount: { toString: () => string };
   status: string;
   approvedBy: string | null;
+  billedInvoiceItem?: { invoiceId: string } | null;
   createdAt: Date;
   updatedAt: Date;
   project?: { id: string; name: string } | null;
@@ -102,15 +118,20 @@ async function createAuditLog({
   });
 }
 
-function parseChangeOrderAmount(value: string): number {
+function parseChangeOrderAmount(value: string): string {
   const trimmed = value.trim();
   const parsed = Number(trimmed);
-  if (!trimmed || Number.isNaN(parsed) || !Number.isFinite(parsed)) {
+  if (
+    !/^\d+(?:\.\d{1,2})?$/.test(trimmed) ||
+    Number.isNaN(parsed) ||
+    !Number.isFinite(parsed) ||
+    parsed <= 0
+  ) {
     const error = new Error('Amount must be a valid number') as Error & { statusCode?: number };
     error.statusCode = 400;
     throw error;
   }
-  return parsed;
+  return trimmed;
 }
 
 function serializeChangeOrder(
@@ -125,6 +146,7 @@ function serializeChangeOrder(
     amount: co.amount.toString(),
     status: co.status,
     approvedBy: co.approvedBy,
+    billed: Boolean(co.billedInvoiceItem),
     createdAt: co.createdAt,
     updatedAt: co.updatedAt,
     project: co.project ?? null,
@@ -160,6 +182,7 @@ export async function listChangeOrders(projectId?: string): Promise<ChangeOrderR
     where: projectId ? { projectId, organizationId } : { organizationId },
     include: {
       project: { select: { id: true, name: true } },
+      billedInvoiceItem: { select: { invoiceId: true } },
     },
     orderBy: { createdAt: 'desc' },
   })) as ChangeOrderRecord[];
@@ -190,6 +213,7 @@ export async function getChangeOrder(id: string): Promise<ChangeOrderResponse> {
     where: { id, organizationId },
     include: {
       project: { select: { id: true, name: true } },
+      billedInvoiceItem: { select: { invoiceId: true } },
     },
   })) as ChangeOrderRecord | null;
 
@@ -312,6 +336,18 @@ export async function updateChangeOrder(
     throw error;
   }
 
+  const billedLine = await prisma.invoiceItem.findFirst({
+    where: { sourceChangeOrderId: id },
+    select: { id: true },
+  });
+  if (billedLine) {
+    const error = new Error(
+      'Billed change orders are immutable; retain the invoice link for financial history'
+    ) as Error & { statusCode?: number };
+    error.statusCode = 409;
+    throw error;
+  }
+
   if (
     input.status !== undefined &&
     !(CHANGE_ORDER_STATUSES as readonly string[]).includes(input.status)
@@ -352,7 +388,9 @@ export async function updateChangeOrder(
   const nextAmount =
     input.amount !== undefined ? parseChangeOrderAmount(input.amount) : existing.amount;
 
-  const changeOrder = (await prisma.changeOrder.update({
+  let changeOrder: ChangeOrderRecord;
+  try {
+    changeOrder = (await prisma.changeOrder.update({
     where: { id },
     data: {
       description:
@@ -365,6 +403,12 @@ export async function updateChangeOrder(
       project: { select: { id: true, name: true } },
     },
   })) as ChangeOrderRecord;
+  } catch (error) {
+    if (isBilledSourceConflict(error)) {
+      throw billedConflictError('Billed change orders are immutable');
+    }
+    throw error;
+  }
 
   await createAuditLog({
     actorId: userId,
@@ -412,9 +456,26 @@ export async function deleteChangeOrder(id: string): Promise<{ id: string }> {
     throw error;
   }
 
-  await prisma.changeOrder.delete({
-    where: { id },
+  const billedLine = await prisma.invoiceItem.findFirst({
+    where: { sourceChangeOrderId: id },
+    select: { id: true },
   });
+  if (billedLine) {
+    const error = new Error(
+      'Billed change orders cannot be deleted; the invoice link is retained for financial history'
+    ) as Error & { statusCode?: number };
+    error.statusCode = 409;
+    throw error;
+  }
+
+  try {
+    await prisma.changeOrder.delete({ where: { id } });
+  } catch (error) {
+    if (isBilledSourceConflict(error)) {
+      throw billedConflictError('Billed change orders cannot be deleted');
+    }
+    throw error;
+  }
 
   await createAuditLog({
     actorId: userId,

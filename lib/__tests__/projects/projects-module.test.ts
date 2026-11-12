@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => ({
       update: vi.fn(),
       delete: vi.fn(),
     },
+    invoiceItem: { findFirst: vi.fn() },
     projectFile: {
       findFirst: vi.fn(),
       findMany: vi.fn(),

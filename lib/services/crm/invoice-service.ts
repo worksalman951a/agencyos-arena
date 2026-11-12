@@ -8,6 +8,8 @@ import {
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
+import { DEFAULT_CURRENCY, normalizeCurrencyCode } from '@/lib/currencies';
+import { normalizeOrganizationSettings } from '@/lib/schemas/settings/organization.schema';
 import {
   allocateDocumentNumber,
   type PrismaTransactionClient,
@@ -18,6 +20,7 @@ import type {
   InvoiceQueryInput,
   InvoiceLineItemInput,
   InvoicePaymentInput,
+  InvoiceBillableSourcesInput,
 } from '@/lib/schemas/crm/invoice.schema';
 import {
   INVOICE_INITIAL_STATUSES,
@@ -179,6 +182,11 @@ function codedError(message: string, statusCode: number): Error & { statusCode: 
   const error = new Error(message) as Error & { statusCode: number };
   error.statusCode = statusCode;
   return error;
+}
+
+function isExactPositiveMoney(value: { toString(): string } | string | number): boolean {
+  const raw = value.toString();
+  return /^\d+(?:\.\d{1,2})?$/.test(raw) && Number(raw) > 0;
 }
 
 /** Minimal project columns loaded with an invoice; see InvoiceProjectSummary. */
@@ -630,6 +638,309 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
   return serializeInvoice(invoice as unknown as InvoiceDbRecord, Boolean(projectId));
 }
 
+/**
+ * Explicitly append selected project expenses / approved change orders to an
+ * existing draft invoice. Source selection, source locks, invoice lines,
+ * totals and audit record commit atomically. Unique nullable source columns on
+ * InvoiceItem are the database race guard; a voided/deleted invoice keeps its
+ * source links and cannot be rebilled implicitly.
+ */
+export async function listBillableProjectSources(invoiceId: string) {
+  const { userId, organizationId } = await getAuthorizedUser();
+  await requirePermission(userId, organizationId, 'invoice.read');
+  await requirePermission(userId, organizationId, 'project.read');
+  await requirePermission(userId, organizationId, 'expense.read');
+  await requirePermission(userId, organizationId, 'change.order.read');
+
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, organizationId, deletedAt: null },
+    select: { projectId: true, clientId: true, currency: true },
+  });
+  if (!invoice) throw codedError('Not found', 404);
+  if (!invoice.projectId) return { expenses: [], changeOrders: [] };
+
+  const project = await prisma.project.findFirst({
+    where: { id: invoice.projectId, organizationId, deletedAt: null, status: { not: 'archived' } },
+    select: { id: true, clientId: true },
+  });
+  if (!project || project.clientId !== invoice.clientId) {
+    return { expenses: [], changeOrders: [] };
+  }
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { settings: true },
+  });
+  const workspaceCurrency =
+    normalizeCurrencyCode(normalizeOrganizationSettings(organization?.settings).defaultCurrency) ??
+    DEFAULT_CURRENCY;
+  if (normalizeCurrencyCode(invoice.currency) !== workspaceCurrency) {
+    return { expenses: [], changeOrders: [] };
+  }
+
+  const [expenses, changeOrders] = await Promise.all([
+    prisma.expenseItem.findMany({
+      where: {
+        organizationId,
+        projectId: project.id,
+        billable: true,
+        billedInvoiceItem: { is: null },
+      },
+      orderBy: { expenseDate: 'asc' },
+      select: { id: true, category: true, amount: true, expenseDate: true },
+    }),
+    prisma.changeOrder.findMany({
+      where: {
+        organizationId,
+        projectId: project.id,
+        status: 'approved',
+        billedInvoiceItem: { is: null },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, description: true, amount: true, status: true },
+    }),
+  ]);
+  return {
+    expenses: expenses.filter(
+      (expense: { amount: string | number | { toString(): string } }) => isExactPositiveMoney(expense.amount)
+    ).map(
+      (expense: {
+        id: string;
+        category: string;
+        amount: string | number | { toString(): string };
+        expenseDate: Date;
+      }) => ({
+        id: expense.id,
+        description: expense.category,
+        amount: formatDecimalMoney(expense.amount),
+        expenseDate: expense.expenseDate,
+      })
+    ),
+    changeOrders: changeOrders.filter(
+      (changeOrder: { amount: string | number | { toString(): string } }) => isExactPositiveMoney(changeOrder.amount)
+    ).map(
+      (changeOrder: {
+        id: string;
+        description: string;
+        amount: string | number | { toString(): string };
+      }) => ({
+        id: changeOrder.id,
+        description: changeOrder.description,
+        amount: formatDecimalMoney(changeOrder.amount),
+      })
+    ),
+  };
+}
+
+export async function addBillableSourcesToInvoice(
+  invoiceId: string,
+  input: InvoiceBillableSourcesInput
+) {
+  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
+  await requirePermission(userId, organizationId, 'invoice.update');
+  await requirePermission(userId, organizationId, 'project.read');
+  if (input.expenses.length) await requirePermission(userId, organizationId, 'expense.read');
+  if (input.changeOrders.length)
+    await requirePermission(userId, organizationId, 'change.order.read');
+
+  const expenseIds = input.expenses.map((source) => source.id);
+  const changeOrderIds = input.changeOrders.map((source) => source.id);
+  const sourceTaxRates = new Map([
+    ...input.expenses.map((source) => [`expense:${source.id}`, source.taxRate] as const),
+    ...input.changeOrders.map((source) => [`changeOrder:${source.id}`, source.taxRate] as const),
+  ]);
+  for (const rate of sourceTaxRates.values()) {
+    if (!Number.isFinite(Number(rate)) || Number(rate) < 0) {
+      throw codedError('Tax rate must be a non-negative number', 400);
+    }
+  }
+
+  try {
+    await prisma.$transaction(async (tx: PrismaTransactionClient) => {
+      await tx.$queryRawUnsafe('SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE', invoiceId);
+      const invoice = await tx.invoice.findFirst({
+        where: { id: invoiceId, organizationId, deletedAt: null },
+        select: {
+          id: true,
+          number: true,
+          projectId: true,
+          clientId: true,
+          currency: true,
+          status: true,
+        },
+      });
+      if (!invoice) throw codedError('Not found', 404);
+      if (invoice.status !== 'draft')
+        throw codedError('Only draft invoices can receive billable sources', 400);
+      if (!invoice.projectId)
+        throw codedError('Billable sources require a project-linked invoice', 400);
+      await requireLinkableProject(userId, organizationId, invoice.projectId);
+
+      await tx.$queryRawUnsafe('SELECT id FROM "Project" WHERE id = $1 FOR SHARE', invoice.projectId);
+      const project = await tx.project.findFirst({
+        where: {
+          id: invoice.projectId,
+          organizationId,
+          deletedAt: null,
+          status: { not: 'archived' },
+        },
+        select: { id: true, clientId: true },
+      });
+      if (!project) throw codedError('Not found', 404);
+      if (project.clientId !== invoice.clientId) {
+        throw codedError('Invoice client must match the project client', 400);
+      }
+
+      await tx.$queryRawUnsafe('SELECT id FROM "Organization" WHERE id = $1 FOR SHARE', organizationId);
+      const organization = await tx.organization.findUnique({
+        where: { id: organizationId },
+        select: { settings: true },
+      });
+      const organizationCurrency =
+        normalizeCurrencyCode(
+          normalizeOrganizationSettings(organization?.settings).defaultCurrency
+        ) ?? DEFAULT_CURRENCY;
+      if (normalizeCurrencyCode(invoice.currency) !== organizationCurrency) {
+        throw codedError(
+          'Invoice currency must match the workspace currency for project sources',
+          400
+        );
+      }
+
+      // Stable lock order serializes source edits/deletes and avoids deadlocks;
+      // unique source indexes remain the final guard across concurrent requests.
+      const lockTargets = [
+        ...expenseIds.map((id) => ({ id, table: 'ExpenseItem' as const })),
+        ...changeOrderIds.map((id) => ({ id, table: 'ChangeOrder' as const })),
+      ].sort((left, right) =>
+        `${left.table}:${left.id}`.localeCompare(`${right.table}:${right.id}`)
+      );
+      for (const target of lockTargets) {
+        await tx.$queryRawUnsafe(
+          `SELECT id FROM "${target.table}" WHERE id = $1 FOR UPDATE`,
+          target.id
+        );
+      }
+
+      const expenses = expenseIds.length
+        ? await tx.expenseItem.findMany({
+            where: { id: { in: expenseIds }, organizationId, projectId: invoice.projectId },
+          })
+        : [];
+      const changeOrders = changeOrderIds.length
+        ? await tx.changeOrder.findMany({
+            where: { id: { in: changeOrderIds }, organizationId, projectId: invoice.projectId },
+          })
+        : [];
+      if (expenses.length !== expenseIds.length || changeOrders.length !== changeOrderIds.length) {
+        throw codedError('One or more billable sources were not found for this project', 404);
+      }
+
+      const existingLines = await tx.invoiceItem.findMany({
+        where: { invoiceId },
+        select: { description: true, quantity: true, unitPrice: true, taxRate: true },
+      });
+      const newLines: Array<{
+        description: string;
+        quantity: number;
+        unitPrice: number;
+        taxRate: number;
+        amount: string;
+        sourceExpenseId?: string;
+        sourceChangeOrderId?: string;
+      }> = [];
+
+      for (const expense of expenses) {
+        if (!expense.billable) throw codedError('Non-billable expenses cannot be invoiced', 400);
+        const amount = expense.amount.toString();
+        if (!isExactPositiveMoney(amount)) {
+          throw codedError(
+            'Expense amount must be positive and have at most two decimal places',
+            400
+          );
+        }
+        const rate = sourceTaxRates.get(`expense:${expense.id}`)!;
+        const cents = toCents(amount);
+        newLines.push({
+          description: `Expense: ${expense.category}`,
+          quantity: 1,
+          unitPrice: Number(amount),
+          taxRate: Number(rate),
+          amount: formatMoney(cents),
+          sourceExpenseId: expense.id,
+        });
+      }
+      for (const changeOrder of changeOrders) {
+        if (changeOrder.status !== 'approved') {
+          throw codedError('Only approved change orders can be invoiced', 400);
+        }
+        const amount = changeOrder.amount.toString();
+        if (!isExactPositiveMoney(amount)) {
+          throw codedError(
+            'Change-order amount must be positive and have at most two decimal places',
+            400
+          );
+        }
+        const rate = sourceTaxRates.get(`changeOrder:${changeOrder.id}`)!;
+        const cents = toCents(amount);
+        newLines.push({
+          description: `Change order: ${changeOrder.description}`.slice(0, 500),
+          quantity: 1,
+          unitPrice: Number(amount),
+          taxRate: Number(rate),
+          amount: formatMoney(cents),
+          sourceChangeOrderId: changeOrder.id,
+        });
+      }
+
+      const allLines = [...existingLines, ...newLines].map((line) => ({
+        description: line.description,
+        quantity: line.quantity.toString(),
+        unitPrice: line.unitPrice.toString(),
+        taxRate: line.taxRate.toString(),
+      }));
+      const totals = calculateInvoiceTotals(allLines);
+
+      await tx.invoiceItem.createMany({
+        data: newLines.map((line) => ({ invoiceId, ...line })),
+      });
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          subtotal: totals.subtotal,
+          tax: totals.tax,
+          total: totals.total,
+          updatedBy: userId,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId: userId,
+          actorName: actorEmail,
+          action: 'invoice.billable_sources_added',
+          entityType: 'Invoice',
+          entityId: invoiceId,
+          before: { id: invoiceId, number: invoice.number },
+          after: {
+            expenseIds,
+            changeOrderIds,
+            subtotal: totals.subtotal,
+            tax: totals.tax,
+            total: totals.total,
+          },
+          organizationId,
+        },
+      });
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw codedError('One or more billable sources have already been invoiced', 409);
+    }
+    throw error;
+  }
+
+  return getInvoice(invoiceId);
+}
+
 export async function updateInvoice(
   id: string,
   input: InvoiceUpdateInput,
@@ -667,6 +978,23 @@ export async function updateInvoice(
     };
     error.statusCode = 400;
     throw error;
+  }
+
+  const hasBilledSources = existing.items.some(
+    (item: { sourceExpenseId?: string | null; sourceChangeOrderId?: string | null }) =>
+      Boolean(item.sourceExpenseId || item.sourceChangeOrderId)
+  );
+  if (
+    hasBilledSources &&
+    (lineItems !== undefined ||
+      input.projectId !== undefined ||
+      input.clientId !== undefined ||
+      input.currency !== undefined)
+  ) {
+    throw codedError(
+      'Invoices with linked billable sources cannot replace lines or change project, client, or currency',
+      400
+    );
   }
 
   if (input.status !== undefined && input.status !== existing.status) {
