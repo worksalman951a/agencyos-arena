@@ -9,14 +9,18 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoFeatureFlagFormView } from '@/components/admin/bento-feature-flag-form-view';
 
 export default function EditFeatureFlagPage({ params }: { params: Promise<{ id: string }> }) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [id, setId] = useState<string>('');
   const [flagKey, setFlagKey] = useState('');
   const [enabled, setEnabled] = useState(false);
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     params.then(async ({ id: pid }) => {
@@ -36,6 +40,7 @@ export default function EditFeatureFlagPage({ params }: { params: Promise<{ id: 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     setSaving(true);
     try {
       const res = await fetch(`/api/v1/admin/feature-flags/${id}`, {
@@ -50,7 +55,9 @@ export default function EditFeatureFlagPage({ params }: { params: Promise<{ id: 
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || 'Failed to update feature flag');
+        const msg = err.error || 'Failed to update feature flag';
+        setError(msg);
+        throw new Error(msg);
       }
 
       toast.success('Feature flag updated');
@@ -62,6 +69,22 @@ export default function EditFeatureFlagPage({ params }: { params: Promise<{ id: 
     }
   };
 
+  if (isBento) {
+    return (
+      <BentoFeatureFlagFormView
+        flagKey={flagKey}
+        enabled={enabled}
+        setEnabled={setEnabled}
+        description={description}
+        setDescription={setDescription}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

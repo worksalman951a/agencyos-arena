@@ -13,6 +13,8 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoUserFormView } from '@/components/admin/bento-user-form-view';
 
 interface RoleOption {
   id: string;
@@ -30,6 +32,7 @@ interface MemberDetail {
 }
 
 export default function EditUserPage({ params }: { params: Promise<{ id: string }> }) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [id, setId] = useState('');
   const [member, setMember] = useState<MemberDetail | null>(null);
@@ -99,6 +102,23 @@ export default function EditUserPage({ params }: { params: Promise<{ id: string 
     }
   };
 
+  if (isBento) {
+    return (
+      <BentoUserFormView
+        member={member}
+        roles={roles}
+        roleId={roleId}
+        setRoleId={setRoleId}
+        status={status}
+        setStatus={setStatus}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        loadError={loadError}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

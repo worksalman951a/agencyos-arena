@@ -9,17 +9,22 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoRoleFormView } from '@/components/admin/bento-role-form-view';
 
 export default function EditRolePage({ params }: { params: Promise<{ id: string }> }) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [id, setId] = useState<string>('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [isSystem, setIsSystem] = useState(false);
   const [permissionCodes, setPermissionCodes] = useState<string[]>([]);
   const [availablePermissions, setAvailablePermissions] = useState<
     Array<{ id: string; code: string; description: string | null }>
   >([]);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     params.then(async ({ id: pid }) => {
@@ -37,6 +42,7 @@ export default function EditRolePage({ params }: { params: Promise<{ id: string 
 
         setName(roleData.name || '');
         setDescription(roleData.description || '');
+        setIsSystem(roleData.isSystem || false);
         setPermissionCodes(roleData.permissions.map((p: { code: string }) => p.code));
         setAvailablePermissions(permData);
       } catch (err) {
@@ -47,6 +53,7 @@ export default function EditRolePage({ params }: { params: Promise<{ id: string 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     setSaving(true);
     try {
       const res = await fetch(`/api/v1/admin/roles/${id}`, {
@@ -62,7 +69,9 @@ export default function EditRolePage({ params }: { params: Promise<{ id: string 
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || 'Failed to update role');
+        const msg = err.error || 'Failed to update role';
+        setError(msg);
+        throw new Error(msg);
       }
 
       toast.success('Role updated');
@@ -74,6 +83,25 @@ export default function EditRolePage({ params }: { params: Promise<{ id: string 
     }
   };
 
+  if (isBento) {
+    return (
+      <BentoRoleFormView
+        name={name}
+        setName={setName}
+        description={description}
+        setDescription={setDescription}
+        permissionCodes={permissionCodes}
+        setPermissionCodes={setPermissionCodes}
+        availablePermissions={availablePermissions}
+        isSystem={isSystem}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
