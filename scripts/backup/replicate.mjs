@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { assertKeySeparation, loadKey, replicate, recover } from './replication.mjs';
+import {
+  assertKeySeparation,
+  loadKey,
+  replicate,
+  recover,
+  restoreVerifier,
+} from './replication.mjs';
 
 async function main(args) {
   const [action, ...rest] = args;
@@ -44,27 +48,7 @@ async function main(args) {
       tempDir: opts['--temp-dir'],
       destination: process.env.BACKUP_REPLICATION_DIR,
       key,
-      verify: opts.verify
-        ? (archive) =>
-            new Promise((resolve, reject) => {
-              const env = { ...process.env };
-              delete env.BACKUP_REPLICATION_KEY;
-              delete env.BACKUP_REPLICATION_KEY_FILE;
-              const child = spawn(
-                process.execPath,
-                [
-                  path.join(path.dirname(fileURLToPath(import.meta.url)), 'verify-restore.mjs'),
-                  '--backup',
-                  archive,
-                ],
-                { stdio: 'inherit', env }
-              );
-              child.on('error', reject);
-              child.on('close', (code) =>
-                code === 0 ? resolve() : reject(new Error('Isolated restore verification failed'))
-              );
-            })
-        : null,
+      verify: opts.verify ? restoreVerifier() : null,
     });
   else throw new Error('Invalid action');
   console.log(`[replication] ${JSON.stringify(result)}`);

@@ -690,6 +690,13 @@ export async function runScheduledBackup(argv = [], deps = {}) {
       reason: null,
     },
     replication: { status: 'not-configured', lastStatus: 'unknown', object: null, sha256: null },
+    shipping: {
+      status: 'not-configured',
+      lastStatus: 'unknown',
+      object: null,
+      sha256: null,
+      inventoryHead: null,
+    },
     retention: {
       status: 'not-run',
       reason: null,
@@ -775,6 +782,11 @@ export async function runScheduledBackup(argv = [], deps = {}) {
             object: null,
             sha256: null,
           };
+        if (previous?.shipping?.lastStatus === 'failed') {
+          previousReplicationFailed = true;
+          result.shipping.status = 'skipped';
+          result.shipping.lastStatus = 'failed';
+        }
         result.backup.status = 'skipped';
         result.backup.reason = 'retention_only';
       } else {
@@ -782,6 +794,8 @@ export async function runScheduledBackup(argv = [], deps = {}) {
         const backupEnv = { ...env };
         delete backupEnv.BACKUP_REPLICATION_KEY;
         delete backupEnv.BACKUP_REPLICATION_KEY_FILE;
+        for (const name of Object.keys(backupEnv))
+          if (name.startsWith('BACKUP_SHIPPING_')) delete backupEnv[name];
         const outcome = await runBackup({
           scriptPath: config.backupScript,
           directory: config.directory,
@@ -858,18 +872,68 @@ export async function runScheduledBackup(argv = [], deps = {}) {
         } else result.replication.status = 'skipped';
       }
 
+      // Opt-in off-site shipping of the encrypted replica (never the plaintext
+      // archive). Only configured explicitly; a failure keeps local backups.
+      if (!config.retentionOnly && env.BACKUP_SHIPPING_ENDPOINT !== undefined) {
+        if (result.replication.status === 'succeeded') {
+          try {
+            const { loadShippingConfig, ship } = await import('./shipping.mjs');
+            const shipped = await ship({
+              name: result.backup.archive.name,
+              config: await loadShippingConfig(env),
+            });
+            result.shipping = {
+              status: 'succeeded',
+              lastStatus: 'succeeded',
+              object: shipped.object,
+              sha256: shipped.sha256,
+              inventoryHead: shipped.inventory.head,
+            };
+          } catch {
+            result.shipping.status = 'failed';
+            result.shipping.lastStatus = 'failed';
+            exitCode = EXIT.TOOL_FAILED;
+            result.error = {
+              code: 'shipping_failed',
+              message: 'Off-site shipping failed; local backups retained.',
+              exitCode,
+            };
+          }
+        } else if (result.replication.status !== 'failed') {
+          // Shipping without a successful encrypted replica is a
+          // misconfiguration, not a reason to upload anything else.
+          result.shipping.status = result.backup.status === 'succeeded' ? 'failed' : 'skipped';
+          if (result.shipping.status === 'failed') {
+            result.shipping.lastStatus = 'failed';
+            exitCode = EXIT.TOOL_FAILED;
+            result.error = {
+              code: 'shipping_failed',
+              message: 'Off-site shipping requires encrypted replication; local backups retained.',
+              exitCode,
+            };
+          }
+        } else result.shipping.status = 'skipped';
+      }
+
       // 4. Retention. Never after a failed backup: the previous verified
       //    backups are the only known-good history left at that point.
       if (result.replication.status === 'failed') {
         result.retention.status = 'skipped';
         result.retention.reason = 'replication_failed';
         result.status = 'failed';
+      } else if (result.shipping.status === 'failed') {
+        result.retention.status = 'skipped';
+        result.retention.reason = 'shipping_failed';
+        result.status = 'failed';
       } else if (result.backup.status === 'failed') {
         result.retention.status = 'skipped';
         result.retention.reason = 'backup_failed';
       } else if (previousReplicationFailed) {
         result.retention.status = 'skipped';
-        result.retention.reason = 'latest_replication_failed';
+        result.retention.reason =
+          result.shipping.lastStatus === 'failed' && result.replication.lastStatus !== 'failed'
+            ? 'latest_shipping_failed'
+            : 'latest_replication_failed';
         result.status = 'skipped';
       } else if (result.backup.lastStatus === 'failed') {
         result.retention.status = 'skipped';
@@ -983,6 +1047,7 @@ export function printResult(result, logger = console) {
     }`
   );
   logger.log?.(`[scheduled-backup] replication ${result.replication.status}`);
+  logger.log?.(`[scheduled-backup] shipping  ${result.shipping.status}`);
   logger.log?.(
     `[scheduled-backup] retention ${result.retention.status}${
       result.retention.reason ? ` (${result.retention.reason})` : ''
