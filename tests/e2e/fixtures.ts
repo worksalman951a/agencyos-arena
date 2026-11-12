@@ -18,7 +18,7 @@ import type { APIRequestContext, BrowserContext, Page } from '@playwright/test';
 import { createRequire } from 'node:module';
 import { PrismaPg } from '@prisma/adapter-pg';
 
-const require = createRequire(import.meta.url);
+const require = createRequire(`${process.cwd()}/package.json`);
 const { PrismaClient } = require('@prisma/client') as {
   PrismaClient: new (options: { adapter: unknown }) => {
     user: {

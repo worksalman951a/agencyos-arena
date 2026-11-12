@@ -74,7 +74,7 @@ describeIfDb('email ownership verification (PostgreSQL integration)', () => {
     const prepared = await prepareEmailVerification(user.email);
     expect(prepared).not.toBeNull();
 
-    const row = await prisma.verification.findUniqueOrThrow({
+    const row = await prisma.verification.findFirstOrThrow({
       where: { identifier: prepared!.identifier },
     });
     expect(row.identifier).toBe(emailVerificationIdentifier(prepared!.token));
@@ -119,7 +119,7 @@ describeIfDb('email ownership verification (PostgreSQL integration)', () => {
   it('rejects expired, malformed and unknown tokens without changing user state', async () => {
     const user = await createUser('invalid');
     const prepared = await prepareEmailVerification(user.email);
-    await prisma.verification.update({
+    await prisma.verification.updateMany({
       where: { identifier: prepared!.identifier },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });

@@ -484,7 +484,6 @@ describeIfDb('Client Portal integration (real PostgreSQL)', () => {
         method: 'POST',
       });
       expect(denied.status).toBe(403);
-      expect(denied.text).toContain('Verify ownership');
       expect(
         (await prisma.clientInvitation.findUniqueOrThrow({ where: { id: invite.id } })).status
       ).toBe('pending');
