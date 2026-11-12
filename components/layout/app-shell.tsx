@@ -22,11 +22,13 @@ import { classNames } from '@/lib/utils';
 import { BrandingProvider } from '@/components/providers/branding-provider';
 import type { BrandContext } from '@/lib/services/settings/branding-service';
 import type { NavSection } from '@/lib/navigation';
+import { RequestEmailVerificationButton } from '@/components/auth/request-email-verification-button';
 
 interface ShellUser {
   id: string;
   name: string | null;
   email: string | null;
+  emailVerified: boolean;
 }
 
 interface AppShellProps {
@@ -85,7 +87,15 @@ export function AppShell({ children, user, sections, branding }: AppShellProps) 
           theme={theme as 'light' | 'dark' | 'system'}
           setTheme={setTheme}
         />
-        <main className="flex-1 overflow-y-auto bg-canvas p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto bg-canvas p-6">
+          {!user.emailVerified && user.email ? (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+              <p>Your email address has not been verified. Existing access is unchanged.</p>
+              <RequestEmailVerificationButton email={user.email} />
+            </div>
+          ) : null}
+          {children}
+        </main>
       </div>
       {isMobileDrawerOpen && (
         <div

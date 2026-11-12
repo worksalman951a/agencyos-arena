@@ -54,6 +54,7 @@ const PUBLIC_PATHS = [
   // out keeps that handler path identical to every other mutating API route.
   '/forgot-password',
   '/reset-password',
+  '/verify-email',
   '/api/auth',
   '/api/health',
   '/portal/invite',

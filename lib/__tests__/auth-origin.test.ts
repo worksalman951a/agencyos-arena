@@ -64,6 +64,16 @@ function getConfig() {
 }
 
 describe('Auth origin configuration', () => {
+  it('preserves sign-in access during verification rollout and leaves vendor raw-token delivery disabled', async () => {
+    applyEnv({ NODE_ENV: 'test' });
+
+    await import('@/lib/auth-server');
+
+    const config = getConfig() as AuthConfig;
+    expect(config.emailAndPassword).toMatchObject({ requireEmailVerification: false });
+    expect(config.emailVerification).toBeUndefined();
+  });
+
   beforeEach(() => {
     betterAuthMock.mockClear();
     prismaAdapterMock.mockClear();

@@ -28,6 +28,7 @@ const PUBLIC_DIRS = new Set([
   // deliberately outside the authenticated shell.
   'forgot-password',
   'reset-password',
+  'verify-email',
 ]);
 
 /**

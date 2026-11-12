@@ -23,6 +23,29 @@ import {
  * "if an account exists..." message, and the prepared token is invalidated
  * because no message was sent.
  */
+export async function reserveEmailVerificationEmail(input: {
+  recipient: string;
+}): Promise<boolean> {
+  const budgets: Array<[RateLimitPolicy, string]> = [
+    ['email-verification-email-recipient', `recipient:${input.recipient.trim().toLowerCase()}`],
+    ['email-verification-email-deployment', 'deployment'],
+  ];
+
+  for (const [policy, subject] of budgets) {
+    const decision = await consumeRateLimit(rateLimitKey(policy, subject), RATE_LIMITS[policy]);
+    if (!decision.allowed) {
+      console.error(
+        '[email] ownership verification e-mail limit reached; the message was not sent',
+        {
+          policy,
+        }
+      );
+      return false;
+    }
+  }
+  return true;
+}
+
 export async function reservePasswordResetEmail(input: { recipient: string }): Promise<boolean> {
   const budgets: Array<[RateLimitPolicy, string]> = [
     ['password-reset-email-recipient', `recipient:${input.recipient.trim().toLowerCase()}`],

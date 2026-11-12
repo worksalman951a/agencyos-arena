@@ -12,7 +12,14 @@
 
 import type { APIRequestContext, Browser, Page } from '@playwright/test';
 
-import { APP_URL, ensurePortalInviteeAccount, expect, requireDatabase, test } from './fixtures';
+import {
+  APP_URL,
+  ensurePortalInviteeAccount,
+  expect,
+  markPortalInviteeEmailVerified,
+  requireDatabase,
+  test,
+} from './fixtures';
 import type { TestAccount } from './fixtures';
 
 requireDatabase();
@@ -113,6 +120,10 @@ async function activateThroughInvitePage(
   await expect(page.getByText(fixture.email).first()).toBeVisible();
 
   await submitPortalSignIn(page, fixture.email, fixture.password);
+  // This journey provisions an isolated test mailbox without an SMTP inbox.
+  // Mark its ownership as pre-verified, then render the current DB state.
+  await markPortalInviteeEmailVerified(fixture.email);
+  await page.reload();
 
   const acceptButton = page.getByTestId('accept-invitation');
   await expect(acceptButton).toBeVisible({ timeout: 30_000 });
@@ -216,6 +227,7 @@ test.describe('Client portal end-to-end journeys', () => {
     expect(body.name, 'the sign-up request must carry a name').toBeTruthy();
     expect(signUp.status(), `sign-up failed: ${await signUp.text()}`).toBe(200);
     expect((await signInResponse).status()).toBe(200);
+    await markPortalInviteeEmailVerified(fixture.email);
 
     // The browser now holds a session for the invitee…
     const cookies = await context.cookies();
