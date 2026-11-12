@@ -8,6 +8,40 @@ import {
 } from '@/lib/security/rate-limit';
 
 /**
+ * How much password-reset e-mail may leave this deployment.
+ *
+ * A reset message goes to an address the caller typed, so it is a second way
+ * to make the mail server write to anyone. Two budgets are charged at the
+ * moment a message is really about to be sent (delivery enabled, configuration
+ * valid, message valid), narrowest first:
+ *
+ *  1. per recipient - one mailbox cannot be flooded from many client addresses
+ *                      or by repeated requests;
+ *  2. per deployment - a ceiling on total reset mail.
+ *
+ * Exhausting a budget never changes the HTTP answer: the response is the same
+ * "if an account exists..." message, and the prepared token is invalidated
+ * because no message was sent.
+ */
+export async function reservePasswordResetEmail(input: { recipient: string }): Promise<boolean> {
+  const budgets: Array<[RateLimitPolicy, string]> = [
+    ['password-reset-email-recipient', `recipient:${input.recipient.trim().toLowerCase()}`],
+    ['password-reset-email-deployment', 'deployment'],
+  ];
+
+  for (const [policy, subject] of budgets) {
+    const decision = await consumeRateLimit(rateLimitKey(policy, subject), RATE_LIMITS[policy]);
+    if (!decision.allowed) {
+      console.error('[email] password reset e-mail limit reached; the message was not sent', {
+        policy,
+      });
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * How much invitation e-mail may leave this deployment.
  *
  * An invitation e-mail goes to an address the caller chose, so without a limit

@@ -138,6 +138,14 @@ export function PortalLoginForm({
       >
         {mode === 'signup' ? 'Already activated? Sign in' : 'First time here? Create your password'}
       </button>
+
+      {mode === 'signin' ? (
+        <p className="text-center text-xs text-muted-foreground">
+          <a href="/forgot-password" className="hover:underline">
+            Forgot your password?
+          </a>
+        </p>
+      ) : null}
     </form>
   );
 }

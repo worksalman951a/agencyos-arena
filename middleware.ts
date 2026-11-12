@@ -48,6 +48,12 @@ const PUBLIC_PATHS = [
   '/register',
   '/invite',
   '/share',
+  // Password recovery is for visitors who cannot sign in. The routes under
+  // `/api/v1/auth/password-reset/*` are not listed here: they need no session
+  // gate, but they do need the `/api/v1/` Origin check above, and leaving them
+  // out keeps that handler path identical to every other mutating API route.
+  '/forgot-password',
+  '/reset-password',
   '/api/auth',
   '/api/health',
   '/portal/invite',

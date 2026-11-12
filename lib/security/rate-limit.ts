@@ -97,6 +97,31 @@ export const RATE_LIMITS = {
   'auth-sensitive': { window: 60, max: 5 },
 
   /* ---------------------------------------------------------------------
+   * Password recovery (Phase 4D / Batch 4B). Applied by our own routes
+   * (`/api/v1/auth/password-reset/*`), keyed on the client address and - for
+   * requests - on the normalized address, so one office NAT and one mailbox
+   * each have a budget without becoming a way to lock out a whole tenant.
+   * ------------------------------------------------------------------- */
+
+  /**
+   * Asking for a reset link. Ten an hour from one address is far above a
+   * person's pace and still bounds a script that tries to flood mailboxes.
+   */
+  'password-reset-request': { window: 60 * 60, max: 10 },
+  /**
+   * Per recipient address, independent of who asks: a mailbox cannot be
+   * flooded by trying from many addresses. Keyed on a digest; the address is
+   * never stored.
+   */
+  'password-reset-request-account': { window: 60 * 60, max: 5 },
+  /**
+   * Redeeming a token. A real user does this once or twice (a mistyped new
+   * password is rejected before the token is spent); guessing a 256-bit token
+   * is not a realistic strategy, but the endpoint is still bounded.
+   */
+  'password-reset-confirm': { window: 60 * 60, max: 20 },
+
+  /* ---------------------------------------------------------------------
    * Outbound invitation e-mail. Not wired into a route: consumed in
    * lib/email/sending-limit.ts at the moment a message is about to be sent,
    * after authorization, and only when e-mail delivery is enabled. Exhausting
@@ -106,6 +131,13 @@ export const RATE_LIMITS = {
 
   /** To one address, from any organization: no flooding by revoke-and-reinvite. */
   'invitation-email-recipient': { window: 60 * 60, max: 5 },
+  /**
+   * Password-reset messages to one address, from any caller. Charged only when
+   * a message is really about to be sent, like the invitation budgets.
+   */
+  'password-reset-email-recipient': { window: 60 * 60, max: 5 },
+  /** Ceiling for reset mail leaving the whole deployment. */
+  'password-reset-email-deployment': { window: 60 * 60, max: 100 },
   /**
    * On behalf of one organization. Keyed on the organization rather than the
    * session, so signing in again does not buy a second budget.

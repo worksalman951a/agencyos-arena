@@ -18,7 +18,17 @@ const APP_DIR = path.join(process.cwd(), 'app');
  * `invite` is the invitation-acceptance surface: an invitee usually has no
  * session yet, so the page must render without navigation or toasts.
  */
-const PUBLIC_DIRS = new Set(['login', 'register', 'api', 'invite', 'share']);
+const PUBLIC_DIRS = new Set([
+  'login',
+  'register',
+  'api',
+  'invite',
+  'share',
+  // Password recovery is used by visitors who cannot sign in; both pages are
+  // deliberately outside the authenticated shell.
+  'forgot-password',
+  'reset-password',
+]);
 
 /**
  * Modules with their own authenticated shell.
