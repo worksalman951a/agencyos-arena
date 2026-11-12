@@ -50,12 +50,34 @@ describe('requireOrganization', () => {
     await expect(requireOrganization('missing_user')).rejects.toMatchObject({ statusCode: 403 });
   });
 
-  it('accepts an internal member with an organization', async () => {
-    mockUserFindUnique.mockResolvedValue({ organizationId: 'org_1', userType: 'internal' });
+  // `status` defaults to "active" in the schema, so every real row carries it;
+  // these mocks mirror the columns the query actually selects.
+  it('accepts an active internal member with an organization', async () => {
+    mockUserFindUnique.mockResolvedValue({
+      organizationId: 'org_1',
+      userType: 'internal',
+      status: 'active',
+    });
 
     await expect(requireOrganization('internal_user')).resolves.toEqual({
       organizationId: 'org_1',
     });
+  });
+
+  it('rejects a suspended internal member even with an organization', async () => {
+    mockUserFindUnique.mockResolvedValue({
+      organizationId: 'org_1',
+      userType: 'internal',
+      status: 'suspended',
+    });
+
+    await expect(requireOrganization('internal_user')).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it('rejects an internal member whose status is missing', async () => {
+    mockUserFindUnique.mockResolvedValue({ organizationId: 'org_1', userType: 'internal' });
+
+    await expect(requireOrganization('internal_user')).rejects.toMatchObject({ statusCode: 403 });
   });
 });
 

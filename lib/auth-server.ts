@@ -20,6 +20,7 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { prisma } from '@/lib/db';
+import { ACTIVE_USER_STATUS } from '@/lib/permissions';
 
 /**
  * Base URL of the application. Used by Better Auth for origin validation,
@@ -73,12 +74,20 @@ export const auth = betterAuth({
     autoSignIn: false,
   },
   /**
-   * A client-portal identity may only hold a session while its access is active.
+   * A session may only be created for an identity that is allowed to hold one.
    *
-   * Suspending or revoking an access already deletes the client's sessions; this
-   * hook closes the re-login path, so a suspended/revoked client cannot mint a
-   * fresh session and then sit on the portal's "forbidden" page. Internal team
-   * members are untouched (their authorization is RBAC, evaluated per request).
+   * - Client-portal identities may hold a session only while their access is
+   *   active. Suspending or revoking an access already deletes the client's
+   *   sessions; this hook closes the re-login path, so a suspended/revoked
+   *   client cannot mint a fresh session and then sit on the portal's
+   *   "forbidden" page.
+   * - Internal team members may hold a session only while their account is
+   *   active. Suspension sets `status = "suspended"`; removal clears the
+   *   organization link *and* sets the status to `suspended` (the row and its
+   *   login survive). Requiring the active status closes the sign-in path for
+   *   both. The status is re-checked on every request in `requireOrganization`,
+   *   so a session minted in the narrow race window before a suspension is still
+   *   rejected when it is actually used.
    */
   databaseHooks: {
     session: {
@@ -86,17 +95,21 @@ export const auth = betterAuth({
         before: async (session) => {
           const user = await prisma.user.findUnique({
             where: { id: session.userId },
-            select: { userType: true },
+            select: { userType: true, status: true },
           });
 
-          if (user?.userType !== 'client') return true;
+          // An account that no longer exists must never mint a session.
+          if (!user) return false;
 
-          const access = await prisma.clientAccess.findFirst({
-            where: { userId: session.userId },
-            select: { status: true },
-          });
+          if (user.userType === 'client') {
+            const access = await prisma.clientAccess.findFirst({
+              where: { userId: session.userId },
+              select: { status: true },
+            });
+            return access?.status === 'active';
+          }
 
-          return access?.status === 'active';
+          return user.status === ACTIVE_USER_STATUS;
         },
       },
     },

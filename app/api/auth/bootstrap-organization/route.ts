@@ -20,6 +20,7 @@ import { cookies } from 'next/headers';
 
 import { auth } from '@/lib/auth-server';
 import { prisma } from '@/lib/db';
+import { requireActiveInternalUser } from '@/lib/permissions';
 
 const bootstrapSchema = z.object({
   organizationName: z.string().min(1, 'Organization name is required').max(200),
@@ -198,6 +199,12 @@ export async function POST(request: Request) {
   try {
     const user = await getAuthenticatedUser();
 
+    // A removed or suspended account must never bootstrap a new organization.
+    // Removal clears the organization link but keeps the row and its login, so
+    // without this check a deactivated member holding a surviving session could
+    // create a brand-new workspace and become its administrator.
+    await requireActiveInternalUser(user.id);
+
     const body = await request.json();
     const parsed = bootstrapSchema.safeParse(body);
 
@@ -312,7 +319,14 @@ export async function POST(request: Request) {
   } catch (err) {
     const statusCode = (err as Error & { statusCode?: number }).statusCode ?? 500;
     return NextResponse.json(
-      { error: statusCode === 401 ? 'Unauthenticated' : 'Internal error' },
+      {
+        error:
+          statusCode === 401
+            ? 'Unauthenticated'
+            : statusCode === 403
+              ? 'Forbidden'
+              : 'Internal error',
+      },
       { status: statusCode }
     );
   }

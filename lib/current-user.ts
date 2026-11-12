@@ -16,7 +16,7 @@ import { cookies } from 'next/headers';
 
 import { auth } from '@/lib/auth-server';
 import { prisma } from '@/lib/db';
-import { getUserPermissions, requireOrganization } from '@/lib/permissions';
+import { ACTIVE_USER_STATUS, getUserPermissions, requireOrganization } from '@/lib/permissions';
 
 export interface SessionUser {
   id: string;
@@ -45,14 +45,24 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
 
   const identity = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { userType: true },
+    select: { userType: true, status: true },
   });
+
+  // An internal account must be active to count as signed in. A suspended or
+  // removed team member is treated exactly like "no session", so a protected
+  // page redirects to the login instead of rendering a shell the authorization
+  // layer would refuse anyway. Client-portal identities keep resolving here;
+  // their access is decided by lib/portal/access-control.ts.
+  if (!identity) return null;
+
+  const userType = identity.userType === 'client' ? 'client' : 'internal';
+  if (userType === 'internal' && identity.status !== ACTIVE_USER_STATUS) return null;
 
   return {
     id: user.id,
     name: user.name ?? null,
     email: user.email ?? null,
-    userType: identity?.userType === 'client' ? 'client' : 'internal',
+    userType,
   };
 });
 
