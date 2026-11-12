@@ -98,9 +98,9 @@ export function BentoAutomationRuleDetailView({
           },
           {
             label: 'Success Rate',
-            value: `${successRate}%`,
-            note: `${successRuns} completed runs`,
-            tone: 'ok',
+            value: totalRuns > 0 ? `${successRate}%` : '—',
+            note: totalRuns > 0 ? `${successRuns} completed runs` : 'No runs yet',
+            tone: totalRuns > 0 ? 'ok' : undefined,
           },
           {
             label: 'Failed Executions',
