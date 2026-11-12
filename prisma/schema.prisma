@@ -1305,3 +1305,23 @@ model ClientComment {
   @@index([organizationId, resourceType, resourceId, createdAt])
   @@index([clientAccessId, createdAt])
 }
+
+/// Shared rate-limit counter for AgencyOS' own API routes (lib/security/rate-limit.ts).
+///
+/// Better Auth's limiter only sees `/api/auth/*`, and an in-memory counter is
+/// per process, so this table is the deployment-wide bucket store: one atomic
+/// upsert per request keeps several Node instances on the same budget.
+///
+/// Rows are safe to delete once `expiresAt` has passed; the upsert reuses a row
+/// whose window has elapsed instead of deleting it, so the table only grows with
+/// distinct keys and stays small.
+model RateLimitBucket {
+  /// Opaque policy-qualified key, e.g. "invitation-accept:<sha256 prefix>".
+  key         String   @id
+  count       Int      @default(0)
+  windowStart DateTime @default(now())
+  expiresAt   DateTime
+  updatedAt   DateTime @updatedAt
+
+  @@index([expiresAt])
+}

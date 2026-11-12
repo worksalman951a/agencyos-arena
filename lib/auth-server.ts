@@ -21,6 +21,7 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { prisma } from '@/lib/db';
 import { ACTIVE_USER_STATUS } from '@/lib/permissions';
+import { RATE_LIMITS, consumeRateLimit, rateLimitKey } from '@/lib/security/rate-limit';
 
 /**
  * Base URL of the application. Used by Better Auth for origin validation,
@@ -112,6 +113,43 @@ export const auth = betterAuth({
           return user.status === ACTIVE_USER_STATUS;
         },
       },
+    },
+  },
+  /**
+   * Better Auth's own rate limiting (sign-in, sign-up, password reset, …).
+   *
+   * What is kept from the vendor:
+   *  - `enabled` stays at its documented default (`NODE_ENV === "production"`).
+   *    That is not a weakened setting: it is the vendor's contract, and the
+   *    integration job deliberately runs the built server with
+   *    `NODE_ENV=test` because it drives dozens of sign-ins from a single
+   *    address per suite. Production (`next start`, NODE_ENV=production) and the
+   *    Playwright job both have the limiter on.
+   *
+   * What is changed, and why:
+   *  - **Storage**: the default in-memory `Map` counts per Node process, so two
+   *    instances each grant a client a full budget. `customStorage` points the
+   *    limiter at the shared PostgreSQL bucket table used by our own routes
+   *    (`lib/security/rate-limit.ts`, migration `0019_rate_limit_bucket`), so
+   *    the deployment has exactly one distributed limiter rather than an
+   *    in-memory control pretending to be one.
+   *  - **Rules**: per-endpoint ceilings come from `RATE_LIMITS` so the two
+   *    halves of the system cannot drift. All of them are at least as strict as
+   *    the vendor defaults they replace (`/sign-in*`, `/sign-up*`,
+   *    `/change-password`, `/change-email` were 3 per 10 s; password reset was
+   *    3 per 60 s).
+   */
+  rateLimit: {
+    customStorage: {
+      consume: (key, rule) => consumeRateLimit(key, rule),
+    },
+    customRules: {
+      '/sign-in/email': RATE_LIMITS['auth-sign-in'],
+      '/sign-up/email': RATE_LIMITS['auth-sign-up'],
+      '/change-password': RATE_LIMITS['auth-sensitive'],
+      '/change-email': RATE_LIMITS['auth-sensitive'],
+      '/request-password-reset': RATE_LIMITS['auth-sensitive'],
+      '/send-verification-email': RATE_LIMITS['auth-sensitive'],
     },
   },
   advanced: {

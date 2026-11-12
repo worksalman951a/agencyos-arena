@@ -7,6 +7,8 @@
 import { NextResponse } from 'next/server';
 
 import { verifyDocumentLink } from '@/lib/services/documents/link-service';
+import { consumeRateLimit, rateLimitedResponse, RATE_LIMITS } from '@/lib/security/rate-limit';
+import { addressRateLimitKey } from '@/lib/security/rate-limit-subject';
 
 function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
@@ -16,6 +18,11 @@ function errorResponse(message: string, status: number) {
  * Public endpoint: the token is the credential, so each failure mode gets an
  * honest message instead of a blanket "Forbidden" (an exhausted link used to
  * read as a permission problem, and an expired one as "Forbidden" with a 410).
+ *
+ * Rate-limited per client address (`document-link-access`). Every successful
+ * read also consumes one unit of the link's own `maxAccess` budget, so an
+ * unthrottled loop could exhaust a client's remaining views; the bucket bounds
+ * that and the token-guessing attempts alike.
  */
 const FAILURE_MESSAGES: Record<number, string> = {
   404: 'Link not found',
@@ -24,6 +31,12 @@ const FAILURE_MESSAGES: Record<number, string> = {
 };
 
 export async function GET(request: Request, { params }: { params: Promise<{ token: string }> }) {
+  const decision = await consumeRateLimit(
+    addressRateLimitKey('document-link-access', request),
+    RATE_LIMITS['document-link-access']
+  );
+  if (!decision.allowed) return rateLimitedResponse(decision);
+
   try {
     const { token } = await params;
     const data = await verifyDocumentLink(token);

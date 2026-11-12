@@ -554,6 +554,7 @@ describeIfDb('CRM Opportunities integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${testSessionToken}`,
           Accept: 'application/json',
+          Origin: SERVER_URL,
         },
       });
       expect(res.status).toBe(404);
@@ -567,6 +568,7 @@ describeIfDb('CRM Opportunities integration (real PostgreSQL)', () => {
         headers: {
           Cookie: `better-auth.session_token=${testSessionToken}`,
           Accept: 'application/json',
+          Origin: SERVER_URL,
         },
       });
       expect(res.status).toBe(200);
