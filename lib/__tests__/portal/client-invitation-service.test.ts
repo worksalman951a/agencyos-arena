@@ -23,6 +23,7 @@ vi.mock('@/lib/db', () => ({
     userRole: { count: vi.fn() },
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(),
+    $executeRaw: vi.fn(),
   },
 }));
 
@@ -79,6 +80,7 @@ const mockInvitationUpdateMany = prisma.clientInvitation.updateMany as unknown a
 >;
 const mockUserRoleCount = prisma.userRole.count as unknown as ReturnType<typeof vi.fn>;
 const mockTransaction = prisma.$transaction as unknown as ReturnType<typeof vi.fn>;
+const mockExecuteRaw = prisma.$executeRaw as unknown as ReturnType<typeof vi.fn>;
 
 const organizationId = 'org_1';
 const rawToken = 'a'.repeat(43);
@@ -138,6 +140,15 @@ function arrangeInvitationCreation() {
     createdAt: new Date(),
     ...data,
   }));
+  // The insert runs inside a transaction that also retires an expired pending
+  // invitation; the mocked client exposes exactly those two operations.
+  mockExecuteRaw.mockResolvedValue(0);
+  mockTransaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+    callback({
+      $executeRaw: mockExecuteRaw,
+      clientInvitation: { create: mockInvitationCreate },
+    })
+  );
   mockWritePortalAudit.mockResolvedValue(undefined);
   // What the sender answers when e-mail delivery is switched off (the default).
   mockSendInvitationEmail.mockResolvedValue({ status: 'disabled' });
@@ -250,6 +261,108 @@ describe('createClientInvitation', () => {
         role: 'administrator',
       } as unknown)
     ).rejects.toMatchObject({ statusCode: 400 });
+  });
+});
+
+/**
+ * The read-then-insert check is only a fast path: two requests can both pass it.
+ * These cases pin the second half of the fix - the database decides, and the
+ * losing request is answered 409 without a token, an audit entry or an e-mail.
+ */
+describe('createClientInvitation: database-enforced concurrency', () => {
+  const input = { email: 'clara@client.test', contactId: 'contact_1', role: 'client_viewer' };
+
+  beforeEach(() => {
+    arrangeInvitationCreation();
+  });
+
+  it('retires an expired pending invitation in the same transaction as the insert', async () => {
+    const order: string[] = [];
+    mockExecuteRaw.mockImplementation(async () => {
+      order.push('retire-expired');
+      return 1;
+    });
+    mockInvitationCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      order.push('store');
+      return { id: 'invitation_1', createdAt: new Date(), ...data };
+    });
+
+    await createClientInvitation(input);
+
+    expect(order).toEqual(['retire-expired', 'store']);
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+
+    // A tagged template: the first argument is the SQL, then its parameters.
+    const [sqlParts, ...values] = mockExecuteRaw.mock.calls[0] as [string[], ...unknown[]];
+    const sql = sqlParts.join('?');
+    expect(sql).toContain('UPDATE "ClientInvitation"');
+    expect(sql).toContain("'expired'");
+    expect(sql).toContain('lower("email")');
+    expect(sql).toContain('"expiresAt" <= (NOW() AT TIME ZONE \'UTC\')');
+    expect(values).toContain(organizationId);
+    expect(values).toContain('clara@client.test');
+  });
+
+  it('answers 409 and sends nothing when the index rejects the insert', async () => {
+    mockInvitationCreate.mockRejectedValue(
+      Object.assign(
+        new Error(
+          'Unique constraint failed on the constraint: `ClientInvitation_pending_org_email_key`'
+        ),
+        { code: 'P2002' }
+      )
+    );
+
+    await expect(createClientInvitation(input)).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(mockSendInvitationEmail).not.toHaveBeenCalled();
+    expect(mockWritePortalAudit).not.toHaveBeenCalled();
+  });
+
+  it('recognises the driver-level 23505 as the same conflict', async () => {
+    mockInvitationCreate.mockRejectedValue(
+      Object.assign(
+        new Error(
+          'duplicate key value violates unique constraint "ClientInvitation_pending_org_email_key"'
+        ),
+        { code: '23505' }
+      )
+    );
+
+    await expect(createClientInvitation(input)).rejects.toMatchObject({ statusCode: 409 });
+    expect(mockSendInvitationEmail).not.toHaveBeenCalled();
+  });
+
+  it('never reports an unrelated unique violation as a duplicate invitation', async () => {
+    mockInvitationCreate.mockRejectedValue(
+      Object.assign(
+        new Error('Unique constraint failed on the constraint: `ClientInvitation_tokenHash_key`'),
+        { code: 'P2002' }
+      )
+    );
+
+    await expect(createClientInvitation(input)).rejects.toThrow(/tokenHash_key/);
+    await expect(createClientInvitation(input)).rejects.not.toMatchObject({ statusCode: 409 });
+  });
+
+  it('does not mask a failure that is not a conflict', async () => {
+    mockInvitationCreate.mockRejectedValue(new Error('database unavailable'));
+
+    await expect(createClientInvitation(input)).rejects.toThrow('database unavailable');
+    expect(mockSendInvitationEmail).not.toHaveBeenCalled();
+  });
+
+  it('looks for a live invitation case-insensitively, like the index does', async () => {
+    await createClientInvitation({ ...input, email: 'Clara@Client.Test' });
+
+    expect(mockInvitationFindFirst).toHaveBeenCalledWith({
+      where: {
+        organizationId,
+        email: { equals: 'clara@client.test', mode: 'insensitive' },
+        status: 'pending',
+      },
+      select: { id: true, expiresAt: true },
+    });
   });
 });
 

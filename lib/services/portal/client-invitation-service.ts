@@ -27,6 +27,23 @@
  * - A failed delivery does not invalidate the invitation and is never reported
  *   as sent: the response and the audit trail say what happened, and the
  *   administrator still receives the link once to hand over.
+ *
+ * One live invitation per organization and recipient (Phase 4D / Batch 4C-2,
+ * docs/phase-4d/client-invitation-concurrency.md):
+ * - The invariant is enforced by the database, not by the read-then-insert check
+ *   below: the partial unique index `ClientInvitation_pending_org_email_key`
+ *   (migration `0020`) allows at most one row with `status = 'pending'` per
+ *   (`organizationId`, lower(email)). Two application instances, two concurrent
+ *   requests, or a retry that overlaps the first attempt can therefore never
+ *   both insert a live invitation.
+ * - The losing request is answered 409 with the same message the pre-check
+ *   gives, before it holds a token and before any e-mail is attempted, so a
+ *   collision never yields a second usable link or a second message.
+ * - Pending rows whose window has closed are retired to `expired` in the same
+ *   transaction that inserts the replacement: an expired link can never be
+ *   accepted, so it must not occupy the live-invitation slot for ever. This is
+ *   the same lazy transition `getClientInvitationByToken` already performs, and
+ *   it keeps every row (no deletion, no rewrite of history).
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -65,6 +82,16 @@ interface ClientInvitationRow {
   contact: { firstName: string | null; lastName: string };
 }
 
+/** The columns of a freshly inserted invitation that this module reads back. */
+interface CreatedClientInvitationRow {
+  id: string;
+  email: string;
+  contactId: string;
+  status: string;
+  role: string;
+  expiresAt: Date;
+}
+
 export interface ClientInvitationResponse {
   id: string;
   organizationId: string;
@@ -88,6 +115,68 @@ function emailsMatch(a: string, b: string): boolean {
   const right = Buffer.from(b.trim().toLowerCase(), 'utf8');
   if (left.length !== right.length) return false;
   return timingSafeEqual(left, right);
+}
+
+/**
+ * The partial unique index that allows at most one live invitation per
+ * organization and recipient (migration `0020`, docs/phase-4d/
+ * client-invitation-concurrency.md). It is created in SQL because Prisma cannot
+ * express a partial index, so a collision arrives as a unique violation rather
+ * than as a schema-declared `@@unique`.
+ */
+const PENDING_INVITATION_INDEX = 'ClientInvitation_pending_org_email_key';
+
+/** Every string a driver/engine attached to an error, including its causes. */
+function errorTextChain(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as {
+      code?: unknown;
+      message?: unknown;
+      detail?: unknown;
+      constraint?: unknown;
+      meta?: { target?: unknown; message?: unknown };
+      cause?: unknown;
+    };
+    if (typeof candidate.code === 'string') parts.push(`code:${candidate.code}`);
+    for (const value of [
+      candidate.message,
+      candidate.detail,
+      candidate.constraint,
+      candidate.meta?.message,
+      candidate.meta?.target,
+    ]) {
+      if (typeof value === 'string') parts.push(value);
+      else if (Array.isArray(value)) parts.push(value.join(','));
+    }
+    current = candidate.cause;
+  }
+  return parts.join(' ');
+}
+
+/**
+ * Is this the database rejecting a second live invitation for the same
+ * organization and recipient?
+ *
+ * Prisma's engine reports a Postgres 23505 as `P2002`; the driver-adapter path
+ * can surface `23505` itself. Both are recognised. A unique violation on this
+ * insert can only come from the pending-invitation index (`tokenHash` is a
+ * 256-bit random value), but the index name and columns are checked explicitly
+ * so an unrelated violation is rethrown instead of being reported as a
+ * duplicate.
+ */
+function isPendingInvitationConflict(error: unknown): boolean {
+  const text = errorTextChain(error);
+  const uniqueViolation = /\bcode:(P2002|23505)\b/.test(text) || /unique constraint/i.test(text);
+  if (!uniqueViolation) return false;
+  return (
+    text.includes(PENDING_INVITATION_INDEX) ||
+    (text.includes('organizationId') && text.includes('email')) ||
+    !/tokenhash/i.test(text)
+  );
 }
 
 function contactName(contact: { firstName: string | null; lastName: string }): string {
@@ -217,9 +306,16 @@ export async function createClientInvitation(input: unknown) {
     throw codedError('This contact already has portal access', 409);
   }
 
-  // One live invitation per (org, e-mail): revoke the outstanding one first.
+  // One live invitation per (org, e-mail). This read is the friendly fast path
+  // only: two requests can both pass it, so the database index below is what
+  // actually decides. The address is compared case-insensitively, exactly like
+  // the index and like `emailsMatch` compare it everywhere else.
   const live = await prisma.clientInvitation.findFirst({
-    where: { organizationId: actor.organizationId, email, status: 'pending' },
+    where: {
+      organizationId: actor.organizationId,
+      email: { equals: email, mode: 'insensitive' },
+      status: 'pending',
+    },
     select: { id: true, expiresAt: true },
   });
   if (live && live.expiresAt > new Date()) {
@@ -237,20 +333,49 @@ export async function createClientInvitation(input: unknown) {
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + CLIENT_INVITATION_TTL_DAYS * 24 * 60 * 60 * 1000);
 
-  const invitation = await prisma.clientInvitation.create({
-    data: {
-      organizationId: actor.organizationId,
-      email,
-      contactId: contact.id,
-      accountId: contact.accountId ?? null,
-      tokenHash: hashToken(token),
-      status: 'pending',
-      role,
-      ...flags,
-      expiresAt,
-      invitedBy: actor.userId,
-    },
-  });
+  let invitation: CreatedClientInvitationRow;
+  try {
+    invitation = await prisma.$transaction(async (tx: typeof prisma) => {
+      // A pending row whose window has closed can never be accepted, so it must
+      // not hold the single live-invitation slot. Retire it in the same
+      // transaction that inserts the replacement: the row, its token hash and
+      // its history stay exactly where they are (no deletion, only the same
+      // `pending -> expired` transition `getClientInvitationByToken` performs).
+      await tx.$executeRaw`
+        UPDATE "ClientInvitation"
+           SET "status" = 'expired',
+               "updatedAt" = NOW()
+         WHERE "organizationId" = ${actor.organizationId}
+           AND lower("email") = ${email}
+           AND "status" = 'pending'
+           AND "expiresAt" <= (NOW() AT TIME ZONE 'UTC')
+      `;
+
+      return tx.clientInvitation.create({
+        data: {
+          organizationId: actor.organizationId,
+          email,
+          contactId: contact.id,
+          accountId: contact.accountId ?? null,
+          tokenHash: hashToken(token),
+          status: 'pending',
+          role,
+          ...flags,
+          expiresAt,
+          invitedBy: actor.userId,
+        },
+      });
+    });
+  } catch (error) {
+    // Two requests that both passed the fast path race here. Exactly one
+    // insert can commit; the other is answered 409 before it holds a token and
+    // before any e-mail is attempted, so a losing request can never yield a
+    // second usable link or a second message.
+    if (isPendingInvitationConflict(error)) {
+      throw codedError('A pending invitation already exists for this address', 409);
+    }
+    throw error;
+  }
 
   await writePortalAudit({
     organizationId: actor.organizationId,
