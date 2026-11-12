@@ -74,6 +74,7 @@ const sequenceOf = (number: string) => Number(/(\d+)$/.exec(number)?.[1]);
 
 describeIfDb('Project-to-invoice linking (real PostgreSQL)', () => {
   const createdOrganizations: string[] = [];
+  const createdUsers: string[] = [];
 
   let admin: TestAccount; // organization A, every permission
   let foreign: TestAccount; // organization B, every permission
@@ -195,9 +196,10 @@ describeIfDb('Project-to-invoice linking (real PostgreSQL)', () => {
       .deleteMany({
         where: {
           id: {
-            in: [admin, foreign, financeOnly, projectOnly]
-              .map((account) => account?.userId)
-              .filter(Boolean),
+            in: [
+              ...[admin, foreign, financeOnly, projectOnly].map((account) => account?.userId),
+              ...createdUsers,
+            ].filter(Boolean),
           },
         },
       })
@@ -498,20 +500,22 @@ describeIfDb('Project-to-invoice linking (real PostgreSQL)', () => {
         data: {
           email: `portal-a-${Date.now()}@integration.invalid`,
           name: 'Alice Portal',
-          organizationId: admin.organizationId,
+          organizationId: null,
           userType: 'client',
           status: 'active',
         },
       })) as { id: string };
+      createdUsers.push(clientAUser.id);
       const clientBUser = (await prisma.user.create({
         data: {
           email: `portal-b-${Date.now()}@integration.invalid`,
           name: 'Bob Portal',
-          organizationId: admin.organizationId,
+          organizationId: null,
           userType: 'client',
           status: 'active',
         },
       })) as { id: string };
+      createdUsers.push(clientBUser.id);
 
       const accessA = (await prisma.clientAccess.create({
         data: {

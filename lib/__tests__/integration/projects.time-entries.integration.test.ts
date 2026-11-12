@@ -114,7 +114,7 @@ describeIfDb('TimeEntry project linking and billing (real PostgreSQL)', () => {
   };
 
   const createTask = async (account: TestAccount, projectId: string, title: string) => {
-    const res = await api(account, `/api/v1/crm/projects/${projectId}`, {
+    const res = await api(account, `/api/v1/crm/projects/${projectId}/tasks`, {
       method: 'POST',
       body: { title },
     });
@@ -128,8 +128,8 @@ describeIfDb('TimeEntry project linking and billing (real PostgreSQL)', () => {
 
     // Configure org A defaultCurrency to EUR to test org-default resolution + snapshot immutability
     const orgRes = await api(admin, '/api/v1/settings/organization', {
-      method: 'PATCH',
-      body: { defaultCurrency: 'EUR' },
+      method: 'PUT',
+      body: { settings: { defaultCurrency: 'EUR' } },
     });
     expect(orgRes.status, JSON.stringify(orgRes.body)).toBe(200);
 
@@ -267,13 +267,9 @@ describeIfDb('TimeEntry project linking and billing (real PostgreSQL)', () => {
     expect(created.taskId).toBe(tempTaskId);
 
     // Delete the task: taskId sets null, projectId stays intact
-    const delTaskRes = await api(
-      admin,
-      `/api/v1/crm/projects/${projectOther}/tasks/${tempTaskId}`,
-      {
-        method: 'DELETE',
-      }
-    );
+    const delTaskRes = await api(admin, `/api/v1/projects/tasks/${tempTaskId}`, {
+      method: 'DELETE',
+    });
     expect(delTaskRes.status).toBe(200);
 
     const afterDeleteRes = await api(admin, `/api/v1/projects/time-entries/${created.id}`);
@@ -539,8 +535,8 @@ describeIfDb('TimeEntry project linking and billing (real PostgreSQL)', () => {
     expect(
       (
         await api(admin, '/api/v1/settings/organization', {
-          method: 'PATCH',
-          body: { defaultCurrency: 'GBP' },
+          method: 'PUT',
+          body: { settings: { defaultCurrency: 'GBP' } },
         })
       ).status
     ).toBe(200);
