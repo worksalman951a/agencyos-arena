@@ -20,6 +20,11 @@ interface ContactOption {
   label: string;
 }
 
+interface ProjectOption {
+  id: string;
+  label: string;
+}
+
 interface LineItem {
   description: string;
   quantity: string;
@@ -36,16 +41,27 @@ export interface EditableInvoice {
   dueDate: string | null;
   notes: string | null;
   clientId: string | null;
+  projectId?: string | null;
   items: LineItem[];
 }
 
 export function EditInvoiceForm({
   invoice,
   contacts,
+  projects = [],
+  canChangeProject = false,
   statusOptions,
 }: {
   invoice: EditableInvoice;
   contacts: ContactOption[];
+  /** Linkable projects plus the currently linked one, resolved server-side. */
+  projects?: ProjectOption[];
+  /**
+   * False once payments are recorded: the service refuses to move a paid-against
+   * invoice between projects, so the selector is shown read-only and the field
+   * is left out of the request.
+   */
+  canChangeProject?: boolean;
   /** Current status plus the transitions the service will accept. */
   statusOptions: Array<{ value: string; label: string }>;
 }) {
@@ -53,6 +69,7 @@ export function EditInvoiceForm({
   const { toast } = useToast();
 
   const [clientId, setClientId] = useState(invoice.clientId ?? '');
+  const [projectId, setProjectId] = useState(invoice.projectId ?? '');
   const [title, setTitle] = useState(invoice.title);
   const [status, setStatus] = useState(invoice.status);
   const [currency, setCurrency] = useState(invoice.currency);
@@ -87,6 +104,7 @@ export function EditInvoiceForm({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clientId: clientId || null,
+          ...(canChangeProject ? { projectId: projectId || null } : {}),
           title,
           status,
           currency,
@@ -162,6 +180,31 @@ export function EditInvoiceForm({
             className="w-full border border-input rounded-md px-3 py-2 text-sm"
           />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="projectId" className="text-sm font-medium">
+          Project
+        </label>
+        <select
+          id="projectId"
+          value={projectId}
+          onChange={(e) => setProjectId(e.target.value)}
+          disabled={!canChangeProject}
+          className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background disabled:opacity-60"
+        >
+          <option value="">No project</option>
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.label}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-muted-foreground">
+          {canChangeProject
+            ? 'Changing the project is recorded in the audit log.'
+            : 'The project cannot be changed once payments have been recorded on this invoice.'}
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -12,6 +12,7 @@
 import Link from 'next/link';
 
 import { listInvoices, type InvoiceResponse } from '@/lib/services/crm/invoice-service';
+import { listProjectOptions } from '@/lib/services/crm/project-service';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 
@@ -25,6 +26,7 @@ const COLUMNS: Array<{ label: string; field?: SortField; align?: 'right' }> = [
   { label: 'Total', field: 'total', align: 'right' },
   { label: 'Due Date', field: 'dueDate' },
   { label: 'Client' },
+  { label: 'Project' },
   { label: 'Created', field: 'createdAt' },
   { label: 'Actions', align: 'right' },
 ];
@@ -72,6 +74,9 @@ export default async function InvoicesListPage({
   );
   const search = firstString(searchParams.search).trim();
   const status = firstString(searchParams.status);
+  // Project filter. The service always combines it with the caller's
+  // organization, so an id from another tenant simply matches nothing.
+  const projectId = firstString(searchParams.projectId).trim();
   const requestedSort = firstString(searchParams.sortBy) as SortField;
   const sortBy: SortField = SORTABLE_FIELDS.includes(requestedSort) ? requestedSort : 'createdAt';
   const sortOrder: 'asc' | 'desc' = firstString(searchParams.sortOrder) === 'asc' ? 'asc' : 'desc';
@@ -79,22 +84,29 @@ export default async function InvoicesListPage({
   const current: Record<string, string> = {
     search,
     status,
+    projectId,
     sortBy,
     sortOrder,
     pageSize: String(pageSize),
   };
 
-  const result = await loadPageData(() =>
-    listInvoices({
-      page,
-      pageSize,
-      search: search || undefined,
-      status: status || undefined,
-      sortBy,
-      sortOrder,
-      includeDeleted: false,
-    })
-  );
+  const [result, projectsResult] = await Promise.all([
+    loadPageData(() =>
+      listInvoices({
+        page,
+        pageSize,
+        search: search || undefined,
+        status: status || undefined,
+        projectId: projectId || undefined,
+        sortBy,
+        sortOrder,
+        includeDeleted: false,
+      })
+    ),
+    // Filter choices; empty (and the selector hidden) without `project.read`.
+    // Archived projects stay selectable so their invoices can still be found.
+    loadPageData(() => listProjectOptions({ includeArchived: true })),
+  ]);
 
   if (!result.ok) {
     return (
@@ -110,7 +122,8 @@ export default async function InvoicesListPage({
   }
 
   const { invoices, total, totalPages } = result.data;
-  const hasFilters = Boolean(search || status);
+  const projectOptions = projectsResult.ok ? projectsResult.data : [];
+  const hasFilters = Boolean(search || status || projectId);
   const firstRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const lastRow = Math.min(page * pageSize, total);
 
@@ -146,6 +159,21 @@ export default async function InvoicesListPage({
           <option value="overdue">Overdue</option>
           <option value="voided">Voided</option>
         </select>
+        {projectOptions.length > 0 ? (
+          <select
+            name="projectId"
+            aria-label="Filter by project"
+            defaultValue={projectOptions.some((p) => p.id === projectId) ? projectId : ''}
+            className="border border-input rounded-md px-3 py-2 text-sm bg-background"
+          >
+            <option value="">All projects</option>
+            {projectOptions.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <button
           type="submit"
           className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
@@ -201,7 +229,7 @@ export default async function InvoicesListPage({
           <tbody>
             {invoices.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-center py-8 text-muted-foreground">
+                <td colSpan={9} className="text-center py-8 text-muted-foreground">
                   {hasFilters
                     ? 'No invoices match these filters.'
                     : 'No invoices yet. Create your first invoice to get started.'}
@@ -252,6 +280,18 @@ export default async function InvoicesListPage({
                       >
                         {`${invoice.client.firstName ?? ''} ${invoice.client.lastName ?? ''}`.trim() ||
                           'Unnamed Client'}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground text-sm">—</span>
+                    )}
+                  </td>
+                  <td className="py-4">
+                    {invoice.project ? (
+                      <Link
+                        href={`/projects/${invoice.project.id}`}
+                        className="text-accent hover:underline text-sm"
+                      >
+                        {invoice.project.name}
                       </Link>
                     ) : (
                       <span className="text-muted-foreground text-sm">—</span>

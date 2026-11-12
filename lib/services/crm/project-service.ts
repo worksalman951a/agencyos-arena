@@ -395,6 +395,43 @@ export async function listProjects(input: ProjectQueryInput): Promise<{
   };
 }
 
+export interface ProjectOption {
+  id: string;
+  name: string;
+  status: string;
+  clientId: string | null;
+}
+
+/**
+ * Lightweight project list for selectors (invoice project picker and filter).
+ *
+ * Same authorization as every project read (`project.read`, organization
+ * scoped), but only the columns a selector needs - no tasks, budget or
+ * description. Soft-deleted projects are never offered. Archived projects are
+ * closed for new invoices, so they are only included on request (filtering
+ * existing invoices by an archived project is still useful).
+ */
+export async function listProjectOptions(
+  options: { includeArchived?: boolean } = {}
+): Promise<ProjectOption[]> {
+  const { userId, organizationId } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'project.read');
+
+  const projects = await prisma.project.findMany({
+    where: {
+      organizationId,
+      deletedAt: null,
+      ...(options.includeArchived ? {} : { status: { not: 'archived' } }),
+    },
+    select: { id: true, name: true, status: true, clientId: true },
+    orderBy: { name: 'asc' },
+    take: 200,
+  });
+
+  return projects as ProjectOption[];
+}
+
 export async function getProject(id: string): Promise<ProjectResponse> {
   const { userId, organizationId } = await getAuthorizedUser();
 
