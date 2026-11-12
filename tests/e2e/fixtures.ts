@@ -25,7 +25,7 @@ const { PrismaClient } = require('@prisma/client') as {
       updateMany(args: {
         where: { email: string };
         data: { emailVerified: boolean };
-      }): Promise<unknown>;
+      }): Promise<{ count: number }>;
     };
     $disconnect(): Promise<void>;
   };
@@ -144,15 +144,25 @@ export async function ensurePortalInviteeAccount(
     throw new Error(`portal invitee sign-up failed (${status}): ${await response.text()}`);
   }
 
+  await markPortalInviteeEmailVerified(email);
+}
+
+/** Mark only an isolated E2E identity as already mailbox-verified. */
+export async function markPortalInviteeEmailVerified(email: string): Promise<void> {
   // Existing portal journeys exercise invitation authorization and isolation,
-  // not mailbox ownership. Mark this disposable CI identity as a verified
-  // fixture; production requests can only set the flag via the mailed token.
+  // not mailbox ownership. Production requests can only set the flag via the
+  // mailed token; this helper writes only disposable CI identities.
   if (!process.env.DATABASE_URL) throw new Error('E2E database is not configured');
   const fixtureDb = new PrismaClient({
     adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
   });
   try {
-    await fixtureDb.user.updateMany({ where: { email }, data: { emailVerified: true } });
+    const result = await fixtureDb.user.updateMany({
+      where: { email },
+      data: { emailVerified: true },
+    });
+    if (result.count !== 1)
+      throw new Error('Portal invitee verification fixture did not match exactly one user');
   } finally {
     await fixtureDb.$disconnect();
   }
