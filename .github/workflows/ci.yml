@@ -436,23 +436,20 @@ jobs:
       - name: Install PostgreSQL 16 client tools
         run: |
           # The client major must match the postgres:16 service image, and must
-          # be installed from a source that is guaranteed to contain exactly
-          # that series. Neither apt route is reliable here: the PGDG archive
-          # does not publish 16 for every Ubuntu release, and the distribution
-          # repos on the current runner ship 18 with no versioned 16 package
-          # (both were tried and both failed).
+          # come from a source guaranteed to contain exactly that series.
+          # Neither apt route is reliable here: PGDG does not publish 16 for
+          # every Ubuntu release, and the distribution repos on this runner ship
+          # 18 with no versioned 16 package (both tried; both failed with 100).
           #
-          # The service image itself is the authoritative source, so the client
-          # binaries are copied out of a postgres:16 container. That guarantees
-          # an exact version match with the server the dump is restored into —
-          # a 17+ client would send `SET transaction_timeout = 0`, which a 16
-          # server rejects while INITIALIZING.
+          # The server image is the authoritative source. Use the Debian-based
+          # `postgres:16` rather than `postgres:16-alpine`: alpine binaries
+          # are linked against musl and exit 127 when run on this glibc-based
+          # runner, so the Debian image is the one that works here.
           mkdir -p "$HOME/pg-client/bin"
-          docker create --name pg-client-src postgres:16-alpine > /dev/null
-          docker cp pg-client-src:/usr/local/bin/pg_dump "$HOME/pg-client/bin/"
-          docker cp pg-client-src:/usr/local/bin/pg_restore "$HOME/pg-client/bin/"
-          docker cp pg-client-src:/usr/local/bin/psql "$HOME/pg-client/bin/"
-          docker cp pg-client-src:/usr/local/bin/pg_isready "$HOME/pg-client/bin/"
+          docker create --name pg-client-src postgres:16 > /dev/null
+          for tool in pg_dump pg_restore psql pg_isready; do
+            docker cp "pg-client-src:/usr/lib/postgresql/16/bin/$tool" "$HOME/pg-client/bin/"
+          done
           docker rm pg-client-src > /dev/null
 
           echo "$HOME/pg-client/bin" >> "$GITHUB_PATH"
