@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoContractFormView } from '@/components/documents/bento-contract-form-view';
 
 interface ProposalOption {
   id: string;
@@ -23,6 +25,7 @@ interface ProjectOption {
 
 export default function EditContractPage() {
   const router = useRouter();
+  const isBento = useBentoShell();
   const routeParams = useParams<{ id: string }>();
   const rawId: unknown = routeParams?.id;
   const id = typeof rawId === 'string' ? rawId : '';
@@ -36,6 +39,7 @@ export default function EditContractPage() {
   const [savedStatus, setSavedStatus] = useState('draft');
   const [proposals, setProposals] = useState<ProposalOption[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -86,6 +90,7 @@ export default function EditContractPage() {
     e.preventDefault();
     if (isLocked) return;
     setSaving(true);
+    setError(null);
     try {
       const res = await fetch(`/api/v1/documents/contracts/${encodeURIComponent(id)}`, {
         method: 'PUT',
@@ -104,7 +109,9 @@ export default function EditContractPage() {
       toast.success('Contract updated');
       router.push(`/documents/contracts/${id}`);
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -112,6 +119,30 @@ export default function EditContractPage() {
 
   if (loading) {
     return <div className="p-6 text-sm text-muted-foreground">Loading contract…</div>;
+  }
+
+  if (isBento) {
+    return (
+      <BentoContractFormView
+        mode="edit"
+        contractId={id}
+        title={title}
+        setTitle={setTitle}
+        proposalId={proposalId}
+        setProposalId={setProposalId}
+        proposals={proposals}
+        projectId={projectId}
+        setProjectId={setProjectId}
+        projects={projects}
+        status={status}
+        setStatus={setStatus}
+        isLocked={isLocked}
+        savedStatus={savedStatus}
+        onSubmit={handleSubmit}
+        isLoading={saving}
+        error={error}
+      />
+    );
   }
 
   return (

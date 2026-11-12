@@ -9,19 +9,24 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoDocumentTemplateFormView } from '@/components/documents/bento-document-template-form-view';
 
 export default function NewTemplatePage() {
   const router = useRouter();
+  const isBento = useBentoShell();
   const [name, setName] = useState('');
   const [type, setType] = useState('proposal');
   const [content, setContent] = useState('');
   const [variablesRaw, setVariablesRaw] = useState('client_name, project_scope, valid_until');
   const [isDefault, setIsDefault] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
 
     const varKeys = variablesRaw
       .split(',')
@@ -51,11 +56,34 @@ export default function NewTemplatePage() {
       toast.success('Template created');
       router.push(`/documents/templates/${data.id}`);
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
+
+  if (isBento) {
+    return (
+      <BentoDocumentTemplateFormView
+        mode="new"
+        name={name}
+        setName={setName}
+        type={type}
+        setType={setType}
+        content={content}
+        setContent={setContent}
+        variablesRaw={variablesRaw}
+        setVariablesRaw={setVariablesRaw}
+        isDefault={isDefault}
+        setIsDefault={setIsDefault}
+        onSubmit={handleSubmit}
+        isLoading={loading}
+        error={error}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">

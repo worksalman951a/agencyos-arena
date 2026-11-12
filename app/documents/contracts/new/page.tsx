@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoContractFormView } from '@/components/documents/bento-contract-form-view';
 
 interface ProposalOption {
   id: string;
@@ -23,6 +25,7 @@ interface ProjectOption {
 
 export default function NewContractPage() {
   const router = useRouter();
+  const isBento = useBentoShell();
   const [proposals, setProposals] = useState<ProposalOption[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [proposalId, setProposalId] = useState('');
@@ -30,6 +33,7 @@ export default function NewContractPage() {
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('draft');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -76,6 +80,7 @@ export default function NewContractPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
 
     try {
       const res = await fetch('/api/v1/documents/contracts', {
@@ -98,11 +103,34 @@ export default function NewContractPage() {
       toast.success('Contract created');
       router.push(`/documents/contracts/${data.id}`);
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
+
+  if (isBento) {
+    return (
+      <BentoContractFormView
+        mode="new"
+        title={title}
+        setTitle={setTitle}
+        proposalId={proposalId}
+        setProposalId={setProposalId}
+        proposals={proposals}
+        projectId={projectId}
+        setProjectId={setProjectId}
+        projects={projects}
+        status={status}
+        setStatus={setStatus}
+        onSubmit={handleSubmit}
+        isLoading={loading}
+        error={error}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">

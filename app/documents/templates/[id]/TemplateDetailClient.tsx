@@ -4,6 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoDocumentTemplateFormView } from '@/components/documents/bento-document-template-form-view';
 
 interface TemplateDetailClientProps {
   template: {
@@ -20,6 +22,7 @@ interface TemplateDetailClientProps {
 
 export function TemplateDetailClient({ template }: TemplateDetailClientProps) {
   const router = useRouter();
+  const isBento = useBentoShell();
   const initialKeys = template.variables ? Object.keys(template.variables) : [];
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(template.name);
@@ -29,10 +32,12 @@ export function TemplateDetailClient({ template }: TemplateDetailClientProps) {
   const [isDefault, setIsDefault] = useState(template.isDefault);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
+    setError(null);
     try {
       const varKeys = variablesRaw
         .split(',')
@@ -58,7 +63,9 @@ export function TemplateDetailClient({ template }: TemplateDetailClientProps) {
       setEditing(false);
       router.refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -80,6 +87,29 @@ export function TemplateDetailClient({ template }: TemplateDetailClientProps) {
       toast.error((err as Error).message);
       setDeleting(false);
     }
+  }
+
+  if (isBento && editing) {
+    return (
+      <BentoDocumentTemplateFormView
+        mode="edit"
+        templateId={template.id}
+        name={name}
+        setName={setName}
+        type={type}
+        setType={setType}
+        content={content}
+        setContent={setContent}
+        variablesRaw={variablesRaw}
+        setVariablesRaw={setVariablesRaw}
+        isDefault={isDefault}
+        setIsDefault={setIsDefault}
+        onSubmit={handleSave}
+        isLoading={saving}
+        error={error}
+        onCancel={() => setEditing(false)}
+      />
+    );
   }
 
   return (
