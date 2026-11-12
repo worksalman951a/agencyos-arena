@@ -28,6 +28,11 @@ interface ContactOption {
   label: string;
 }
 
+interface ProjectOption {
+  id: string;
+  label: string;
+}
+
 interface LineItem {
   description: string;
   quantity: string;
@@ -44,10 +49,19 @@ const emptyLineItem = (taxRate = 0): LineItem => ({
 
 export function NewInvoiceForm({
   contacts,
+  projects = [],
+  defaultProjectId = '',
+  defaultClientId = '',
   defaultCurrency = 'USD',
   defaultTaxRate = 0,
 }: {
   contacts: ContactOption[];
+  /** Projects the invoice may be linked to, resolved (and authorized) server-side. */
+  projects?: ProjectOption[];
+  /** Preselected project when the form is opened from a project workspace. */
+  defaultProjectId?: string;
+  /** Preselected client (the project's client on a project handoff). */
+  defaultClientId?: string;
   /** Organization default currency (settings) — still editable per invoice. */
   defaultCurrency?: string;
   /** Organization default tax rate (%) applied to new line items. */
@@ -55,7 +69,12 @@ export function NewInvoiceForm({
 }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [clientId, setClientId] = useState('');
+  const [clientId, setClientId] = useState(defaultClientId);
+  // Only a project the server offered can be preselected; the API validates the
+  // id again on submit, so this is a convenience and never an authorization.
+  const [projectId, setProjectId] = useState(
+    projects.some((project) => project.id === defaultProjectId) ? defaultProjectId : ''
+  );
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('draft');
   const [currency, setCurrency] = useState(defaultCurrency);
@@ -84,6 +103,7 @@ export function NewInvoiceForm({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clientId: clientId || undefined,
+          projectId: projectId || undefined,
           title,
           status,
           currency,
@@ -167,6 +187,30 @@ export function NewInvoiceForm({
             required
           />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="projectId" className="text-sm font-medium">
+          Project
+        </label>
+        <select
+          id="projectId"
+          value={projectId}
+          onChange={(e) => setProjectId(e.target.value)}
+          className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+        >
+          <option value="">No project</option>
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.label}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-muted-foreground">
+          {projects.length === 0
+            ? 'No projects are available to link (none are open, or your role cannot read projects). The invoice can be created without one.'
+            : 'Optional. Linked invoices appear in the project workspace.'}
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -190,6 +190,40 @@ describe('listPortalInvoices', () => {
     expect(invoices[0]).toMatchObject({ number: 'INV-001', outstanding: '750.00' });
   });
 
+  it('never exposes the linked project of an invoice to a client', async () => {
+    // Phase 5A: invoices may carry an internal project link. The portal view is
+    // built from an explicit column list, so the link (and anything about the
+    // project) stays inside the agency even if the row carries it.
+    mockListGrantedIds.mockResolvedValue(['invoice_1']);
+    mockInvoiceFindMany.mockResolvedValue([
+      {
+        id: 'invoice_1',
+        number: 'INV-001',
+        title: 'Design retainer',
+        status: 'sent',
+        currency: 'USD',
+        subtotal: { toString: () => '1000' },
+        tax: { toString: () => '0' },
+        total: { toString: () => '1000' },
+        dueDate: null,
+        payments: [],
+        projectId: 'project_1',
+        project: { id: 'project_1', name: 'Internal codename', status: 'active' },
+      },
+    ]);
+
+    const invoices = await listPortalInvoices();
+
+    expect(invoices[0]).not.toHaveProperty('projectId');
+    expect(invoices[0]).not.toHaveProperty('project');
+    expect(JSON.stringify(invoices)).not.toContain('Internal codename');
+    expect(JSON.stringify(invoices)).not.toContain('project_1');
+
+    const { select } = mockInvoiceFindMany.mock.calls[0][0] as { select: Record<string, unknown> };
+    expect(select).not.toHaveProperty('projectId');
+    expect(select).not.toHaveProperty('project');
+  });
+
   it('scopes the invoice query to the organization and excludes deleted invoices', async () => {
     mockListGrantedIds.mockResolvedValue(['invoice_1']);
     mockInvoiceFindMany.mockResolvedValue([]);

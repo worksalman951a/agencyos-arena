@@ -509,6 +509,7 @@ model Invoice {
   number         String
   title          String
   clientId       String?
+  projectId      String?
   status         String    @default("draft")
   subtotal       Decimal   @default(0)
   tax            Decimal   @default(0)
@@ -529,6 +530,14 @@ model Invoice {
   payments     Payment[]
   creator      User?         @relation("CreatedInvoice", fields: [createdBy], references: [id], onDelete: SetNull)
   updater      User?         @relation("UpdatedInvoice", fields: [updatedBy], references: [id], onDelete: SetNull)
+  // Optional project link (Phase 5A). The foreign key is COMPOSITE on purpose:
+  // it references Project(id, organizationId) using this invoice's own
+  // organizationId, so PostgreSQL itself rejects a project that belongs to
+  // another organization - whoever writes the row. NoAction (never Cascade or
+  // SetNull): a project that still has invoices cannot be hard-deleted, and a
+  // financial record is never removed or silently detached by a project
+  // deletion. See docs/phase-5a/project-invoice-linking.md.
+  project      Project?      @relation(fields: [projectId, organizationId], references: [id, organizationId], onDelete: NoAction, onUpdate: NoAction)
 
   // Invoice numbers are unique per organization. The allocator already
   // serialises on the organization row; this index is the database guarantee
@@ -536,6 +545,9 @@ model Invoice {
   // Payment idempotency keys are additionally protected by the partial unique
   // index created in migration 0015, which Prisma cannot express.
   @@unique([organizationId, number])
+  // Project workspace listing / project filter, and the referential check that
+  // runs when a project row is deleted.
+  @@index([organizationId, projectId])
 }
 
 model InvoiceItem {
@@ -628,6 +640,12 @@ model Project {
   files        ProjectFile[]
   approvals    ProjectApproval[]
   contracts    Contract[]
+  invoices     Invoice[]
+
+  // Target of the composite Invoice -> Project foreign key. `id` is already the
+  // primary key, so this adds no new restriction on projects; it only lets a
+  // child row prove "same organization" at the database level.
+  @@unique([id, organizationId])
 }
 
 model ProjectTemplate {
