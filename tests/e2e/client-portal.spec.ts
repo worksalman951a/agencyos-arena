@@ -143,6 +143,22 @@ async function activateThroughInvitePage(
   return page;
 }
 
+/**
+ * Reload the current page, tolerating a reload that races the app's own
+ * post-authentication navigation.
+ */
+async function hardReload(page: Page): Promise<void> {
+  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 20_000 });
+      return;
+    } catch {
+      await page.waitForTimeout(2_000);
+    }
+  }
+}
+
 async function grantProject(
   api: APIRequestContext,
   account: TestAccount,
@@ -209,20 +225,18 @@ test.describe('Client portal end-to-end journeys', () => {
       .catch(() => null);
     expect(alertText, 'the invitation page reported an error instead of activating').toBeNull();
 
-    // Re-open the invitation as the returning visitor this account now is. A new
-    // page in the same context avoids racing the form's own post-auth reload and
-    // still proves the session cookie persisted: a fresh server render must show
-    // the accept button.
-    const returning = await context.newPage();
-    await returning.goto(fixture.acceptPath);
-    const returningAccept = returning.getByTestId('accept-invitation');
-    await expect(returningAccept).toBeVisible({ timeout: 30_000 });
-    await returningAccept.click();
-    await expect(returning).toHaveURL(/\/portal$/, { timeout: 30_000 });
+    // Re-open the invitation as the returning visitor this account now is: a fresh
+    // server render with the session cookie must show the accept button. The form
+    // reloads the page itself after signing in, so the reload is retried once if it
+    // lands mid-navigation.
+    await hardReload(page);
+    await expect(acceptButton).toBeVisible({ timeout: 30_000 });
+    await acceptButton.click();
+    await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
 
     // The accepting identity is a client: no workspace, no team surfaces.
-    await returning.goto('/admin/client-portal');
-    await expect(returning).toHaveURL(/\/portal$/, { timeout: 30_000 });
+    await page.goto('/admin/client-portal');
+    await expect(page).toHaveURL(/\/portal$/, { timeout: 30_000 });
 
     await context.close();
   });
