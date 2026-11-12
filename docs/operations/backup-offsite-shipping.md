@@ -4,15 +4,15 @@
 
 This batch adds one S3-compatible shipping adapter for the encrypted replicas produced by [encrypted replication](./backup-encrypted-replication.md), a hash-chained inventory, and recovery from the bucket through the existing [isolated restore verifier](./backup-restore-verification.md). It adds no dependency and changes no existing backup, encryption, restore, scheduling or retention behavior.
 
-**It is not active anywhere by default** and is not wired into `docker-compose.yml`. It has been verified against an in-process test double and against an isolated MinIO server in CI. **It has not been verified against a real provider account**: no provider, bucket, credentials, retention policy or key custody have been chosen. Treat a real off-site recovery capability as pending until the items under [Remaining production configuration](#remaining-production-configuration) are complete.
+**It is not active anywhere by default** and is not wired into `docker-compose.yml`. It has been verified against an in-process test double and against an isolated S3-compatible server (Versity S3 Gateway) in CI. **It has not been verified against a real provider account**: no provider, bucket, credentials, retention policy or key custody have been chosen. Treat a real off-site recovery capability as pending until the items under [Remaining production configuration](#remaining-production-configuration) are complete.
 
-| File                                           | Purpose                                              |
-| ---------------------------------------------- | ---------------------------------------------------- |
-| `scripts/backup/shipping.mjs`                  | Adapter, inventory, ship / verify / recover          |
-| `scripts/backup/ship.mjs`                      | Command line (`npm run db:backup:ship -- <action>`)  |
-| `scripts/backup/scheduled-backup.mjs`          | Opt-in shipping step after replication               |
-| `lib/__tests__/backup/backup-shipping.test.ts` | Failure-path tests                                   |
-| `.github/workflows/ci.yml` (`backup-verify`)   | End-to-end run against MinIO and isolated PostgreSQL |
+| File                                           | Purpose                                             |
+| ---------------------------------------------- | --------------------------------------------------- |
+| `scripts/backup/shipping.mjs`                  | Adapter, inventory, ship / verify / recover         |
+| `scripts/backup/ship.mjs`                      | Command line (`npm run db:backup:ship -- <action>`) |
+| `scripts/backup/scheduled-backup.mjs`          | Opt-in shipping step after replication              |
+| `lib/__tests__/backup/backup-shipping.test.ts` | Failure-path tests                                  |
+| `.github/workflows/ci.yml` (`backup-verify`)   | End-to-end run against an S3 gateway and PostgreSQL |
 
 ## How shipping works
 
@@ -140,9 +140,9 @@ The verifier child process receives neither the replication key nor storage cred
 ## Verification evidence
 
 - Unit tests (`lib/__tests__/backup/backup-shipping.test.ts`) use a TLS test double with injected provider failures: successful shipping, failed upload, transient failure and lost-response retries, overwrite refusal (pre-existing object and lost race), corruption at upload time and afterwards, wrong key and wrong key version, inventory edits/removal/reordering/truncation, unsafe paths and symlinks, and the scheduled runner keeping local backups when shipping fails. The SigV4 signature is compared with a value produced independently by botocore.
-- CI (`backup-verify`) runs the real command line against MinIO over TLS with throwaway credentials: ship, retry, byte-for-byte comparison through a separate client, the store's own conditional-write refusal, inventory anchor check, recovery from the bucket alone into the isolated PostgreSQL service on port 5433, wrong key, tampered object, and a scan of all output for the storage credential.
+- CI (`backup-verify`) runs the real command line against a pinned Versity S3 Gateway over TLS with throwaway credentials: ship, retry, byte-for-byte comparison through a separate client, the store's own conditional-write refusal, inventory anchor check, recovery from the bucket alone into the isolated PostgreSQL service on port 5433, wrong key, tampered object, and a scan of all output for the storage credential.
 
-MinIO in CI uses its root account, so **least-privilege enforcement, provider-specific conditional-write behavior, versioning/object lock and lifecycle rules are untested**.
+The CI gateway is used with its root account, so **least-privilege enforcement, provider-specific conditional-write behavior, versioning/object lock and lifecycle rules are untested**.
 
 ## Remaining production configuration
 

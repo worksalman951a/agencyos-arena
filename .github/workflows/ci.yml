@@ -745,7 +745,8 @@ jobs:
           RESTORE_VERIFY_ALLOWED_PORT: '5433'
 
       # Off-site shipping (Batch 3C-2B). No real provider credentials exist in
-      # CI, so an isolated, TLS-terminated S3-compatible server (MinIO) with
+      # CI, so an isolated, TLS-terminated S3-compatible server (Versity S3
+      # Gateway, a separate implementation that checks SigV4 signatures) with
       # throwaway credentials stands in. Real-provider verification is pending;
       # see docs/operations/backup-offsite-shipping.md.
       - name: Shipped replica is verified, protected from overwrite and restorable
@@ -757,20 +758,26 @@ jobs:
           S3_USER="ci$(openssl rand -hex 8)"
           S3_SECRET="$(openssl rand -hex 24)"
           echo "::add-mask::$S3_SECRET"
-          mkdir minio-certs
+          # Pinned release of the Versity S3 Gateway, checked against its
+          # published SHA-256 before it is executed.
+          curl -fsSL -o s3-gateway.tar.gz "$S3_GATEWAY_URL"
+          echo "$S3_GATEWAY_SHA256  s3-gateway.tar.gz" | sha256sum -c -
+          mkdir s3-gateway s3-certs s3-data
+          tar -xzf s3-gateway.tar.gz -C s3-gateway
+          GATEWAY="$(find s3-gateway -type f -name versitygw | head -1)"
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
             -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
-            -keyout minio-certs/private.key -out minio-certs/public.crt 2>/dev/null
-          chmod 644 minio-certs/private.key
-          CA="$PWD/minio-certs/public.crt"
-          docker run -d --name agencyos-ci-s3 -p 127.0.0.1:9000:9000 \
-            -e MINIO_ROOT_USER="$S3_USER" -e MINIO_ROOT_PASSWORD="$S3_SECRET" \
-            -v "$PWD/minio-certs:/root/.minio/certs:ro" \
-            "$S3_IMAGE" server /data > /dev/null
+            -keyout s3-certs/private.key -out s3-certs/public.crt 2>/dev/null
+          CA="$PWD/s3-certs/public.crt"
+          ROOT_ACCESS_KEY="$S3_USER" ROOT_SECRET_KEY="$S3_SECRET" "$GATEWAY" \
+            --port 127.0.0.1:9000 --region us-east-1 \
+            --cert "$CA" --key "$PWD/s3-certs/private.key" \
+            posix "$PWD/s3-data" > s3-gateway.log 2>&1 &
+          S3_PID=$!
           for i in $(seq 1 30); do
-            curl -sf --cacert "$CA" https://localhost:9000/minio/health/live && break
-            [ "$i" -lt 30 ] || { docker logs agencyos-ci-s3 | tail -20; false; }
-            sleep 2
+            curl -s -o /dev/null --cacert "$CA" https://localhost:9000/ && break
+            [ "$i" -lt 30 ] || { tail -20 s3-gateway.log; false; }
+            sleep 1
           done
 
           # Administrative access, used only to create the bucket and to play
@@ -864,7 +871,7 @@ jobs:
           node scripts/backup/ship.mjs inventory --anchor "$HEAD"
 
           echo "--- no storage credential in any output or the inventory"
-          docker rm -f agencyos-ci-s3 > /dev/null
+          kill "$S3_PID"
           sleep 1
           if grep -qF -e "$S3_SECRET" -e "$S3_USER" shipping-step.log ship.log inventory.log \
                shipped-restore.log conditional.log shipping-state/inventory.jsonl; then
@@ -872,7 +879,8 @@ jobs:
           fi
           echo "Off-site shipping verified against an isolated S3-compatible service"
         env:
-          S3_IMAGE: minio/minio:RELEASE.2025-04-22T22-12-26Z
+          S3_GATEWAY_URL: https://github.com/versity/versitygw/releases/download/v1.11.0/versitygw_v1.11.0_Linux_x86_64.tar.gz
+          S3_GATEWAY_SHA256: 1f075c9dc92fef232f5b3c7465711ddc5e1b062b2b6df4a3bd246a4be5b35b52
           BUCKET: agencyos-ci-backups
           BACKUP_REPLICATION_DIR: ${{ github.workspace }}/replica-artifacts
           BACKUP_REPLICATION_KEY: ${{ secrets.CI_BACKUP_REPLICATION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }}
