@@ -316,14 +316,19 @@ model WebhookEvent {
 
 /// File assets (metadata only)
 model FileAsset {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   organizationId String
   originalName   String
   mimeType       String
   size           Int
   storagePath    String
   uploadedBy     String?
-  createdAt      DateTime @default(now())
+  scanStatus     String    @default("UNVERIFIED")
+  scannedAt      DateTime?
+  scanEngine     String?
+  scanThreat     String?
+  sha256         String?
+  createdAt      DateTime  @default(now())
 
   organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   projectFiles     ProjectFile[]

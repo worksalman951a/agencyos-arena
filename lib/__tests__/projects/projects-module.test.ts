@@ -634,6 +634,7 @@ describe('Project File upload, download, and cleanup security', () => {
           mimeType: 'text/plain',
           size: 13,
           storagePath: storedRelativePath,
+          scanStatus: 'CLEAN',
         },
       });
       const downloaded = await downloadProjectFile('pf-1');

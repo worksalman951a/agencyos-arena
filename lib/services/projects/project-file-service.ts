@@ -52,6 +52,8 @@ interface ProjectFileRecord {
     originalName: string;
     mimeType: string;
     size: number;
+    scanStatus?: string;
+    scannedAt?: Date | null;
   };
   user: { id: string; name: string | null; email: string | null } | null;
   task: { id: string; title: string } | null;
@@ -70,6 +72,8 @@ export interface ProjectFileResponse {
     originalName: string;
     mimeType: string;
     size: number;
+    scanStatus?: string;
+    scannedAt?: Date | null;
   };
   user?: { id: string; name: string | null; email: string | null } | null;
   task?: { id: string; title: string } | null;
@@ -176,7 +180,14 @@ export async function listProjectFiles(projectId: string): Promise<ProjectFileRe
     where: { projectId, organizationId },
     include: {
       fileAsset: {
-        select: { id: true, originalName: true, mimeType: true, size: true },
+        select: {
+          id: true,
+          originalName: true,
+          mimeType: true,
+          size: true,
+          scanStatus: true,
+          scannedAt: true,
+        },
       },
       user: { select: { id: true, name: true, email: true } },
       task: { select: { id: true, title: true } },
@@ -406,6 +417,11 @@ export async function uploadProjectFile(input: {
           size: bytes.byteLength,
           storagePath: relativeStoragePath,
           uploadedBy: userId,
+          scanStatus: scanResult.verdict,
+          scannedAt: scanResult.scannedAt,
+          scanEngine: scanResult.engine,
+          scanThreat: scanResult.threatName ?? null,
+          sha256: scanResult.sha256 ?? null,
         },
       });
 
@@ -418,7 +434,16 @@ export async function uploadProjectFile(input: {
           userId,
         },
         include: {
-          fileAsset: { select: { id: true, originalName: true, mimeType: true, size: true } },
+          fileAsset: {
+            select: {
+              id: true,
+              originalName: true,
+              mimeType: true,
+              size: true,
+              scanStatus: true,
+              scannedAt: true,
+            },
+          },
           user: { select: { id: true, name: true, email: true } },
           task: { select: { id: true, title: true } },
         },
@@ -485,6 +510,16 @@ export async function downloadProjectFile(id: string): Promise<{
     throw error;
   }
 
+  // Authoritative download gate: strictly require persistent verified CLEAN verdict
+  const scanStatus = (projectFile.fileAsset as { scanStatus?: string }).scanStatus ?? 'UNVERIFIED';
+  if (scanStatus !== 'CLEAN') {
+    const error = new Error(
+      `File download unavailable: attachment is currently ${scanStatus} and has not passed a verified malware scan`
+    ) as Error & { statusCode?: number };
+    error.statusCode = 403;
+    throw error;
+  }
+
   const storageRoot = resolveStorageRoot();
   const absolutePath = assertSafeStoragePath(storageRoot, projectFile.fileAsset.storagePath);
 
@@ -495,6 +530,21 @@ export async function downloadProjectFile(id: string): Promise<{
     const error = new Error('File content not found') as Error & { statusCode?: number };
     error.statusCode = 404;
     throw error;
+  }
+
+  // Exact-byte integrity verification: if sha256 is recorded, verify content has not been replaced on disk
+  const recordedSha = (projectFile.fileAsset as { sha256?: string | null }).sha256;
+  if (recordedSha) {
+    const currentSha = crypto.createHash('sha256').update(buffer).digest('hex');
+    if (currentSha !== recordedSha) {
+      const error = new Error(
+        'File integrity violation: stored bytes do not match scanned hash'
+      ) as Error & {
+        statusCode?: number;
+      };
+      error.statusCode = 403;
+      throw error;
+    }
   }
 
   return {
