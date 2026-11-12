@@ -281,7 +281,19 @@ export function BentoExpensesView({
 
                       {/* Amount */}
                       <div className="text-xs font-semibold text-foreground text-right font-mono">
-                        {money(exp.amount)}
+                        {exp.isHistoricalUnresolved ? (
+                          <span className="text-amber-600 dark:text-amber-400 font-normal">
+                            {exp.amount}{' '}
+                            <span className="text-[10px] uppercase border px-1 rounded">
+                              Unresolved
+                            </span>
+                          </span>
+                        ) : (
+                          formatMinorUnitsAsCurrency(
+                            Math.round(Number(exp.amount || 0) * 100),
+                            exp.currency || currency
+                          )
+                        )}
                       </div>
 
                       {/* Billable Status */}
@@ -324,9 +336,18 @@ export function BentoExpensesView({
                     <KeyValueRow
                       label="Amount"
                       value={
-                        <span className="font-bold text-foreground font-mono">
-                          {money(activeExp.amount)}
-                        </span>
+                        activeExp.isHistoricalUnresolved ? (
+                          <span className="font-bold text-amber-600 dark:text-amber-400 font-mono">
+                            {activeExp.amount} (Unresolved Currency)
+                          </span>
+                        ) : (
+                          <span className="font-bold text-foreground font-mono">
+                            {formatMinorUnitsAsCurrency(
+                              Math.round(Number(activeExp.amount || 0) * 100),
+                              activeExp.currency || currency
+                            )}
+                          </span>
+                        )
                       }
                     />
                     <KeyValueRow

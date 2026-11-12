@@ -12,7 +12,12 @@ interface BentoFinancialReportsViewProps {
   metrics: DashboardMetrics;
   statuses: Array<{ status: string; currency: string; count: number; totalMinor: number }>;
   estimates: Array<{ status: string; total: string; currency: string }>;
-  expenses: Array<{ amount: string; billable: boolean }>;
+  expenses: Array<{
+    amount: string;
+    billable: boolean;
+    currency?: string;
+    isHistoricalUnresolved?: boolean;
+  }>;
 }
 
 export function BentoFinancialReportsView({
@@ -39,12 +44,29 @@ export function BentoFinancialReportsView({
     estimateTotals.set(currency, bucket);
   }
 
-  // Expenses recorded in default workspace currency
-  const totalExpenses = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-  const billableExpenses = expenses
-    .filter((e) => e.billable)
-    .reduce((sum, e) => sum + Number(e.amount || 0), 0);
-  const internalExpenses = Math.max(0, totalExpenses - billableExpenses);
+  // Expenses: totals grouped per currency; unresolved currencies tracked distinctly
+  const expensesByCurrency = new Map<string, { total: number; billable: number; count: number }>();
+  let unresolvedCount = 0;
+  let unresolvedTotal = 0;
+
+  for (const exp of expenses) {
+    if (exp.isHistoricalUnresolved) {
+      unresolvedCount += 1;
+      unresolvedTotal += Number(exp.amount || 0);
+      continue;
+    }
+    const expCurrency = exp.currency || defaultCurrency;
+    const bucket = expensesByCurrency.get(expCurrency) ?? { total: 0, billable: 0, count: 0 };
+    bucket.total += Number(exp.amount || 0);
+    bucket.count += 1;
+    if (exp.billable) bucket.billable += Number(exp.amount || 0);
+    expensesByCurrency.set(expCurrency, bucket);
+  }
+
+  // Fallback default currency bucket if empty
+  if (expensesByCurrency.size === 0 && unresolvedCount === 0) {
+    expensesByCurrency.set(defaultCurrency, { total: 0, billable: 0, count: 0 });
+  }
 
   const STATUS_ORDER = ['draft', 'sent', 'paid', 'overdue', 'voided'];
   const statusRows = STATUS_ORDER.flatMap((status) =>
@@ -229,45 +251,61 @@ export function BentoFinancialReportsView({
         {/* Expense Allocation */}
         <Panel title="Expense Allocation & Operating Costs">
           <div className="space-y-4 text-xs">
-            <div className="p-4 rounded-lg border bg-muted/10 space-y-3">
-              <div className="flex items-center justify-between border-b pb-2">
-                <span className="font-semibold text-foreground">
-                  Workspace Currency ({defaultCurrency})
-                </span>
-                <span className="text-[11px] text-muted-foreground">
-                  {expenses.length} expense items
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-[11px] text-muted-foreground block">Gross Expenses</span>
-                  <span className="font-mono font-medium text-foreground">
-                    {formatMinorUnitsAsCurrency(Math.round(totalExpenses * 100), defaultCurrency)}
+            {[...expensesByCurrency.entries()].map(([curr, bucket]) => {
+              const internal = Math.max(0, bucket.total - bucket.billable);
+              return (
+                <div key={curr} className="p-4 rounded-lg border bg-muted/10 space-y-3">
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <span className="font-semibold text-foreground">Currency ({curr})</span>
+                    <span className="text-[11px] text-muted-foreground">{bucket.count} items</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[11px] text-muted-foreground block">
+                        Gross Expenses
+                      </span>
+                      <span className="font-mono font-medium text-foreground">
+                        {formatMinorUnitsAsCurrency(Math.round(bucket.total * 100), curr)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-muted-foreground block">
+                        Client Billable
+                      </span>
+                      <span className="font-mono font-semibold text-emerald-700">
+                        {formatMinorUnitsAsCurrency(Math.round(bucket.billable * 100), curr)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="border-t pt-2 flex justify-between text-[11px]">
+                    <span className="text-muted-foreground">Internal Overhead:</span>
+                    <span className="font-mono font-medium text-foreground">
+                      {formatMinorUnitsAsCurrency(Math.round(internal * 100), curr)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {unresolvedCount > 0 && (
+              <div className="p-4 rounded-lg border border-amber-500/30 bg-amber-500/10 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-amber-800 dark:text-amber-200">
+                    Unresolved Historical Expenses
+                  </span>
+                  <span className="text-[11px] text-amber-700 dark:text-amber-300 font-mono">
+                    {unresolvedCount} items
                   </span>
                 </div>
-                <div>
-                  <span className="text-[11px] text-muted-foreground block">
-                    Client Billable Charges
-                  </span>
-                  <span className="font-mono font-semibold text-emerald-700">
-                    {formatMinorUnitsAsCurrency(
-                      Math.round(billableExpenses * 100),
-                      defaultCurrency
-                    )}
-                  </span>
+                <div className="text-[11px] text-amber-900 dark:text-amber-200 font-mono">
+                  Aggregate unverified amount: {unresolvedTotal.toFixed(2)} (Currency Pending)
                 </div>
+                <p className="text-[10px] text-amber-700 dark:text-amber-300">
+                  Legacy rows awaiting authoritative currency reconciliation. Kept separate to
+                  prevent distorted aggregates.
+                </p>
               </div>
-              <div className="border-t pt-2 flex justify-between text-[11px]">
-                <span className="text-muted-foreground">Internal Operating Overhead:</span>
-                <span className="font-mono font-medium text-foreground">
-                  {formatMinorUnitsAsCurrency(Math.round(internalExpenses * 100), defaultCurrency)}
-                </span>
-              </div>
-            </div>
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Expenses are recorded in {defaultCurrency}. Billable amounts indicate expenses marked
-              eligible for client pass-through charging.
-            </p>
+            )}
           </div>
         </Panel>
       </div>

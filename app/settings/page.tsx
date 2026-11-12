@@ -341,7 +341,7 @@ export default function SettingsPage() {
       setSave('currency', {
         status: 'error',
         message:
-          'Changing workspace default currency will relabel historical expenses. Please check the confirmation box below to proceed.',
+          'Please acknowledge that changing the workspace default currency will affect future documents and unassigned items. Check the confirmation box below to proceed.',
       });
       return;
     }
@@ -801,12 +801,12 @@ export default function SettingsPage() {
         description="Defaults applied to new documents across the organization."
       >
         <form onSubmit={handleCurrencySave} className="space-y-4">
-          <p className="rounded-md border border-amber-300/60 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
-            <strong>Currency &amp; Historical Expense Notice:</strong> Existing invoices and
-            estimates persist their issued currency code. However, expense items do not store an
-            individual currency column and are displayed using the current workspace default
-            currency. Changing the default currency will visually relabel historical expenses and
-            will not perform automatic foreign exchange (FX) conversion.
+          <p className="rounded-md border border-blue-300/60 bg-blue-50 p-3 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/40 dark:text-blue-200">
+            <strong>Currency &amp; Historical Expense Policy:</strong> Invoices, estimates, and
+            expenses permanently persist their individual transaction currency. Changing the
+            workspace default currency sets the preselected currency for newly created records and
+            does not alter existing, verified historical expense currencies. Unresolved legacy
+            expenses require explicit administrative reconciliation.
           </p>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -849,19 +849,19 @@ export default function SettingsPage() {
 
             {defaultCurrency !== (org.settings.defaultCurrency ?? DEFAULT_CURRENCY) && (
               <div className="md:col-span-2 pt-2">
-                <label className="flex items-start gap-2 text-xs text-amber-900 dark:text-amber-200 cursor-pointer">
+                <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
                   <input
                     type="checkbox"
                     checked={confirmCurrencyChange}
                     onChange={(e) => setConfirmCurrencyChange(e.target.checked)}
                     disabled={readOnly}
-                    className="mt-0.5 rounded border-amber-400"
+                    className="mt-0.5 rounded border-input"
                   />
                   <span>
-                    I understand that changing the workspace currency from{' '}
+                    I confirm changing the workspace default currency from{' '}
                     <strong>{org.settings.defaultCurrency ?? DEFAULT_CURRENCY}</strong> to{' '}
-                    <strong>{defaultCurrency}</strong> will visually relabel all historical expense
-                    records without foreign exchange conversion.
+                    <strong>{defaultCurrency}</strong>. Existing expenses and invoices retain their
+                    original persisted currencies without foreign exchange conversion.
                   </span>
                 </label>
               </div>

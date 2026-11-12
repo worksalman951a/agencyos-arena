@@ -10,7 +10,12 @@ interface FinancialReportsClientProps {
   metrics: DashboardMetrics;
   statuses: Array<{ status: string; currency: string; count: number; totalMinor: number }>;
   estimates: Array<{ status: string; total: string; currency: string }>;
-  expenses: Array<{ amount: string; billable: boolean }>;
+  expenses: Array<{
+    amount: string;
+    billable: boolean;
+    currency?: string;
+    isHistoricalUnresolved?: boolean;
+  }>;
 }
 
 export function FinancialReportsClient(props: FinancialReportsClientProps) {
@@ -39,10 +44,28 @@ export function FinancialReportsClient(props: FinancialReportsClientProps) {
     estimateTotals.set(currency, bucket);
   }
 
-  const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-  const billableExpenses = expenses
-    .filter((expense) => expense.billable)
-    .reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  // Expenses: totals grouped per currency; unresolved currencies tracked distinctly
+  const expensesByCurrency = new Map<string, { total: number; billable: number; count: number }>();
+  let unresolvedCount = 0;
+  let unresolvedTotal = 0;
+
+  for (const exp of expenses) {
+    if (exp.isHistoricalUnresolved) {
+      unresolvedCount += 1;
+      unresolvedTotal += Number(exp.amount || 0);
+      continue;
+    }
+    const expCurrency = exp.currency || defaultCurrency;
+    const bucket = expensesByCurrency.get(expCurrency) ?? { total: 0, billable: 0, count: 0 };
+    bucket.total += Number(exp.amount || 0);
+    bucket.count += 1;
+    if (exp.billable) bucket.billable += Number(exp.amount || 0);
+    expensesByCurrency.set(expCurrency, bucket);
+  }
+
+  if (expensesByCurrency.size === 0 && unresolvedCount === 0) {
+    expensesByCurrency.set(defaultCurrency, { total: 0, billable: 0, count: 0 });
+  }
 
   const STATUS_ORDER = ['draft', 'sent', 'paid', 'overdue', 'voided'];
   const statusRows = STATUS_ORDER.flatMap((status) =>
@@ -132,23 +155,36 @@ export function FinancialReportsClient(props: FinancialReportsClientProps) {
         </div>
 
         <div className="rounded-md border bg-background p-4">
-          <h2 className="text-lg font-semibold mb-2">Expenses</h2>
-          <dl className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Total expenses</dt>
-              <dd className="font-medium">
-                {formatMinorUnitsAsCurrency(Math.round(totalExpenses * 100), defaultCurrency)}
-              </dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Billable expenses</dt>
-              <dd className="font-medium">
-                {formatMinorUnitsAsCurrency(Math.round(billableExpenses * 100), defaultCurrency)}
-              </dd>
-            </div>
-          </dl>
+          <h2 className="text-lg font-semibold mb-2">Expenses by Currency</h2>
+          <div className="space-y-4">
+            {[...expensesByCurrency.entries()].map(([curr, bucket]) => (
+              <dl key={curr} className="space-y-1 text-sm border-b pb-2 last:border-b-0">
+                <div className="font-semibold text-xs text-muted-foreground uppercase">{curr}</div>
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Total expenses</dt>
+                  <dd className="font-medium">
+                    {formatMinorUnitsAsCurrency(Math.round(bucket.total * 100), curr)}
+                  </dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Billable expenses</dt>
+                  <dd className="font-medium text-emerald-600">
+                    {formatMinorUnitsAsCurrency(Math.round(bucket.billable * 100), curr)}
+                  </dd>
+                </div>
+              </dl>
+            ))}
+            {unresolvedCount > 0 && (
+              <div className="rounded border border-amber-400/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-200">
+                <div className="font-semibold">
+                  Unresolved Historical Expenses ({unresolvedCount})
+                </div>
+                <div>Amount pending reconciliation: {unresolvedTotal.toFixed(2)}</div>
+              </div>
+            )}
+          </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            Expenses are recorded in {defaultCurrency}; the expense model has no per-row currency.
+            Expenses display their permanently persisted transaction currency.
           </p>
         </div>
       </div>

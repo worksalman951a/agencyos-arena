@@ -16,6 +16,7 @@ export const expenseCreateSchema = z.object({
     },
     { message: 'Amount must be a positive number' }
   ),
+  currency: z.string().length(3, 'Currency must be a 3-letter ISO code').toUpperCase().optional(),
   expenseDate: z.string().datetime('Valid date is required'),
   receiptUrl: z.string().url().optional().nullable(),
   billable: z.boolean().default(false),
@@ -29,14 +30,21 @@ export const expenseUpdateSchema = expenseCreateSchema
       data.projectId !== undefined ||
       data.category !== undefined ||
       data.amount !== undefined ||
+      data.currency !== undefined ||
       data.expenseDate !== undefined ||
       data.receiptUrl !== undefined ||
       data.billable !== undefined,
     'At least one field must be provided for update'
   );
 
+export const expenseReconcileSchema = z.object({
+  expenseIds: z.array(z.string().cuid()).min(1, 'At least one expense ID is required'),
+  currency: z.string().length(3, 'Currency must be a 3-letter ISO code').toUpperCase(),
+});
+
 export type ExpenseCreateInput = z.infer<typeof expenseCreateSchema>;
 export type ExpenseUpdateInput = z.infer<typeof expenseUpdateSchema>;
+export type ExpenseReconcileInput = z.infer<typeof expenseReconcileSchema>;
 
 /**
  * Query parameters for the expense list.

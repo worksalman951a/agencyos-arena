@@ -222,7 +222,7 @@ describe('Phase 8B Bento Settings & Administration Integration', () => {
     // Switch to Currency & Dates
     fireEvent.click(screen.getByText('Currency & Dates'));
     expect(screen.getByText('Currency & Regional Defaults')).toBeInTheDocument();
-    expect(screen.getByText(/Currency & Historical Expense Notice:/)).toBeInTheDocument();
+    expect(screen.getByText(/Currency & Historical Expense Policy:/)).toBeInTheDocument();
 
     // Switch to Invoice Preferences
     fireEvent.click(screen.getByText('Invoice Preferences'));
@@ -303,7 +303,7 @@ describe('Phase 8B Bento Settings & Administration Integration', () => {
     // Switch to Currency & Dates
     fireEvent.click(screen.getByText('Currency & Dates'));
     expect(
-      screen.getByText(/I confirm that changing workspace currency from/i)
+      screen.getByText(/I confirm changing the workspace default currency from/i)
     ).toBeInTheDocument();
   });
 

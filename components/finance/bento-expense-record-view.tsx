@@ -14,8 +14,11 @@ interface BentoExpenseRecordViewProps {
 }
 
 export function BentoExpenseRecordView({ expense }: BentoExpenseRecordViewProps) {
+  const isUnresolved = expense.isHistoricalUnresolved;
   const money = (amount: string | number) =>
-    formatMinorUnitsAsCurrency(Math.round(Number(amount || 0) * 100), expense.currency);
+    isUnresolved
+      ? `${amount} (Unresolved Currency)`
+      : formatMinorUnitsAsCurrency(Math.round(Number(amount || 0) * 100), expense.currency);
 
   return (
     <div className="bento-crm space-y-6">
@@ -49,13 +52,24 @@ export function BentoExpenseRecordView({ expense }: BentoExpenseRecordViewProps)
         </div>
       </div>
 
+      {isUnresolved && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-xs text-amber-800 dark:text-amber-200">
+          <strong>Historical Record Notice:</strong> This legacy expense does not have a verified
+          currency code. It requires an administrative reconciliation action to confirm the original
+          transaction currency without altering ledger history.
+        </div>
+      )}
+
       {/* ── StatStrip Summary Metrics ─────────────────────────────────── */}
       <StatStrip
         stats={[
           {
             label: 'Recorded Amount',
             value: money(expense.amount),
-            note: `workspace currency (${expense.currency})`,
+            note: isUnresolved
+              ? 'unresolved historical currency'
+              : `transaction currency (${expense.currency})`,
+            tone: isUnresolved ? 'warn' : undefined,
           },
           {
             label: 'Billing Classification',
@@ -167,7 +181,15 @@ export function BentoExpenseRecordView({ expense }: BentoExpenseRecordViewProps)
               />
               <KeyValueRow
                 label="Denominated Currency"
-                value={<span className="font-mono font-semibold">{expense.currency}</span>}
+                value={
+                  expense.isHistoricalUnresolved ? (
+                    <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                      Unresolved (Historical Record)
+                    </span>
+                  ) : (
+                    <span className="font-mono font-semibold">{expense.currency}</span>
+                  )
+                }
               />
               <KeyValueRow
                 label="Audit Created"

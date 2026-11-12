@@ -18,9 +18,13 @@ export interface ExpenseResponse {
   projectId: string | null;
   category: string;
   amount: string;
+  currency: string;
+  isHistoricalUnresolved?: boolean;
   expenseDate: Date;
   receiptUrl: string | null;
   billable: boolean;
+  reconciledAt?: Date | null;
+  reconciledBy?: string | null;
   createdAt: Date;
 }
 
@@ -30,9 +34,12 @@ interface ExpenseRecord {
   projectId: string | null;
   category: string;
   amount: { toString: () => string };
+  currency: string | null;
   expenseDate: Date;
   receiptUrl: string | null;
   billable: boolean;
+  reconciledAt?: Date | null;
+  reconciledBy?: string | null;
   createdAt: Date;
 }
 
@@ -164,18 +171,26 @@ function parseDateBound(value: string | undefined, label: string, endOfDay = fal
   return date;
 }
 
-function serializeExpense(expense: ExpenseRecord): ExpenseResponse {
+function serializeExpense(
+  expense: ExpenseRecord,
+  orgDefaultCurrency: string = DEFAULT_CURRENCY
+): ExpenseResponse {
+  const hasExplicitCurrency = Boolean(expense.currency);
+  const currency = normalizeCurrencyCode(expense.currency ?? '') ?? orgDefaultCurrency;
+
   return {
     id: expense.id,
     organizationId: expense.organizationId,
     projectId: expense.projectId,
     category: expense.category,
-    // Postgres hands back `100` for 100.00; keep one money format for the API
-    // and the UI (storage is untouched).
     amount: Number(expense.amount.toString()).toFixed(2),
+    currency,
+    isHistoricalUnresolved: !hasExplicitCurrency,
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
+    reconciledAt: expense.reconciledAt ?? null,
+    reconciledBy: expense.reconciledBy ?? null,
     createdAt: expense.createdAt,
   };
 }
@@ -253,10 +268,10 @@ export async function searchExpenses(query: ExpenseListQuery = {}): Promise<Expe
   ]);
 
   const settings = normalizeOrganizationSettings(organization?.settings);
-  const currency = normalizeCurrencyCode(settings.defaultCurrency) ?? DEFAULT_CURRENCY;
+  const orgDefaultCurrency = normalizeCurrencyCode(settings.defaultCurrency) ?? DEFAULT_CURRENCY;
 
   return {
-    rows: (rows as ExpenseRecord[]).map(serializeExpense),
+    rows: (rows as ExpenseRecord[]).map((r) => serializeExpense(r, orgDefaultCurrency)),
     total: filteredCount,
     page: currentPage,
     pageSize,
@@ -269,7 +284,7 @@ export async function searchExpenses(query: ExpenseListQuery = {}): Promise<Expe
     categories: (categoryRows as Array<{ category: string }>).map(
       (row: { category: string }) => row.category
     ),
-    currency,
+    currency: orgDefaultCurrency,
   };
 }
 
@@ -278,12 +293,18 @@ export async function listExpenses() {
 
   await requirePermission(userId, organizationId, 'expense.read');
 
-  const expenses = await prisma.expenseItem.findMany({
-    where: { organizationId },
-    orderBy: { expenseDate: 'desc' },
-  });
+  const [expenses, organization] = await Promise.all([
+    prisma.expenseItem.findMany({
+      where: { organizationId },
+      orderBy: { expenseDate: 'desc' },
+    }),
+    prisma.organization.findUnique({ where: { id: organizationId }, select: { settings: true } }),
+  ]);
 
-  return (expenses as ExpenseRecord[]).map(serializeExpense);
+  const settings = normalizeOrganizationSettings(organization?.settings);
+  const orgDefaultCurrency = normalizeCurrencyCode(settings.defaultCurrency) ?? DEFAULT_CURRENCY;
+
+  return (expenses as ExpenseRecord[]).map((r) => serializeExpense(r, orgDefaultCurrency));
 }
 
 export async function getExpense(id: string) {
@@ -304,24 +325,10 @@ export async function getExpense(id: string) {
     throw error;
   }
 
-  // Same workspace currency the list uses; `ExpenseItem` has no currency column.
   const settings = normalizeOrganizationSettings(organization?.settings);
-  const currency = normalizeCurrencyCode(settings.defaultCurrency) ?? DEFAULT_CURRENCY;
+  const orgDefaultCurrency = normalizeCurrencyCode(settings.defaultCurrency) ?? DEFAULT_CURRENCY;
 
-  return {
-    id: expense.id,
-    organizationId: expense.organizationId,
-    projectId: expense.projectId,
-    category: expense.category,
-    // Postgres hands back `100` for 100.00; keep one money format for the API
-    // and the UI (storage is untouched).
-    amount: Number(expense.amount.toString()).toFixed(2),
-    expenseDate: expense.expenseDate,
-    receiptUrl: expense.receiptUrl,
-    billable: expense.billable,
-    createdAt: expense.createdAt,
-    currency,
-  };
+  return serializeExpense(expense as ExpenseRecord, orgDefaultCurrency);
 }
 
 export async function createExpense(input: ExpenseCreateInput) {
@@ -341,12 +348,22 @@ export async function createExpense(input: ExpenseCreateInput) {
     }
   }
 
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { settings: true },
+  });
+  const settings = normalizeOrganizationSettings(organization?.settings);
+  const resolvedCurrency = input.currency
+    ? normalizeCurrencyCode(input.currency)
+    : (normalizeCurrencyCode(settings.defaultCurrency) ?? DEFAULT_CURRENCY);
+
   const expense = await prisma.expenseItem.create({
     data: {
       organizationId,
       projectId: input.projectId ?? null,
       category: input.category,
       amount: Number(input.amount),
+      currency: resolvedCurrency,
       expenseDate: new Date(input.expenseDate),
       receiptUrl: input.receiptUrl ?? null,
       billable: input.billable,
@@ -362,27 +379,14 @@ export async function createExpense(input: ExpenseCreateInput) {
     after: {
       id: expense.id,
       category: expense.category,
-      // Postgres hands back `100` for 100.00; keep one money format for the API
-      // and the UI (storage is untouched).
       amount: Number(expense.amount.toString()).toFixed(2),
+      currency: resolvedCurrency,
       billable: expense.billable,
     },
     organizationId,
   });
 
-  return {
-    id: expense.id,
-    organizationId: expense.organizationId,
-    projectId: expense.projectId,
-    category: expense.category,
-    // Postgres hands back `100` for 100.00; keep one money format for the API
-    // and the UI (storage is untouched).
-    amount: Number(expense.amount.toString()).toFixed(2),
-    expenseDate: expense.expenseDate,
-    receiptUrl: expense.receiptUrl,
-    billable: expense.billable,
-    createdAt: expense.createdAt,
-  };
+  return serializeExpense(expense as ExpenseRecord, resolvedCurrency ?? DEFAULT_CURRENCY);
 }
 
 export async function updateExpense(id: string, input: ExpenseUpdateInput) {
@@ -390,9 +394,12 @@ export async function updateExpense(id: string, input: ExpenseUpdateInput) {
 
   await requirePermission(userId, organizationId, 'expense.update');
 
-  const existing = await prisma.expenseItem.findFirst({
-    where: { id, organizationId },
-  });
+  const [existing, organization] = await Promise.all([
+    prisma.expenseItem.findFirst({
+      where: { id, organizationId },
+    }),
+    prisma.organization.findUnique({ where: { id: organizationId }, select: { settings: true } }),
+  ]);
 
   if (!existing) {
     const error = new Error('Not found') as Error & { statusCode?: number };
@@ -411,12 +418,32 @@ export async function updateExpense(id: string, input: ExpenseUpdateInput) {
     }
   }
 
+  // In ordinary editing, existing verified currency is immutable.
+  // If input specifies a different currency code, reject it to prevent silent relabeling without FX conversion.
+  if (input.currency !== undefined) {
+    const requestedCurrency = normalizeCurrencyCode(input.currency);
+    if (!requestedCurrency) {
+      throw codedError('Invalid currency code provided', 400);
+    }
+    if (existing.currency && existing.currency !== requestedCurrency) {
+      throw codedError(
+        `Expense currency is immutable once recorded (${existing.currency}). Changing currency requires administrative reconciliation or recreating the expense.`,
+        400
+      );
+    }
+  }
+
+  const updatedCurrency =
+    input.currency !== undefined ? (normalizeCurrencyCode(input.currency) ?? undefined) : undefined;
+
   const expense = await prisma.expenseItem.update({
     where: { id },
     data: {
       projectId: input.projectId !== undefined ? input.projectId : existing.projectId,
       category: input.category ?? existing.category,
       amount: input.amount !== undefined ? Number(input.amount) : existing.amount,
+      // If the expense already had a currency or input was not provided, keep existing currency without alteration
+      currency: updatedCurrency !== undefined ? updatedCurrency : existing.currency,
       expenseDate: input.expenseDate ? new Date(input.expenseDate) : existing.expenseDate,
       receiptUrl: input.receiptUrl !== undefined ? input.receiptUrl : existing.receiptUrl,
       billable: input.billable !== undefined ? input.billable : existing.billable,
@@ -429,24 +456,25 @@ export async function updateExpense(id: string, input: ExpenseUpdateInput) {
     action: 'expense.update',
     entityType: 'ExpenseItem',
     entityId: expense.id,
-    before: { id: existing.id, amount: existing.amount.toString(), billable: existing.billable },
-    after: { id: expense.id, amount: expense.amount.toString(), billable: expense.billable },
+    before: {
+      id: existing.id,
+      amount: existing.amount.toString(),
+      currency: existing.currency,
+      billable: existing.billable,
+    },
+    after: {
+      id: expense.id,
+      amount: expense.amount.toString(),
+      currency: expense.currency,
+      billable: expense.billable,
+    },
     organizationId,
   });
 
-  return {
-    id: expense.id,
-    organizationId: expense.organizationId,
-    projectId: expense.projectId,
-    category: expense.category,
-    // Postgres hands back `100` for 100.00; keep one money format for the API
-    // and the UI (storage is untouched).
-    amount: Number(expense.amount.toString()).toFixed(2),
-    expenseDate: expense.expenseDate,
-    receiptUrl: expense.receiptUrl,
-    billable: expense.billable,
-    createdAt: expense.createdAt,
-  };
+  const settings = normalizeOrganizationSettings(organization?.settings);
+  const orgDefaultCurrency = normalizeCurrencyCode(settings.defaultCurrency) ?? DEFAULT_CURRENCY;
+
+  return serializeExpense(expense as ExpenseRecord, orgDefaultCurrency);
 }
 
 export async function deleteExpense(id: string) {
@@ -480,4 +508,83 @@ export async function deleteExpense(id: string) {
   });
 
   return { id };
+}
+
+/**
+ * Reconciles historical or unassigned expense records with an authoritative ISO currency.
+ * Accessible only by administrators with 'expense.update' or 'settings.update' permissions.
+ * Protects already verified expenses from unintended overwrites unless explicit allowOverwrite is requested.
+ */
+export async function reconcileHistoricalExpenses(input: {
+  expenseIds: string[];
+  currency: string;
+  allowOverwrite?: boolean;
+}) {
+  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'expense.update');
+
+  const normalizedCurrency = normalizeCurrencyCode(input.currency);
+  if (!normalizedCurrency) {
+    throw codedError('Invalid ISO 4217 currency code', 400);
+  }
+
+  // Find target expenses strictly scoped to caller's organization
+  const targets = await prisma.expenseItem.findMany({
+    where: {
+      id: { in: input.expenseIds },
+      organizationId,
+    },
+  });
+
+  if (targets.length === 0) {
+    throw codedError('No matching expenses found in organization', 404);
+  }
+
+  // Filter targets: by default, reconcile only unresolved records (currency is null)
+  const eligibleTargets = input.allowOverwrite
+    ? targets
+    : targets.filter((t: { currency: string | null }) => !t.currency);
+
+  if (eligibleTargets.length === 0) {
+    throw codedError(
+      'Selected expenses already have verified currencies. Pass allowOverwrite=true to re-reconcile.',
+      400
+    );
+  }
+
+  const now = new Date();
+  await prisma.expenseItem.updateMany({
+    where: {
+      id: { in: eligibleTargets.map((t: { id: string }) => t.id) },
+      organizationId,
+    },
+    data: {
+      currency: normalizedCurrency,
+      reconciledAt: now,
+      reconciledBy: userId,
+    },
+  });
+
+  await createAuditLog({
+    actorId: userId,
+    actorName: actorEmail,
+    action: 'expense.currency.reconcile',
+    entityType: 'ExpenseItem',
+    entityId: eligibleTargets[0].id,
+    metadata: {
+      reconciledCount: eligibleTargets.length,
+      assignedCurrency: normalizedCurrency,
+      expenseIds: eligibleTargets.map((t: { id: string }) => t.id),
+      skippedCount: targets.length - eligibleTargets.length,
+    },
+    organizationId,
+  });
+
+  return {
+    reconciledCount: eligibleTargets.length,
+    skippedCount: targets.length - eligibleTargets.length,
+    currency: normalizedCurrency,
+    reconciledAt: now,
+  };
 }

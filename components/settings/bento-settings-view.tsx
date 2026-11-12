@@ -772,15 +772,14 @@ export function BentoSettingsView({
                   quotations, and accounting statements.
                 </div>
 
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
-                  <Shield className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-xs text-blue-800 dark:text-blue-200 flex items-start gap-2">
+                  <Shield className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" />
                   <span>
-                    <strong>Currency &amp; Historical Expense Notice:</strong> Existing invoices and
-                    estimates persist their issued currency code. However, expense items do not
-                    store an individual currency column and are displayed using the current
-                    workspace default currency. Changing the default currency will visually relabel
-                    historical expenses and will not perform automatic foreign exchange (FX)
-                    conversion.
+                    <strong>Currency &amp; Historical Expense Policy:</strong> Invoices, estimates,
+                    and expenses permanently persist their individual transaction currency. Changing
+                    the workspace default currency sets the preselected currency for newly created
+                    records and does not alter existing, verified historical expense currencies.
+                    Unresolved legacy expenses require explicit administrative reconciliation.
                   </span>
                 </div>
 
@@ -827,19 +826,19 @@ export function BentoSettingsView({
 
                   {defaultCurrency !== (org.settings.defaultCurrency ?? 'USD') && (
                     <div className="md:col-span-2 pt-1">
-                      <label className="flex items-start gap-2 text-xs text-amber-900 dark:text-amber-200 cursor-pointer">
+                      <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
                         <input
                           type="checkbox"
                           checked={confirmCurrencyChange}
                           onChange={(e) => setConfirmCurrencyChange?.(e.target.checked)}
                           disabled={readOnly}
-                          className="mt-0.5 rounded border-amber-400"
+                          className="mt-0.5 rounded border-input"
                         />
                         <span>
-                          I confirm that changing workspace currency from{' '}
+                          I confirm changing the workspace default currency from{' '}
                           <strong>{org.settings.defaultCurrency ?? 'USD'}</strong> to{' '}
-                          <strong>{defaultCurrency}</strong> will visually relabel all historical
-                          expenses without conversion.
+                          <strong>{defaultCurrency}</strong>. Existing expenses and invoices retain
+                          their original persisted currencies without foreign exchange conversion.
                         </span>
                       </label>
                     </div>

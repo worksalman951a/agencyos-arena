@@ -560,15 +560,18 @@ model Estimate {
 }
 
 model ExpenseItem {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   organizationId String
   projectId      String?
   category       String
   amount         Decimal
+  currency       String?
   expenseDate    DateTime
   receiptUrl     String?
-  billable       Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  billable       Boolean   @default(false)
+  reconciledAt   DateTime?
+  reconciledBy   String?
+  createdAt      DateTime  @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }

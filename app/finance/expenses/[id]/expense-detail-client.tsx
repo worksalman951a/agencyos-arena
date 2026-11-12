@@ -8,7 +8,7 @@ import { formatMinorUnitsAsCurrency } from '@/lib/currencies';
 import type { ExpenseResponse } from '@/lib/services/crm/expense-service';
 
 interface ExpenseDetailClientProps {
-  expense: ExpenseResponse & { currency: string };
+  expense: ExpenseResponse;
 }
 
 export function ExpenseDetailClient({ expense }: ExpenseDetailClientProps) {
