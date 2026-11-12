@@ -1,0 +1,1287 @@
+/* ============================================================================
+   Premium primitives — shared chrome for every module screen
+   ----------------------------------------------------------------------------
+   Loaded after premium.css and premium-shell.css, so it inherits the --pm-*
+   tokens. Contains no screen-specific rules: if a pattern is used twice it
+   lives here, and a screen only adds layout.
+
+   All breakpoints are container queries. The prototype renders inside fixed
+   frames, so viewport media queries never fire (PREMIUM-DESIGN-SYSTEM.md §8).
+   ========================================================================== */
+
+/* ── Toolbar ────────────────────────────────────────────────────────────── */
+
+.pmx-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 0 12px;
+}
+
+.pmx-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  min-width: 220px;
+  flex: 0 1 288px;
+  border-radius: var(--pm-r-pill);
+  border: 1px solid var(--pm-line);
+  background: var(--pm-tile);
+  color: var(--pm-ink-3);
+  transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+.pmx-search:hover {
+  border-color: var(--pm-ink-3);
+}
+.pmx-search:focus-within {
+  border-color: var(--pm-accent);
+  box-shadow: 0 0 0 3px var(--pm-accent-soft);
+}
+.pmx-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--pm-ink);
+}
+.pmx-search input::placeholder {
+  color: var(--pm-ink-3);
+}
+.pmx-search__clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--pm-inset);
+  color: var(--pm-ink-3);
+  cursor: pointer;
+  flex: none;
+}
+.pmx-search__clear:hover {
+  color: var(--pm-ink);
+  background: var(--pm-line);
+}
+
+/* ── Segmented control ──────────────────────────────────────────────────── */
+
+.pmx-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--pm-r-pill);
+  background: var(--pm-inset);
+  flex: none;
+}
+.pmx-seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--pm-r-pill);
+  background: none;
+  color: var(--pm-ink-3);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 110ms ease-out, color 110ms ease-out;
+}
+.pmx-seg button:hover {
+  color: var(--pm-ink);
+}
+.pmx-seg button[data-on] {
+  background: var(--pm-tile);
+  color: var(--pm-ink);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+}
+.pmx-seg button:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 1px;
+}
+
+.pmx-toolbar__count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--pm-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Select-as-chrome ───────────────────────────────────────────────────── */
+
+.pmx-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  flex: none;
+}
+.pmx-select select {
+  appearance: none;
+  height: 100%;
+  padding: 0 26px 0 11px;
+  border-radius: var(--pm-r-pill);
+  border: 1px solid var(--pm-line);
+  background: var(--pm-tile);
+  color: var(--pm-ink-2);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.pmx-select select:hover {
+  border-color: var(--pm-ink-3);
+  color: var(--pm-ink);
+}
+.pmx-select select:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 1px;
+}
+.pmx-select svg {
+  position: absolute;
+  right: 9px;
+  pointer-events: none;
+  color: var(--pm-ink-3);
+}
+.pmx-select--field {
+  display: flex;
+  width: 100%;
+}
+.pmx-select--field select {
+  width: 100%;
+  border-radius: 9px;
+  height: 32px;
+  font-size: 12.5px;
+  font-weight: 450;
+  padding: 0 26px 0 10px;
+}
+
+/* ── Status ─────────────────────────────────────────────────────────────── */
+
+.pmx-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--pm-ink-2);
+  white-space: nowrap;
+}
+.pmx-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pm-ink-3);
+  flex: none;
+}
+.pmx-status[data-tone='ok'] i,
+.pmx-status[data-tone='accent'] i {
+  background: var(--pm-accent);
+}
+.pmx-status[data-tone='ok'],
+.pmx-status[data-tone='accent'] {
+  color: var(--pm-accent-ink);
+}
+.pmx-status[data-tone='warn'] i {
+  background: var(--pm-warn);
+}
+.pmx-status[data-tone='warn'] {
+  color: var(--pm-warn);
+}
+.pmx-status[data-tone='danger'] i {
+  background: var(--pm-danger);
+}
+.pmx-status[data-tone='danger'] {
+  color: var(--pm-danger);
+}
+.pmx-status[data-tone='idle'] {
+  color: var(--pm-ink-3);
+}
+.pmx-status[data-tone='idle'] i {
+  background: var(--pm-ink-3);
+  opacity: 0.6;
+}
+.pmx-status[data-tone='info'] i {
+  background: #2563eb;
+}
+
+/* ── Avatar ─────────────────────────────────────────────────────────────── */
+
+.pmx-av {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 9px;
+  background: var(--pm-inset);
+  color: var(--pm-ink-2);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.pmx-av[data-size='sm'] {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  font-size: 8.5px;
+}
+.pmx-av[data-size='md'] {
+  width: 27px;
+  height: 27px;
+  font-size: 9.5px;
+}
+.pmx-av[data-size='lg'] {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  font-size: 14px;
+}
+.pmx-av[data-tone='accent'] {
+  background: var(--pm-accent-soft);
+  color: var(--pm-accent-ink);
+}
+
+/* ── Stat strip ─────────────────────────────────────────────────────────── */
+
+.pmx-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.pmx-stats[data-cols='2'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.pmx-stats[data-cols='3'] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pmx-stats[data-cols='5'] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.pmx-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.pmx-stat__num {
+  font-size: 24px;
+  font-weight: 620;
+  letter-spacing: -0.032em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--pm-ink);
+  white-space: nowrap;
+}
+.pmx-stat__num[data-tone='warn'] {
+  color: var(--pm-warn);
+}
+.pmx-stat__num[data-tone='danger'] {
+  color: var(--pm-danger);
+}
+.pmx-stat__num[data-tone='ok'] {
+  color: var(--pm-accent-ink);
+}
+.pmx-stat__meter {
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--pm-line);
+  overflow: hidden;
+  margin: 3px 0 1px;
+}
+.pmx-stat__meter i {
+  display: block;
+  height: 100%;
+  background: var(--pm-accent);
+  border-radius: 999px;
+}
+.pmx-stat__meter i[data-tone='warn'] {
+  background: var(--pm-warn);
+}
+.pmx-stat__meter i[data-tone='danger'] {
+  background: var(--pm-danger);
+}
+.pmx-stat__note {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--pm-ink-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pmx-stat__note[data-tone='danger'] {
+  color: var(--pm-danger);
+}
+.pmx-stat__note[data-tone='warn'] {
+  color: var(--pm-warn);
+}
+
+/* ── Meter ──────────────────────────────────────────────────────────────── */
+
+.pmx-meter {
+  position: relative;
+  display: block;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--pm-inset);
+  overflow: hidden;
+}
+.pmx-meter__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--pm-accent);
+  transition: width 180ms ease-out;
+}
+.pmx-meter__fill[data-tone='warn'] {
+  background: var(--pm-warn);
+}
+.pmx-meter__fill[data-tone='danger'] {
+  background: var(--pm-danger);
+}
+.pmx-meter__marker {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: var(--pm-ink-3);
+  opacity: 0.75;
+}
+
+/* ── Empty state ────────────────────────────────────────────────────────── */
+
+.pmx-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 26px 8px;
+}
+.pmx-empty--block {
+  align-items: center;
+  text-align: center;
+  border: 1px dashed var(--pm-line);
+  border-radius: var(--pm-r-tile);
+  padding: 26px 18px;
+}
+.pmx-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: var(--pm-inset);
+  color: var(--pm-ink-3);
+  margin-bottom: 3px;
+}
+.pmx-empty__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pm-ink);
+}
+.pmx-empty__sub {
+  font-size: 11.5px;
+  color: var(--pm-ink-3);
+  margin-bottom: 6px;
+  max-width: 42ch;
+}
+
+/* ── Callout ────────────────────────────────────────────────────────────── */
+
+.pmx-callout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 13px;
+  border-radius: var(--pm-r-inset);
+  background: var(--pm-inset);
+  border-left: 2px solid var(--pm-line);
+}
+.pmx-callout[data-tone='warn'] {
+  background: var(--pm-warn-soft);
+  border-left-color: var(--pm-warn);
+}
+.pmx-callout[data-tone='danger'] {
+  background: var(--pm-danger-soft);
+  border-left-color: var(--pm-danger);
+}
+.pmx-callout[data-tone='ok'] {
+  background: var(--pm-accent-soft);
+  border-left-color: var(--pm-accent);
+}
+.pmx-callout__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.pmx-callout__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pm-ink);
+}
+.pmx-callout__text {
+  font-size: 11.5px;
+  color: var(--pm-ink-2);
+}
+.pmx-callout[data-tone='danger'] .pmx-callout__title,
+.pmx-callout[data-tone='danger'] .pmx-callout__text {
+  color: var(--pm-danger);
+}
+.pmx-callout[data-tone='warn'] .pmx-callout__title {
+  color: var(--pm-warn);
+}
+
+/* ── Tabs ───────────────────────────────────────────────────────────────── */
+
+.pmx-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--pm-r-pill);
+  background: var(--pm-inset);
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: none;
+}
+.pmx-tabs::-webkit-scrollbar {
+  display: none;
+}
+.pmx-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--pm-r-pill);
+  background: none;
+  color: var(--pm-ink-3);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pmx-tabs button:hover {
+  color: var(--pm-ink);
+}
+.pmx-tabs button[data-on] {
+  background: var(--pm-tile);
+  color: var(--pm-ink);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+}
+.pmx-tabs button:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 1px;
+}
+.pmx-tabs__count {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--pm-ink-3);
+  background: var(--pm-inset);
+  border-radius: 999px;
+  padding: 0 5px;
+  min-width: 15px;
+  text-align: center;
+}
+.pmx-tabs button[data-on] .pmx-tabs__count {
+  background: var(--pm-accent-soft);
+  color: var(--pm-accent-ink);
+}
+
+/* ── Data table ─────────────────────────────────────────────────────────── */
+
+.pmx-table-scroll {
+  min-width: 0;
+}
+.pmx-table {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pmx-table__head,
+.pmx-table__row {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.pmx-table__head {
+  padding: 4px 4px 8px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+  color: var(--pm-ink-3);
+  border-bottom: 1px solid var(--pm-line);
+}
+.pmx-table__row {
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--pm-line-soft);
+  color: inherit;
+  min-height: 44px;
+  transition: background 100ms ease-out;
+}
+.pmx-table__row:last-child {
+  border-bottom: 0;
+}
+.pmx-table__row:hover {
+  background: var(--pm-inset);
+}
+.pmx-table__row[data-clickable] {
+  cursor: pointer;
+}
+.pmx-table__row[data-active],
+.pmx-table__row[data-picked] {
+  background: var(--pm-accent-soft);
+}
+.pmx-table__row[data-clickable]:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.pmx-table__none {
+  padding: 4px 0;
+}
+
+.pmx-cell {
+  font-size: 12px;
+  color: var(--pm-ink-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pmx-cell[data-align='right'] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 570;
+  color: var(--pm-ink);
+}
+.pmx-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pmx-check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--pm-accent);
+  cursor: pointer;
+}
+.pmx-check input:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 2px;
+}
+.pmx-r {
+  text-align: right;
+}
+
+/* An actions column sits next to the last data column. Two uppercase headers
+   10px apart read as one label ("LIFETIME ACTIONS"), so the actions column gets
+   a soft rule that separates it in the header and in every row. */
+.pmx-table__head > [data-mobile='actions'],
+.pmx-table__row > [data-mobile='actions'] {
+  padding-left: 11px;
+  border-left: 1px solid var(--pm-line-soft);
+}
+
+.pmx-tablefoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--pm-line-soft);
+  font-size: 10.5px;
+  color: var(--pm-ink-3);
+}
+.pmx-tablefoot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Cell building blocks a screen can compose inside `cell()` */
+.pmx-strong {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12.5px;
+  font-weight: 570;
+  color: var(--pm-ink);
+  min-width: 0;
+  overflow: hidden;
+}
+.pmx-sub {
+  font-size: 10.5px;
+  font-weight: 450;
+  color: var(--pm-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pmx-mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.005em;
+}
+.pmx-muted {
+  color: var(--pm-ink-3);
+}
+.pmx-person {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.pmx-person__who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pmx-person__name {
+  font-size: 12.5px;
+  font-weight: 570;
+  color: var(--pm-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pmx-person__role {
+  font-size: 10.5px;
+  color: var(--pm-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Row actions: revealed on hover and on keyboard focus, always shown on phone. */
+/* Compact row action: icon only, name kept for assistive tech. Three text
+   buttons do not fit a 100px actions track — the shared-links register proved
+   it by spilling over the Access column and swallowing its clicks. */
+.pmx-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--pm-line);
+  border-radius: 7px;
+  background: var(--pm-tile);
+  color: var(--pm-ink-2);
+  cursor: pointer;
+  transition:
+    background 110ms ease-out,
+    color 110ms ease-out,
+    border-color 110ms ease-out;
+}
+.pmx-iconbtn:hover {
+  background: var(--pm-inset);
+  color: var(--pm-ink);
+  border-color: var(--pm-line);
+}
+.pmx-iconbtn:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 1px;
+}
+.pmx-iconbtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Visually hidden, still announced. */
+.pmx-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pmx-rowacts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  opacity: 0;
+  transition: opacity 110ms ease-out;
+}
+.pmx-table__row:hover .pmx-rowacts,
+.pmx-table__row:focus-within .pmx-rowacts {
+  opacity: 1;
+}
+
+/* ── Record header ──────────────────────────────────────────────────────── */
+
+.pmx-rhead {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.pmx-rhead__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.pmx-rhead__id {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.pmx-rhead__titlerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pmx-rhead__name {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -0.028em;
+  color: var(--pm-ink);
+  line-height: 1.2;
+}
+.pmx-rhead__chips {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pmx-rhead__sub {
+  font-size: 12px;
+  color: var(--pm-ink-2);
+}
+.pmx-rhead__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 10.5px;
+  color: var(--pm-ink-3);
+}
+.pmx-rhead__acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* ── Facts ──────────────────────────────────────────────────────────────── */
+
+.pmx-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+.pmx-facts[data-cols='1'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.pmx-facts > div {
+  min-width: 0;
+  /* Label and value on one line: `dt` is inline, so the pair reads as
+     "Stage — Build" rather than two separate lines that look like a heading
+     and a stray value. */
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+}
+.pmx-facts dt {
+  font-size: 10px;
+  font-weight: 620;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--pm-ink-3);
+  /* Inline so the value sits on the same line; `Panel` is where the label and
+     body are separated, not every `dt`. */
+  display: inline;
+  margin-bottom: 0;
+}
+.pmx-facts dd {
+  margin: 0;
+  font-size: 12px;
+  color: var(--pm-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Timeline ───────────────────────────────────────────────────────────── */
+
+.pmx-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 3px;
+  display: flex;
+  flex-direction: column;
+}
+.pmx-timeline li {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 0 0 13px;
+}
+.pmx-timeline li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 12px;
+  bottom: 0;
+  width: 1px;
+  background: var(--pm-line);
+}
+.pmx-timeline li:last-child {
+  padding-bottom: 0;
+}
+.pmx-timeline li:last-child::before {
+  display: none;
+}
+.pmx-timeline__dot {
+  position: relative;
+  z-index: 1;
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--pm-ink-3);
+  opacity: 0.55;
+  box-shadow: 0 0 0 3px var(--pm-tile);
+}
+.pmx-timeline li[data-tone='ok'] .pmx-timeline__dot {
+  background: var(--pm-accent);
+  opacity: 1;
+}
+.pmx-timeline li[data-tone='warn'] .pmx-timeline__dot {
+  background: var(--pm-warn);
+  opacity: 1;
+}
+.pmx-timeline li[data-tone='danger'] .pmx-timeline__dot {
+  background: var(--pm-danger);
+  opacity: 1;
+}
+.pmx-timeline__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pmx-timeline__title {
+  font-size: 12px;
+  font-weight: 570;
+  color: var(--pm-ink);
+}
+.pmx-timeline__text {
+  font-size: 11.5px;
+  color: var(--pm-ink-2);
+}
+.pmx-timeline__when {
+  font-size: 10.5px;
+  color: var(--pm-ink-3);
+}
+
+/* ── Form ───────────────────────────────────────────────────────────────── */
+
+.pmx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.pmx-field[data-wide] {
+  grid-column: 1 / -1;
+}
+.pmx-field__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--pm-ink-2);
+}
+.pmx-field__req {
+  color: var(--pm-danger);
+}
+.pmx-field__hint {
+  font-size: 10.5px;
+  color: var(--pm-ink-3);
+}
+.pmx-field__error {
+  font-size: 10.5px;
+  font-weight: 550;
+  color: var(--pm-danger);
+}
+.pmx-field[data-invalid] .pmx-field__label {
+  color: var(--pm-danger);
+}
+
+.pmx-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid var(--pm-line);
+  background: var(--pm-tile);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--pm-ink);
+  min-width: 0;
+}
+.pmx-input::placeholder {
+  color: var(--pm-ink-3);
+}
+.pmx-input:hover {
+  border-color: var(--pm-ink-3);
+}
+.pmx-input:focus {
+  outline: none;
+  border-color: var(--pm-accent);
+  box-shadow: 0 0 0 3px var(--pm-accent-soft);
+}
+.pmx-input[data-invalid] {
+  border-color: var(--pm-danger);
+}
+.pmx-input[data-invalid]:focus {
+  box-shadow: 0 0 0 3px var(--pm-danger-soft);
+}
+.pmx-input--area {
+  height: auto;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* Switch */
+.pmx-switch {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  background: var(--pm-line);
+  cursor: pointer;
+  padding: 0;
+  transition: background 130ms ease-out;
+}
+.pmx-switch__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--pm-tile);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.24);
+  transition: transform 130ms ease-out;
+}
+.pmx-switch[data-on] {
+  background: var(--pm-accent);
+}
+.pmx-switch[data-on] .pmx-switch__knob {
+  transform: translateX(14px);
+}
+.pmx-switch:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 2px;
+}
+.pmx-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Form layout ────────────────────────────────────────────────────────────
+   Two columns on desktop, one on tablet and phone. A form that keeps two
+   columns at 600px produces inputs narrower than their own labels.
+   -------------------------------------------------------------------------- */
+
+.pmx-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px 13px;
+}
+
+@container pm (max-width: 1080px) {
+  .pmx-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Panel ──────────────────────────────────────────────────────────────── */
+
+.pmx-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pmx-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 9px;
+  flex: none;
+  border-bottom: 1px solid var(--pm-line-soft);
+}
+.pmx-panel__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+.pmx-panel__meta {
+  font-size: 10.5px;
+  color: var(--pm-ink-3);
+  white-space: nowrap;
+}
+.pmx-panel__title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.018em;
+  color: var(--pm-ink);
+}
+.pmx-panel__act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pmx-panel__body {
+  padding: 11px 14px 13px;
+  min-width: 0;
+}
+.pmx-panel__body--flush {
+  padding: 4px 14px 8px;
+}
+
+/* ── Key/value ──────────────────────────────────────────────────────────── */
+
+.pmx-kv {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--pm-line-soft);
+  font-size: 12px;
+}
+.pmx-kv:last-child {
+  border-bottom: 0;
+}
+.pmx-kv__k {
+  color: var(--pm-ink-3);
+  min-width: 0;
+}
+.pmx-kv__v {
+  color: var(--pm-ink);
+  font-weight: 570;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pmx-kv__v[data-tone='danger'] {
+  color: var(--pm-danger);
+}
+.pmx-kv__v[data-tone='warn'] {
+  color: var(--pm-warn);
+}
+.pmx-kv__v[data-tone='ok'] {
+  color: var(--pm-accent-ink);
+}
+
+/* ── Responsive: container queries ──────────────────────────────────────── */
+
+@container pm (max-width: 1240px) {
+  .pmx-stats[data-cols='5'] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container pm (max-width: 1180px) {
+  .pmx-stats,
+  .pmx-stats[data-cols='4'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pmx-stats[data-cols='3'] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .pmx-stats[data-cols='5'] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  /* Tablet: the optional column goes first. Declared by the column, not by
+     :nth-child, so adding a column cannot silently break this. */
+  .pmx-table__head > [data-drop='1180'],
+  .pmx-table__row > [data-drop='1180'] {
+    display: none;
+  }
+}
+
+@container pm (max-width: 1080px) {
+  .pmx-table__head > [data-drop='1080'],
+  .pmx-table__row > [data-drop='1080'] {
+    display: none;
+  }
+  .pmx-rowacts {
+    opacity: 1;
+  }
+}
+
+@container pm (max-width: 720px) {
+  .pmx-toolbar {
+    gap: 7px;
+  }
+  .pmx-search {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .pmx-seg {
+    overflow-x: auto;
+    max-width: 100%;
+    scrollbar-width: none;
+  }
+  .pmx-seg::-webkit-scrollbar {
+    display: none;
+  }
+  .pmx-toolbar__count {
+    margin-left: 0;
+  }
+  .pmx-stats,
+  .pmx-stats[data-cols='4'],
+  .pmx-stats[data-cols='3'],
+  .pmx-stats[data-cols='5'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .pmx-stat {
+    padding: 10px 12px;
+  }
+  .pmx-stat__num {
+    font-size: 20px;
+  }
+
+  /* A table becomes a stacked record. Columns opt in by `mobile`, so the
+     mapping is declared in the screen instead of guessed in CSS. */
+  .pmx-table__head {
+    display: none;
+  }
+  .pmx-table__row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    grid-template-areas:
+      'title value'
+      'meta meta'
+      'status actions';
+    row-gap: 3px;
+    column-gap: 8px;
+    padding: 11px 2px;
+    align-items: start;
+    min-height: 0;
+  }
+  .pmx-table__row > .pmx-check {
+    display: none;
+  }
+  .pmx-table__row > [data-mobile='title'] {
+    grid-area: title;
+    white-space: normal;
+  }
+  .pmx-table__row > [data-mobile='value'] {
+    grid-area: value;
+    align-self: center;
+    justify-self: end;
+  }
+  .pmx-table__row > [data-mobile='meta'] {
+    grid-area: meta;
+    font-size: 10.5px;
+    color: var(--pm-ink-3);
+    white-space: normal;
+  }
+  .pmx-table__row > [data-mobile='status'] {
+    grid-area: status;
+    justify-self: start;
+    align-self: center;
+  }
+  .pmx-table__row > [data-mobile='actions'] {
+    grid-area: actions;
+    justify-self: end;
+  }
+  .pmx-table__row > [data-mobile='hide'],
+  .pmx-table__row > [data-mobile='none'] {
+    display: none;
+  }
+
+  .pmx-rhead {
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+  .pmx-rhead__acts {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .pmx-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pmx-panel__head {
+    padding: 11px 12px 8px;
+  }
+  .pmx-panel__body {
+    padding: 10px 12px 12px;
+  }
+  .pmx-panel__body--flush {
+    padding: 3px 12px 7px;
+  }
+}
+
+/* A tab strip that scrolls must look scrollable, not clipped. The workspace has
+   five tabs and a phone fits about three and a half; without this the last
+   visible tab is sliced by the container edge and reads as a layout bug. Uses
+   the same mask fade as the canonical `.pm-nav` pill. */
+@container pm (max-width: 720px) {
+  .pmx-tabs {
+    width: 100%;
+    -webkit-mask-image: linear-gradient(90deg, #000 90%, transparent 100%);
+    mask-image: linear-gradient(90deg, #000 90%, transparent 100%);
+  }
+  .pmx-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .pmx-tabs > button {
+    flex: none;
+  }
+}
