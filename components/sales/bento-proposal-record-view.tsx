@@ -125,6 +125,7 @@ export function BentoProposalRecordView({
         <div className="flex flex-wrap items-center gap-2">
           <ExportDocumentPdfButton
             documentKind="PROPOSAL"
+            documentId={proposal.id}
             number={proposal.number}
             title={proposal.title}
             status={proposal.status}

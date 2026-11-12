@@ -289,18 +289,32 @@ export function ExportDocumentPdfButton(props: ExportDocumentPdfProps) {
     }
   }
 
-  if (props.documentKind === 'ESTIMATE' && props.documentId) {
-    return (
-      <a
-        href={`/api/v1/finance/estimates/${encodeURIComponent(props.documentId)}/pdf`}
-        download
-        data-testid="export-pdf-button"
-        className="inline-flex items-center gap-1.5 px-3 py-2 border border-border bg-background text-foreground rounded-md text-sm font-medium hover:bg-muted/80"
-      >
-        <Download className="h-4 w-4" />
-        Download PDF
-      </a>
-    );
+  // Direct server PDF downloads for documents with authoritative endpoints
+  if (props.documentId) {
+    let downloadUrl: string | null = null;
+    if (props.documentKind === 'ESTIMATE') {
+      downloadUrl = `/api/v1/finance/estimates/${encodeURIComponent(props.documentId)}/pdf`;
+    } else if (props.documentKind === 'PROPOSAL') {
+      downloadUrl = `/api/v1/crm/proposals/${encodeURIComponent(props.documentId)}/pdf`;
+    } else if (props.documentKind === 'QUOTATION') {
+      downloadUrl = `/api/v1/crm/quotations/${encodeURIComponent(props.documentId)}/pdf`;
+    } else if (props.documentKind === 'CONTRACT') {
+      downloadUrl = `/api/v1/documents/contracts/${encodeURIComponent(props.documentId)}/pdf`;
+    }
+
+    if (downloadUrl) {
+      return (
+        <a
+          href={downloadUrl}
+          download
+          data-testid="export-pdf-button"
+          className="inline-flex items-center gap-1.5 px-3 py-2 border border-border bg-background text-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+        >
+          <Download className="h-4 w-4" />
+          Download PDF
+        </a>
+      );
+    }
   }
 
   return (

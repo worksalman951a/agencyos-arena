@@ -45,6 +45,7 @@ export function ContractDetailClient({
         <div className="flex flex-wrap items-center gap-2">
           <ExportDocumentPdfButton
             documentKind="CONTRACT"
+            documentId={contract.id}
             number={contract.id.slice(0, 8).toUpperCase()}
             title={contract.title}
             status={contract.status}

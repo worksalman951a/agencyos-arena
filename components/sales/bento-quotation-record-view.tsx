@@ -108,6 +108,7 @@ export function BentoQuotationRecordView({
         <div className="flex flex-wrap items-center gap-2">
           <ExportDocumentPdfButton
             documentKind="QUOTATION"
+            documentId={quotation.id}
             number={quotation.number}
             title={quotation.title}
             status={quotation.status}
