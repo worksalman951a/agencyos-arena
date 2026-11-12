@@ -435,21 +435,28 @@ jobs:
       # postgres:16 service image.
       - name: Install PostgreSQL 16 client tools
         run: |
-          # The client major must match the postgres:16 service image. A newer
-          # pg_dump/pg_restore emits `SET transaction_timeout = 0`, which a 16
-          # server rejects with "unrecognized configuration parameter", and the
-          # restore then dies while INITIALIZING — before writing a single row.
+          # The client major must match the postgres:16 service image, and must
+          # be installed from a source that is guaranteed to contain exactly
+          # that series. Neither apt route is reliable here: the PGDG archive
+          # does not publish 16 for every Ubuntu release, and the distribution
+          # repos on the current runner ship 18 with no versioned 16 package
+          # (both were tried and both failed).
           #
-          # The runner already has a client installed (currently 18) via
-          # alternatives, so installing the versioned package is not enough on
-          # its own: the alternatives symlink may still resolve to 18. The
-          # versioned bin directory is prepended to PATH instead, which is
-          # deterministic, and the major is asserted afterwards.
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq "postgresql-client-${PG_CLIENT_VERSION}"
+          # The service image itself is the authoritative source, so the client
+          # binaries are copied out of a postgres:16 container. That guarantees
+          # an exact version match with the server the dump is restored into —
+          # a 17+ client would send `SET transaction_timeout = 0`, which a 16
+          # server rejects while INITIALIZING.
+          mkdir -p "$HOME/pg-client/bin"
+          docker create --name pg-client-src postgres:16-alpine > /dev/null
+          docker cp pg-client-src:/usr/local/bin/pg_dump "$HOME/pg-client/bin/"
+          docker cp pg-client-src:/usr/local/bin/pg_restore "$HOME/pg-client/bin/"
+          docker cp pg-client-src:/usr/local/bin/psql "$HOME/pg-client/bin/"
+          docker cp pg-client-src:/usr/local/bin/pg_isready "$HOME/pg-client/bin/"
+          docker rm pg-client-src > /dev/null
 
-          echo "/usr/lib/postgresql/${PG_CLIENT_VERSION}/bin" >> "$GITHUB_PATH"
-          export PATH="/usr/lib/postgresql/${PG_CLIENT_VERSION}/bin:$PATH"
+          echo "$HOME/pg-client/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/pg-client/bin:$PATH"
 
           pg_dump --version
           pg_restore --version
