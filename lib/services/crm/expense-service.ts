@@ -12,6 +12,22 @@ function codedError(message: string, statusCode: number) {
   return Object.assign(new Error(message), { statusCode });
 }
 
+function isBilledSourceConflict(error: unknown): boolean {
+  const value = error as { code?: string; message?: string; meta?: { code?: string; message?: string } } | null;
+  return Boolean(
+    value &&
+      (['P2003', 'P2004', 'P2010'].includes(value.code ?? '') ||
+        value.meta?.code === '23514' ||
+        /billed expense is immutable/i.test(`${value.message ?? ''} ${value.meta?.message ?? ''}`))
+  );
+}
+
+function validateExpenseAmount(amount: string | undefined): void {
+  if (amount !== undefined && (!/^\d+(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0)) {
+    throw codedError('Amount must be positive and have at most two decimal places', 400);
+  }
+}
+
 export interface ExpenseResponse {
   id: string;
   organizationId: string;
@@ -21,6 +37,7 @@ export interface ExpenseResponse {
   expenseDate: Date;
   receiptUrl: string | null;
   billable: boolean;
+  billed: boolean;
   createdAt: Date;
 }
 
@@ -33,6 +50,7 @@ interface ExpenseRecord {
   expenseDate: Date;
   receiptUrl: string | null;
   billable: boolean;
+  billedInvoiceItem?: { invoiceId: string } | null;
   createdAt: Date;
 }
 
@@ -110,6 +128,7 @@ export interface ExpenseListQuery {
   /** Exact category filter. */
   category?: string;
   billable?: boolean;
+  projectId?: string;
   /** Inclusive `expenseDate` bounds, `YYYY-MM-DD` or ISO. */
   from?: string;
   to?: string;
@@ -176,6 +195,7 @@ function serializeExpense(expense: ExpenseRecord): ExpenseResponse {
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
+    billed: Boolean(expense.billedInvoiceItem),
     createdAt: expense.createdAt,
   };
 }
@@ -191,6 +211,14 @@ export async function searchExpenses(query: ExpenseListQuery = {}): Promise<Expe
   const { userId, organizationId } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'expense.read');
+  if (query.projectId) {
+    await requirePermission(userId, organizationId, 'project.read');
+    const project = await prisma.project.findFirst({
+      where: { id: query.projectId, organizationId },
+      select: { id: true },
+    });
+    if (!project) throw codedError('Project not found', 404);
+  }
 
   const page = Math.max(1, Math.trunc(query.page ?? 1));
   const pageSize = Math.min(100, Math.max(1, Math.trunc(query.pageSize ?? 20)));
@@ -208,6 +236,7 @@ export async function searchExpenses(query: ExpenseListQuery = {}): Promise<Expe
   const filters: Record<string, unknown> = { organizationId };
   if (query.category) filters.category = query.category;
   if (query.billable !== undefined) filters.billable = query.billable;
+  if (query.projectId) filters.projectId = query.projectId;
   if (from || to) {
     filters.expenseDate = {
       ...(from ? { gte: from } : {}),
@@ -241,6 +270,7 @@ export async function searchExpenses(query: ExpenseListQuery = {}): Promise<Expe
   const [rows, totals, billableTotals] = await Promise.all([
     prisma.expenseItem.findMany({
       where: filters,
+      include: { billedInvoiceItem: { select: { invoiceId: true } } },
       orderBy: orderByFor(sort),
       skip: (currentPage - 1) * pageSize,
       take: pageSize,
@@ -280,6 +310,7 @@ export async function listExpenses() {
 
   const expenses = await prisma.expenseItem.findMany({
     where: { organizationId },
+    include: { billedInvoiceItem: { select: { invoiceId: true } } },
     orderBy: { expenseDate: 'desc' },
   });
 
@@ -294,6 +325,7 @@ export async function getExpense(id: string) {
   const [expense, organization] = await Promise.all([
     prisma.expenseItem.findFirst({
       where: { id, organizationId },
+      include: { billedInvoiceItem: { select: { invoiceId: true } } },
     }),
     prisma.organization.findUnique({ where: { id: organizationId }, select: { settings: true } }),
   ]);
@@ -319,6 +351,7 @@ export async function getExpense(id: string) {
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
+    billed: Boolean(expense.billedInvoiceItem),
     createdAt: expense.createdAt,
     currency,
   };
@@ -328,11 +361,14 @@ export async function createExpense(input: ExpenseCreateInput) {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'expense.create');
+  validateExpenseAmount(input.amount);
 
-  // Verify project belongs to org if provided
+  // Associating a financial record requires both expense permission and the
+  // ability to read the target project; identifiers are never accepted as org authority.
   if (input.projectId) {
+    await requirePermission(userId, organizationId, 'project.read');
     const project = await prisma.project.findFirst({
-      where: { id: input.projectId, organizationId },
+      where: { id: input.projectId, organizationId, deletedAt: null, status: { not: 'archived' } },
     });
     if (!project) {
       const error = new Error('Project not found') as Error & { statusCode?: number };
@@ -346,7 +382,7 @@ export async function createExpense(input: ExpenseCreateInput) {
       organizationId,
       projectId: input.projectId ?? null,
       category: input.category,
-      amount: Number(input.amount),
+      amount: input.amount.trim(),
       expenseDate: new Date(input.expenseDate),
       receiptUrl: input.receiptUrl ?? null,
       billable: input.billable,
@@ -381,6 +417,7 @@ export async function createExpense(input: ExpenseCreateInput) {
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
+    billed: false,
     createdAt: expense.createdAt,
   };
 }
@@ -389,6 +426,7 @@ export async function updateExpense(id: string, input: ExpenseUpdateInput) {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'expense.update');
+  validateExpenseAmount(input.amount);
 
   const existing = await prisma.expenseItem.findFirst({
     where: { id, organizationId },
@@ -400,9 +438,22 @@ export async function updateExpense(id: string, input: ExpenseUpdateInput) {
     throw error;
   }
 
+  const billedLine = await prisma.invoiceItem.findFirst({
+    where: { sourceExpenseId: id },
+    select: { id: true },
+  });
+  if (billedLine) {
+    const error = new Error(
+      'Billed expenses are immutable; void or retain the invoice for history'
+    ) as Error & { statusCode?: number };
+    error.statusCode = 409;
+    throw error;
+  }
+
   if (input.projectId !== undefined && input.projectId !== null) {
+    await requirePermission(userId, organizationId, 'project.read');
     const project = await prisma.project.findFirst({
-      where: { id: input.projectId, organizationId },
+      where: { id: input.projectId, organizationId, deletedAt: null, status: { not: 'archived' } },
     });
     if (!project) {
       const error = new Error('Project not found') as Error & { statusCode?: number };
@@ -411,17 +462,25 @@ export async function updateExpense(id: string, input: ExpenseUpdateInput) {
     }
   }
 
-  const expense = await prisma.expenseItem.update({
+  let expense;
+  try {
+    expense = await prisma.expenseItem.update({
     where: { id },
     data: {
       projectId: input.projectId !== undefined ? input.projectId : existing.projectId,
       category: input.category ?? existing.category,
-      amount: input.amount !== undefined ? Number(input.amount) : existing.amount,
+      amount: input.amount !== undefined ? input.amount.trim() : existing.amount,
       expenseDate: input.expenseDate ? new Date(input.expenseDate) : existing.expenseDate,
       receiptUrl: input.receiptUrl !== undefined ? input.receiptUrl : existing.receiptUrl,
       billable: input.billable !== undefined ? input.billable : existing.billable,
     },
-  });
+    });
+  } catch (error) {
+    if (isBilledSourceConflict(error)) {
+      throw codedError('Billed expenses are immutable', 409);
+    }
+    throw error;
+  }
 
   await createAuditLog({
     actorId: userId,
@@ -445,6 +504,7 @@ export async function updateExpense(id: string, input: ExpenseUpdateInput) {
     expenseDate: expense.expenseDate,
     receiptUrl: expense.receiptUrl,
     billable: expense.billable,
+    billed: false,
     createdAt: expense.createdAt,
   };
 }
@@ -464,9 +524,26 @@ export async function deleteExpense(id: string) {
     throw error;
   }
 
-  await prisma.expenseItem.delete({
-    where: { id },
+  const billedLine = await prisma.invoiceItem.findFirst({
+    where: { sourceExpenseId: id },
+    select: { id: true },
   });
+  if (billedLine) {
+    const error = new Error(
+      'Billed expenses cannot be deleted; the invoice link is retained for financial history'
+    ) as Error & { statusCode?: number };
+    error.statusCode = 409;
+    throw error;
+  }
+
+  try {
+    await prisma.expenseItem.delete({ where: { id } });
+  } catch (error) {
+    if (isBilledSourceConflict(error)) {
+      throw codedError('Billed expenses cannot be deleted', 409);
+    }
+    throw error;
+  }
 
   await createAuditLog({
     actorId: userId,

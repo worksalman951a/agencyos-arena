@@ -1,14 +1,10 @@
 import { z } from 'zod';
 
-const validAmount = z.string().refine(
-  (val) => {
-    const trimmed = val.trim();
-    if (!trimmed) return false;
-    const n = Number(trimmed);
-    return !Number.isNaN(n) && Number.isFinite(n);
-  },
-  { message: 'Amount must be a valid number' }
-);
+const validAmount = z
+  .string()
+  .refine((val) => /^\d+(?:\.\d{1,2})?$/.test(val.trim()) && Number(val) > 0, {
+    message: 'Amount must be positive and have at most two decimal places',
+  });
 
 const userIdString = z.string().trim().min(1, 'Valid user ID is required').max(128);
 

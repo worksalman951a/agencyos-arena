@@ -75,6 +75,7 @@ export default async function ChangeOrdersPage({
               <th className="pb-3 font-medium">Description</th>
               <th className="pb-3 font-medium text-right">Amount</th>
               <th className="pb-3 font-medium">Status</th>
+              <th className="pb-3 font-medium">Billing</th>
               <th className="pb-3 font-medium">Approved By</th>
               <th className="pb-3 font-medium text-right">Created</th>
               <th className="pb-3 font-medium w-24 text-right">Actions</th>
@@ -83,7 +84,7 @@ export default async function ChangeOrdersPage({
           <tbody>
             {changeOrders.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-center py-8 text-muted-foreground">
+                <td colSpan={8} className="text-center py-8 text-muted-foreground">
                   No change orders found.
                 </td>
               </tr>
@@ -114,6 +115,9 @@ export default async function ChangeOrdersPage({
                     >
                       {co.status}
                     </span>
+                  </td>
+                  <td className="py-4 text-sm">
+                    {co.billed ? 'Billed' : co.status === 'approved' ? 'Unbilled' : 'Not eligible'}
                   </td>
                   <td className="py-4 text-sm text-muted-foreground">
                     {co.approver?.name ?? co.approver?.email ?? '—'}

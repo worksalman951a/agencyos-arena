@@ -558,9 +558,13 @@ model InvoiceItem {
   unitPrice   Decimal
   taxRate     Decimal  @default(0)
   amount      Decimal
-  createdAt   DateTime @default(now())
+  createdAt           DateTime @default(now())
+  sourceExpenseId     String?  @unique
+  sourceChangeOrderId String?  @unique
 
-  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice             Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  sourceExpense       ExpenseItem?  @relation("ExpenseBillingSource", fields: [sourceExpenseId], references: [id], onDelete: NoAction)
+  sourceChangeOrder   ChangeOrder?  @relation("ChangeOrderBillingSource", fields: [sourceChangeOrderId], references: [id], onDelete: NoAction)
 }
 
 model Payment {
@@ -606,6 +610,7 @@ model ExpenseItem {
   createdAt      DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  billedInvoiceItem InvoiceItem? @relation("ExpenseBillingSource")
 }
 
 /// ============================================
@@ -752,6 +757,7 @@ model ChangeOrder {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  billedInvoiceItem InvoiceItem? @relation("ChangeOrderBillingSource")
 }
 
 /// ============================================

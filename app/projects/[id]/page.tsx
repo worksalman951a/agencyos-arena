@@ -174,6 +174,14 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         >
           Time Entries ({workspace.timeSummary.totalHours.toFixed(1)} hrs)
         </Link>
+        {permissions.has('expense.read') && permissions.has('project.read') && (
+          <Link
+            href={`/finance/expenses?projectId=${encodeURIComponent(project.id)}`}
+            className="px-3 py-1.5 rounded-md border border-input bg-background text-sm font-medium hover:bg-muted"
+          >
+            Expenses
+          </Link>
+        )}
         {canLogTime && (
           <Link
             href={`/projects/time-entries/new?projectId=${encodeURIComponent(project.id)}`}
