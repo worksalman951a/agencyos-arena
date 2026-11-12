@@ -15,6 +15,7 @@ export interface PrintableLineItem {
 
 export interface ExportDocumentPdfProps {
   documentKind: 'PROPOSAL' | 'QUOTATION' | 'ESTIMATE' | 'CONTRACT';
+  documentId?: string | null;
   number?: string | null;
   title: string;
   status: string;
@@ -286,6 +287,20 @@ export function ExportDocumentPdfButton(props: ExportDocumentPdfProps) {
     } finally {
       setExporting(false);
     }
+  }
+
+  if (props.documentKind === 'ESTIMATE' && props.documentId) {
+    return (
+      <a
+        href={`/api/v1/finance/estimates/${encodeURIComponent(props.documentId)}/pdf`}
+        download
+        data-testid="export-pdf-button"
+        className="inline-flex items-center gap-1.5 px-3 py-2 border border-border bg-background text-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+      >
+        <Download className="h-4 w-4" />
+        Download PDF
+      </a>
+    );
   }
 
   return (

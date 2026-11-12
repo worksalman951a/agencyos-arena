@@ -64,6 +64,7 @@ export function BentoEstimateRecordView({
         <div className="flex flex-wrap items-center gap-2">
           <ExportDocumentPdfButton
             documentKind="ESTIMATE"
+            documentId={estimate.id}
             number={estimate.number}
             title={`Estimate ${estimate.number}`}
             status={estimate.status}
