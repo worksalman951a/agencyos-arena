@@ -16,7 +16,6 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-// @ts-expect-error -- Better Auth ships this helper without public types.
 import { makeSignature } from 'better-auth/crypto';
 
 import { prisma } from '@/lib/db';
