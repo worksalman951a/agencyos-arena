@@ -280,8 +280,17 @@ The limits are constants in `lib/security/rate-limit.ts`.
     structurally, not in Gmail, Outlook or Apple Mail.
 11. **Creating a client invitation has no request limiter** (team invitations
     have `invitation-create`). Pre-existing; the e-mail side is bounded by §7.
-12. **Not wired:** team invitations, password reset, e-mail verification.
-13. **Workflow rules still reject `send_email`.** Nothing in the automation
+12. **One e-mail per stored invitation, not per address.** The "one pending
+    invitation per address" rule is a read followed by an insert with no unique
+    index behind it (pre-existing, not changed here). Requests for the same
+    address whose reads and inserts interleave all pass it; each stored
+    invitation is then e-mailed once, so the contact gets several messages, each
+    with its own valid link. Simultaneous requests did not interleave in local
+    runs unless the insert was held back; the form disables its button while a
+    request is in flight, and the recipient budget caps the total at five an
+    hour.
+13. **Not wired:** team invitations, password reset, e-mail verification.
+14. **Workflow rules still reject `send_email`.** Nothing in the automation
     module changed; its form still explains that with "no SMTP … infrastructure
     exists in this phase", which now describes the automation module only.
 
