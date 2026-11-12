@@ -12,13 +12,17 @@
 
 import type { APIRequestContext } from '@playwright/test';
 
-import { createAccount, expect, requireDatabase, test } from './fixtures';
+import { APP_URL, createAccount, expect, requireDatabase, test } from './fixtures';
 import type { TestAccount } from './fixtures';
 
 requireDatabase();
 
 const authHeader = (account: TestAccount) => ({
   Cookie: `better-auth.session_token=${account.sessionToken}`,
+  // Same-origin marker: every mutating API request must name a trusted Origin
+  // (CSRF protection in middleware.ts). A browser sends this on its own; the
+  // API request context does not.
+  Origin: APP_URL,
 });
 
 async function createContact(

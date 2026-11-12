@@ -377,6 +377,7 @@ describeIfDb('CRM Pipeline Stages integration (real PostgreSQL)', () => {
           headers: {
             Cookie: `better-auth.session_token=${testSessionToken}`,
             Accept: 'application/json',
+            Origin: SERVER_URL,
           },
         }
       );
@@ -395,6 +396,7 @@ describeIfDb('CRM Pipeline Stages integration (real PostgreSQL)', () => {
           headers: {
             Cookie: `better-auth.session_token=${testSessionToken}`,
             Accept: 'application/json',
+            Origin: SERVER_URL,
           },
         }
       );
