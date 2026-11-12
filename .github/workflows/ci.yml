@@ -539,8 +539,10 @@ jobs:
             --dbname "$DB" "$DUMP"
 
           echo "--- restored fixture rows ---"
-          psql -w -q -v ON_ERROR_STOP=1 -d "$DB" -c "
-            SELECT 'Organization' AS t, count(*) FROM \"Organization\" WHERE id = 'bkverify-org-0001'
+          # -A (unaligned) -t (tuples only) -F'|' so the output is exactly
+          # `name|count` with no heading or "(N rows)" footer to parse around.
+          psql -w -At -F'|' -v ON_ERROR_STOP=1 -d "$DB" -c "
+            SELECT 'Organization'::text, count(*) FROM \"Organization\" WHERE id = 'bkverify-org-0001'
             UNION ALL SELECT 'Role', count(*) FROM \"Role\" WHERE id = 'bkverify-role-0001'
             UNION ALL SELECT 'User', count(*) FROM \"User\" WHERE id = 'bkverify-user-0001'
             UNION ALL SELECT 'Session', count(*) FROM \"Session\" WHERE id = 'bkverify-session-0001'
@@ -548,22 +550,38 @@ jobs:
             UNION ALL SELECT '_prisma_migrations', count(*) FROM \"_prisma_migrations\" WHERE finished_at IS NOT NULL;" \
             | tee restored-rows.txt
 
-          # Every fixture row must be present exactly once; migrations must all
-          # be recorded. `grep -c` on the output avoids a second round trip.
+          # Every fixture row must be present exactly once. On mismatch, say
+          # which check failed and dump the whole table of counts, so a failure
+          # here is diagnosable without the job log.
           for expected in "Organization|1" "Role|1" "User|1" "Session|1" "RateLimitBucket|2"; do
             name="${expected%|*}"; want="${expected#*|}"
-            got="$(awk -F'|' -v n="$name" '$1==n {print $2}' restored-rows.txt | tr -d ' ')"
+            got="$(awk -F'|' -v n="$name" '$1==n {print $2}' restored-rows.txt | tr -d ' \r')"
             if [ "$got" != "$want" ]; then
-              echo "ERROR: restored $name rows = '$got', expected '$want'" >&2
+              echo "::error title=restore verification::$name has '$got' row(s) after restore, expected '$want'. Counts: $(tr '\n' ' ' < restored-rows.txt)"
               exit 1
             fi
+            echo "  $name: $got (expected $want)"
           done
-          migrations="$(awk -F'|' '$1=="_prisma_migrations" {print $2}' restored-rows.txt | tr -d ' ')"
+          migrations="$(awk -F'|' '$1=="_prisma_migrations" {print $2}' restored-rows.txt | tr -d ' \r')"
           if [ -z "$migrations" ] || [ "$migrations" -lt 19 ]; then
-            echo "ERROR: restored migration history has '$migrations' rows" >&2
+            echo "::error title=restore verification::migration history has '$migrations' rows, expected >= 19"
             exit 1
           fi
-          echo "Independent verification passed: fixture rows and $migrations migrations present"
+          echo "Independent verification passed: fixture rows present, $migrations migrations recorded"
+
+          # Also prove the referenced tables are not merely present but related:
+          # the session must still point at the restored user, i.e. the foreign
+          # key survived with its data.
+          joins="$(psql -w -At -v ON_ERROR_STOP=1 -d "$DB" -c "
+            SELECT count(*) FROM \"Session\" s
+            JOIN \"User\" u ON u.id = s.\"userId\"
+            JOIN \"Organization\" o ON o.id = u.\"organizationId\"
+            WHERE s.id = 'bkverify-session-0001' AND u.id = 'bkverify-user-0001' AND o.id = 'bkverify-org-0001';")"
+          echo "Restored session->user->organization join rows: $joins"
+          if [ "$joins" != "1" ]; then
+            echo "::error title=restore verification::the restored session no longer joins to its user and organization (got '$joins')"
+            exit 1
+          fi
         env:
           TARGET_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}
 
