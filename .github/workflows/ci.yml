@@ -522,25 +522,32 @@ jobs:
       - name: Query the restored data independently
         run: |
           set -euo pipefail
-          DUMP="$(ls backup-artifacts/*.dump | head -1)"
-          DB="agencyos_restore_verify_independent_$(date +%s)"
 
-          # Everything below reaches the isolated service through PG* variables
-          # so no password is ever an argument of psql or pg_restore.
+          # The verification step above could in principle be wrong about its
+          # own success, so this step looks at the restored rows with psql and
+          # nothing else. It asks verify-restore.mjs for a `--keep` run, which
+          # reuses the restore path already proven in the previous step rather
+          # than re-implementing CREATE DATABASE / pg_restore / DROP here.
+          DUMP="$(ls backup-artifacts/*.dump | head -1)"
+          node scripts/backup/verify-restore.mjs --backup "$DUMP" --keep \
+            > keep-restore.log 2>&1 || {
+            echo "::error title=restore verification::--keep restore failed: $(tail -c 1200 keep-restore.log | tr '\n' ' ')"
+            exit 1
+          }
+          cat keep-restore.log
+
+          DB="$(sed -n 's/^\[verify\] kept *\([^ ]*\).*/\1/p' keep-restore.log | tail -1)"
+          if [ -z "$DB" ]; then
+            echo "::error title=restore verification::could not determine the kept database name"
+            exit 1
+          fi
+          echo "Inspecting kept database: $DB"
+
+          # Discrete PG* env: the password is never an argument of psql.
           export PGHOST=localhost PGPORT=5433 PGUSER=agencyos PGPASSWORD="$TARGET_PASSWORD"
 
-          psql -w -v ON_ERROR_STOP=1 -q -d postgres -c "CREATE DATABASE \"$DB\";"
-          cleanup() {
-            psql -w -q -d postgres -c "DROP DATABASE IF EXISTS \"$DB\";" || true
-          }
-          trap cleanup EXIT
-
-          pg_restore --exit-on-error --single-transaction --no-owner --no-password \
-            --dbname "$DB" "$DUMP"
-
-          echo "--- restored fixture rows ---"
-          # -A (unaligned) -t (tuples only) -F'|' so the output is exactly
-          # `name|count` with no heading or "(N rows)" footer to parse around.
+          # -A -t -F'|' so the output is exactly `name|count`, with no heading
+          # or "(N rows)" footer to parse around.
           psql -w -At -F'|' -v ON_ERROR_STOP=1 -d "$DB" -c "
             SELECT 'Organization'::text, count(*) FROM \"Organization\" WHERE id = 'bkverify-org-0001'
             UNION ALL SELECT 'Role', count(*) FROM \"Role\" WHERE id = 'bkverify-role-0001'
@@ -548,40 +555,61 @@ jobs:
             UNION ALL SELECT 'Session', count(*) FROM \"Session\" WHERE id = 'bkverify-session-0001'
             UNION ALL SELECT 'RateLimitBucket', count(*) FROM \"RateLimitBucket\" WHERE key LIKE 'bkverify:bucket:%'
             UNION ALL SELECT '_prisma_migrations', count(*) FROM \"_prisma_migrations\" WHERE finished_at IS NOT NULL;" \
-            | tee restored-rows.txt
+            > restored-rows.txt 2>&1 || {
+            echo "::error title=restore verification::query failed: $(tail -c 1200 restored-rows.txt | tr '\n' ' ')"
+            exit 1
+          }
+          echo "--- restored fixture rows ---"
+          cat restored-rows.txt
 
-          # Every fixture row must be present exactly once. On mismatch, say
-          # which check failed and dump the whole table of counts, so a failure
-          # here is diagnosable without the job log.
-          for expected in "Organization|1" "Role|1" "User|1" "Session|1" "RateLimitBucket|2"; do
-            name="${expected%|*}"; want="${expected#*|}"
+          check() {
+            local name="$1" want="$2"
+            local got
             got="$(awk -F'|' -v n="$name" '$1==n {print $2}' restored-rows.txt | tr -d ' \r')"
             if [ "$got" != "$want" ]; then
               echo "::error title=restore verification::$name has '$got' row(s) after restore, expected '$want'. Counts: $(tr '\n' ' ' < restored-rows.txt)"
-              exit 1
+              return 1
             fi
             echo "  $name: $got (expected $want)"
-          done
+          }
+
+          check Organization 1
+          check Role 1
+          check User 1
+          check Session 1
+          check RateLimitBucket 2
+
           migrations="$(awk -F'|' '$1=="_prisma_migrations" {print $2}' restored-rows.txt | tr -d ' \r')"
           if [ -z "$migrations" ] || [ "$migrations" -lt 19 ]; then
             echo "::error title=restore verification::migration history has '$migrations' rows, expected >= 19"
             exit 1
           fi
-          echo "Independent verification passed: fixture rows present, $migrations migrations recorded"
+          echo "  _prisma_migrations: $migrations"
 
-          # Also prove the referenced tables are not merely present but related:
-          # the session must still point at the restored user, i.e. the foreign
-          # key survived with its data.
+          # Row counts alone would pass on an archive whose foreign keys were
+          # dropped, so this asserts the relationship survived with the data.
           joins="$(psql -w -At -v ON_ERROR_STOP=1 -d "$DB" -c "
             SELECT count(*) FROM \"Session\" s
             JOIN \"User\" u ON u.id = s.\"userId\"
             JOIN \"Organization\" o ON o.id = u.\"organizationId\"
-            WHERE s.id = 'bkverify-session-0001' AND u.id = 'bkverify-user-0001' AND o.id = 'bkverify-org-0001';")"
-          echo "Restored session->user->organization join rows: $joins"
+            WHERE s.id = 'bkverify-session-0001'
+              AND u.id = 'bkverify-user-0001'
+              AND o.id = 'bkverify-org-0001';" 2>&1)" || {
+            echo "::error title=restore verification::join query failed: $joins"
+            exit 1
+          }
+          echo "Restored session -> user -> organization join rows: $joins"
           if [ "$joins" != "1" ]; then
             echo "::error title=restore verification::the restored session no longer joins to its user and organization (got '$joins')"
             exit 1
           fi
+
+          # Drop only the database this step inspected, re-checking the prefix.
+          case "$DB" in
+            agencyos_restore_verify_*) psql -w -q -d postgres -c "DROP DATABASE \"$DB\";" ;;
+            *) echo "::error title=restore verification::refusing to drop '$DB' (no disposable prefix)"; exit 1 ;;
+          esac
+          echo "Independent verification passed: fixture rows, migrations and foreign keys intact"
         env:
           TARGET_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci_arena_test_2026' }}
 
