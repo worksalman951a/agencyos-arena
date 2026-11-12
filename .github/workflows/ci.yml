@@ -748,7 +748,7 @@ jobs:
           echo "connected to: $here"
           [ "$here" = "agencyos" ] || fail "this check is not pointed at the source database (got '$here')"
 
-          rows="$(psql -w -q -At -v ON_ERROR_STOP=1 -c 'SELECT count(*) FROM \"Organization\";' 2>&1)" \
+          rows="$(psql -w -q -At -v ON_ERROR_STOP=1 -c 'SELECT count(*) FROM "Organization";' 2>&1)" \
             || fail "could not count source rows: $rows"
           echo "Organization rows still in the source database: $rows"
           [ "$rows" -ge 1 ] || fail "source database lost its data (Organization rows = $rows)"
