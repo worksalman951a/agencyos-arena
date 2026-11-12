@@ -104,6 +104,34 @@ The `backup-verify` job in `.github/workflows/ci.yml` runs on real PostgreSQL, n
 
 A mocked or unit-tested backup script cannot satisfy this requirement, which is why the real restore lives in a dedicated CI job rather than in the unit suite. The unit suite covers the guard rules, redaction, exclusive creation, path containment and checksums.
 
+### Verified evidence
+
+Last full green run (`backup-verify`, run 43181728931, commit `fc866b1`) restored a real archive into the isolated port-5433 service and reported:
+
+```
+[verify] OK {"label":"ci-43181728931",
+             "sha256":"c57a012d774bdb76d0458f062fbbb4b858f1437f6d0e5d57d4ebc10d61f9e36a",
+             "status":"passed",
+             "schemaTables":60, "criticalTables":18, "populatedTables":7,
+             "totalRows":99, "rowCountsMatchManifest":true,
+             "appliedMigrations":19, "latestMigration":"0019_rate_limit_bucket",
+             "unvalidatedForeignKeys":0, "invalidIndexes":0,
+             "durationMs":1111}
+```
+
+That line is also published as a `notice` annotation on the job, because artifact and log storage are not reachable from every environment — evidence that cannot be read is not evidence.
+
+The verification was separately shown to be non-vacuous. Fed a restore that wrote nothing, it fails with `Restore is missing critical tables: User, Session, ...` (exit 5); fed one whose tables exist but are empty, it fails with `Restore lost rows in 3 table(s): User: 1 -> 0; ...` (exit 5). A `pg_restore` that exits 0 having written no rows is therefore not reported as success.
+
+### Two defects this job caught that unit tests could not
+
+Worth recording, because both are the failure mode this batch exists to prevent:
+
+1. **`pg_restore` without `--dbname` exits 0 and writes nothing.** It does not fall back to `PGDATABASE`. The restore step had this bug; it "passed" while restoring zero rows.
+2. **A pipeline's exit status is the last command's.** `node verify-restore.mjs | tee log` reported success even when the script failed, so a restore that died at INITIALIZING showed as a green step for several runs before the mismatch between steps 12 and 13 exposed it.
+
+Neither is visible in an archive listing, a mocked test, or a unit test of the guard functions.
+
 ## Manual restore template (Windows PowerShell)
 
 Use this when a restore must be demonstrated outside CI, for example on an approved production backup. Use a fresh PowerShell session. Provision the URLs from the approved secret manager as process-scoped values; do not paste credentials into a command or print them.
