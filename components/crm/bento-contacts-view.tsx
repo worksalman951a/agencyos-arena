@@ -190,7 +190,7 @@ export function BentoContactsView({
                     className="bento-table-row"
                     data-active={isSelected}
                     onClick={() => setSelectedIdx(i)}
-                    aria-label={`${fullName}, ${c.email ?? 'no email'}`}
+                    aria-label={`${fullName}, ${c.isMasked ? 'Protected contact' : (c.email ?? 'no email')}`}
                   >
                     <div className="bento-person" role="cell">
                       <Avatar name={fullName} size="sm" tone={isSelected ? 'accent' : undefined} />
