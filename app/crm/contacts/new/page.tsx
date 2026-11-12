@@ -12,6 +12,8 @@ import {
 } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoContactFormView } from '@/components/crm/bento-contact-form-view';
 
 interface Account {
   id: string;
@@ -19,6 +21,7 @@ interface Account {
 }
 
 export default function NewContactPage() {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<{ message: string; field?: string } | null>(null);
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
@@ -78,7 +81,8 @@ export default function NewContactPage() {
     });
   }
 
-  async function onSubmit() {
+  async function onSubmit(e?: React.FormEvent) {
+    if (e?.preventDefault) e.preventDefault();
     setError(null);
     setFieldErrors({});
     setIsLoading(true);
@@ -136,6 +140,55 @@ export default function NewContactPage() {
     }
   }
 
+  if (isBento) {
+    return (
+      <BentoContactFormView
+        mode="new"
+        firstName={formData.firstName}
+        setFirstName={(val) => {
+          setFormData((prev) => ({ ...prev, firstName: val }));
+          clearFieldError('firstName');
+        }}
+        lastName={formData.lastName}
+        setLastName={(val) => {
+          setFormData((prev) => ({ ...prev, lastName: val }));
+          clearFieldError('lastName');
+        }}
+        email={formData.email}
+        setEmail={(val) => {
+          setFormData((prev) => ({ ...prev, email: val }));
+          clearFieldError('email');
+        }}
+        phone={formData.phone}
+        setPhone={(val) => {
+          setFormData((prev) => ({ ...prev, phone: val }));
+          clearFieldError('phone');
+        }}
+        accountId={formData.accountId}
+        setAccountId={(val) => {
+          setFormData((prev) => ({ ...prev, accountId: val }));
+          clearFieldError('accountId');
+        }}
+        status={formData.status}
+        setStatus={(val) => {
+          setFormData((prev) => ({ ...prev, status: val }));
+          clearFieldError('status');
+        }}
+        source={formData.source}
+        setSource={(val) => {
+          setFormData((prev) => ({ ...prev, source: val }));
+          clearFieldError('source');
+        }}
+        accounts={accounts}
+        accountsLoading={accountsLoading}
+        onSubmit={onSubmit}
+        isLoading={isLoading}
+        error={error ? error.message : null}
+        fieldErrors={fieldErrors}
+      />
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-lg">
@@ -152,7 +205,7 @@ export default function NewContactPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              onSubmit();
+              void onSubmit();
             }}
             className="space-y-4"
           >

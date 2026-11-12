@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoLeadFormView } from '@/components/crm/bento-lead-form-view';
 
 interface EditLeadFormProps {
   lead: {
@@ -24,6 +26,7 @@ interface EditLeadFormProps {
 }
 
 export function EditLeadForm({ lead }: EditLeadFormProps) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -58,38 +61,57 @@ export function EditLeadForm({ lead }: EditLeadFormProps) {
     },
   });
 
-  async function onSubmit(data: {
-    source: string;
-    status: string;
-    priority: string;
-    expectedValue: string;
-    contactId: string;
-    accountId: string;
-    ownerId: string;
-    pipelineId: string;
-    stageId: string;
-    notes: string;
-  }) {
+  const [source, setSource] = React.useState(lead.source);
+  const [status, setStatus] = React.useState(lead.status);
+  const [priority, setPriority] = React.useState(lead.priority ?? '');
+  const [expectedValue, setExpectedValue] = React.useState(lead.expectedValue ?? '');
+  const [contactId, setContactId] = React.useState(lead.contactId ?? '');
+  const [accountId, setAccountId] = React.useState(lead.accountId ?? '');
+  const [ownerId, setOwnerId] = React.useState(lead.ownerId ?? '');
+  const [pipelineId, setPipelineId] = React.useState(lead.pipelineId ?? '');
+  const [stageId, setStageId] = React.useState(lead.stageId ?? '');
+  const [notes, setNotes] = React.useState(lead.notes ?? '');
+
+  async function submitPayload(override = false) {
     setError(null);
     setDuplicateWarning(null);
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/v1/crm/leads/${lead.id}`, {
+      const url = override
+        ? `/api/v1/crm/leads/${lead.id}?overrideDuplicate=true`
+        : `/api/v1/crm/leads/${lead.id}`;
+
+      const payload = isBento
+        ? {
+            source,
+            status,
+            priority,
+            expectedValue: expectedValue || null,
+            contactId: contactId || null,
+            accountId: accountId || null,
+            ownerId: ownerId || null,
+            pipelineId: pipelineId || null,
+            stageId: stageId || null,
+            notes: notes || null,
+          }
+        : {
+            source: form.getValues('source'),
+            status: form.getValues('status'),
+            priority: form.getValues('priority'),
+            expectedValue: form.getValues('expectedValue') || null,
+            contactId: form.getValues('contactId') || null,
+            accountId: form.getValues('accountId') || null,
+            ownerId: form.getValues('ownerId') || null,
+            pipelineId: form.getValues('pipelineId') || null,
+            stageId: form.getValues('stageId') || null,
+            notes: form.getValues('notes') || null,
+          };
+
+      const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          source: data.source,
-          status: data.status,
-          priority: data.priority,
-          expectedValue: data.expectedValue || null,
-          contactId: data.contactId || null,
-          accountId: data.accountId || null,
-          ownerId: data.ownerId || null,
-          pipelineId: data.pipelineId || null,
-          stageId: data.stageId || null,
-          notes: data.notes || null,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (res.status === 409) {
@@ -116,52 +138,56 @@ export function EditLeadForm({ lead }: EditLeadFormProps) {
     }
   }
 
-  async function confirmOverride() {
-    setError(null);
-    setIsLoading(true);
-    try {
-      const data = {
-        source: form.getValues('source'),
-        status: form.getValues('status'),
-        priority: form.getValues('priority'),
-        expectedValue: form.getValues('expectedValue') || null,
-        contactId: form.getValues('contactId') || null,
-        accountId: form.getValues('accountId') || null,
-        ownerId: form.getValues('ownerId') || null,
-        pipelineId: form.getValues('pipelineId') || null,
-        stageId: form.getValues('stageId') || null,
-        notes: form.getValues('notes') || null,
-      };
-
-      const res = await fetch(`/api/v1/crm/leads/${lead.id}?overrideDuplicate=true`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(data),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        setError(errData.error || 'Failed to update lead');
-        return;
-      }
-
-      setDuplicateWarning(null);
-      router.push(`/crm/leads/${lead.id}`);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to update lead');
-    } finally {
-      setIsLoading(false);
-    }
+  function onSubmit(e?: React.FormEvent) {
+    if (e?.preventDefault) e.preventDefault();
+    void submitPayload(false);
   }
 
+  function confirmOverride() {
+    void submitPayload(true);
+  }
+
+  if (isBento) {
+    return (
+      <BentoLeadFormView
+        mode="edit"
+        leadId={lead.id}
+        contactId={contactId}
+        setContactId={setContactId}
+        accountId={accountId}
+        setAccountId={setAccountId}
+        source={source}
+        setSource={setSource}
+        status={status}
+        setStatus={setStatus}
+        priority={priority}
+        setPriority={setPriority}
+        expectedValue={expectedValue}
+        setExpectedValue={setExpectedValue}
+        ownerId={ownerId}
+        setOwnerId={setOwnerId}
+        pipelineId={pipelineId}
+        setPipelineId={setPipelineId}
+        stageId={stageId}
+        setStageId={setStageId}
+        notes={notes}
+        setNotes={setNotes}
+        onSubmit={onSubmit}
+        isLoading={isLoading}
+        error={error}
+        duplicateWarning={duplicateWarning}
+        onConfirmOverride={confirmOverride}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-lg">
         <CardHeader>
           <CardTitle className="text-2xl">Edit Lead</CardTitle>
-          <CardDescription>Update lead details for {lead.source}</CardDescription>
+          <CardDescription>Update lead details and qualification metrics</CardDescription>
         </CardHeader>
         <CardContent>
           {error && (
@@ -170,105 +196,106 @@ export function EditLeadForm({ lead }: EditLeadFormProps) {
             </div>
           )}
           {duplicateWarning && (
-            <div className="rounded-md bg-warning/10 p-3 text-sm text-warning-foreground flex items-center gap-2 mb-4 border border-warning/30">
-              <span>{duplicateWarning.message}</span>
-              <Button size="sm" variant="outline" onClick={confirmOverride} className="ml-auto">
-                Save Anyway
-              </Button>
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 text-sm text-amber-700 dark:text-amber-300 mb-4 space-y-2">
+              <p className="font-semibold">{duplicateWarning.message}</p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={confirmOverride}
+                  disabled={isLoading}
+                >
+                  Save Anyway
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push(`/crm/leads/${duplicateWarning.duplicateId}`)}
+                >
+                  View Existing
+                </Button>
+              </div>
             </div>
           )}
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(() => onSubmit())} className="space-y-4">
             <div className="space-y-2">
               <label htmlFor="source" className="block text-sm font-medium text-foreground">
                 Source <span className="text-destructive">*</span>
               </label>
-              <select
-                id="source"
-                defaultValue={lead.source}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <option value="website">Website</option>
-                <option value="referral">Referral</option>
-                <option value="cold_call">Cold Call</option>
-                <option value="email">Email</option>
-                <option value="social_media">Social Media</option>
-                <option value="event">Event</option>
-                <option value="other">Other</option>
-              </select>
+              <Input id="source" {...form.register('source', { required: 'Source is required' })} />
             </div>
             <div className="space-y-2">
               <label htmlFor="status" className="block text-sm font-medium text-foreground">
-                Status <span className="text-destructive">*</span>
+                Status
               </label>
               <select
                 id="status"
-                defaultValue={lead.status}
+                {...form.register('status')}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <option value="new">New</option>
                 <option value="contacted">Contacted</option>
                 <option value="qualified">Qualified</option>
-                <option value="proposal">Proposal Sent</option>
-                <option value="negotiation">Negotiation</option>
-                <option value="closed-won">Closed Won</option>
-                <option value="closed-lost">Closed Lost</option>
+                <option value="unqualified">Unqualified</option>
               </select>
             </div>
             <div className="space-y-2">
               <label htmlFor="priority" className="block text-sm font-medium text-foreground">
-                Priority <span className="text-destructive">*</span>
+                Priority
               </label>
               <select
                 id="priority"
-                defaultValue={lead.priority || 'medium'}
+                {...form.register('priority')}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
+                <option value="urgent">Urgent</option>
               </select>
             </div>
             <div className="space-y-2">
               <label htmlFor="expectedValue" className="block text-sm font-medium text-foreground">
-                Expected Value ($)
+                Expected Value
               </label>
               <Input
                 id="expectedValue"
                 type="number"
-                min="0"
                 step="0.01"
-                defaultValue={lead.expectedValue ?? ''}
+                {...form.register('expectedValue')}
               />
             </div>
             <div className="space-y-2">
               <label htmlFor="contactId" className="block text-sm font-medium text-foreground">
-                Contact ID
+                Contact ID (Optional)
               </label>
-              <Input id="contactId" defaultValue={lead.contactId ?? ''} />
+              <Input id="contactId" {...form.register('contactId')} />
             </div>
             <div className="space-y-2">
               <label htmlFor="accountId" className="block text-sm font-medium text-foreground">
-                Account ID
+                Account ID (Optional)
               </label>
-              <Input id="accountId" defaultValue={lead.accountId ?? ''} />
+              <Input id="accountId" {...form.register('accountId')} />
             </div>
             <div className="space-y-2">
               <label htmlFor="ownerId" className="block text-sm font-medium text-foreground">
-                Owner / Assignee ID
+                Owner ID (Optional)
               </label>
-              <Input id="ownerId" defaultValue={lead.ownerId ?? ''} />
+              <Input id="ownerId" {...form.register('ownerId')} />
             </div>
             <div className="space-y-2">
               <label htmlFor="pipelineId" className="block text-sm font-medium text-foreground">
-                Pipeline ID
+                Pipeline ID (Optional)
               </label>
-              <Input id="pipelineId" defaultValue={lead.pipelineId ?? ''} />
+              <Input id="pipelineId" {...form.register('pipelineId')} />
             </div>
             <div className="space-y-2">
               <label htmlFor="stageId" className="block text-sm font-medium text-foreground">
-                Stage ID
+                Stage ID (Optional)
               </label>
-              <Input id="stageId" defaultValue={lead.stageId ?? ''} />
+              <Input id="stageId" {...form.register('stageId')} />
             </div>
             <div className="space-y-2">
               <label htmlFor="notes" className="block text-sm font-medium text-foreground">
@@ -276,41 +303,24 @@ export function EditLeadForm({ lead }: EditLeadFormProps) {
               </label>
               <textarea
                 id="notes"
+                {...form.register('notes')}
                 rows={3}
-                defaultValue={lead.notes ?? ''}
-                className="flex h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? 'Saving...' : 'Save Lead'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => router.push(`/crm/leads/${lead.id}`)}
-              disabled={isLoading}
-              className="w-full mt-2"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => {
-                if (window.confirm('Archive this lead?')) {
-                  fetch(`/api/v1/crm/leads/${lead.id}`, {
-                    method: 'DELETE',
-                    credentials: 'include',
-                  }).then(() => {
-                    router.push('/crm/leads');
-                    router.refresh();
-                  });
-                }
-              }}
-              className="w-full mt-2"
-            >
-              Archive Lead
-            </Button>
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push(`/crm/leads/${lead.id}`)}
+                disabled={isLoading}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isLoading}>
+                {isLoading ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>

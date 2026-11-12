@@ -5,8 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoAccountFormView } from '@/components/crm/bento-account-form-view';
 
 export default function NewAccountPage() {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -23,7 +26,8 @@ export default function NewAccountPage() {
     status: 'active',
   });
 
-  async function onSubmit() {
+  async function onSubmit(e?: React.FormEvent) {
+    if (e?.preventDefault) e.preventDefault();
     setError(null);
     setIsLoading(true);
     try {
@@ -54,6 +58,26 @@ export default function NewAccountPage() {
     }
   }
 
+  if (isBento) {
+    return (
+      <BentoAccountFormView
+        mode="new"
+        name={formData.name}
+        setName={(val) => setFormData((prev) => ({ ...prev, name: val }))}
+        website={formData.website}
+        setWebsite={(val) => setFormData((prev) => ({ ...prev, website: val }))}
+        address={formData.address}
+        setAddress={(val) => setFormData((prev) => ({ ...prev, address: val }))}
+        status={formData.status}
+        setStatus={(val) => setFormData((prev) => ({ ...prev, status: val }))}
+        onSubmit={onSubmit}
+        isLoading={isLoading}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-lg">
@@ -70,7 +94,7 @@ export default function NewAccountPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              onSubmit();
+              void onSubmit();
             }}
             className="space-y-4"
           >
@@ -125,18 +149,19 @@ export default function NewAccountPage() {
                 <option value="inactive">Inactive</option>
               </select>
             </div>
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? 'Creating...' : 'Create Account'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => router.push('/crm/accounts')}
-              disabled={isLoading}
-              className="w-full mt-2"
-            >
-              Cancel
-            </Button>
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push('/crm/accounts')}
+                disabled={isLoading}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isLoading}>
+                {isLoading ? 'Creating...' : 'Create Account'}
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>

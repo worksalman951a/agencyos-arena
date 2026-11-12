@@ -14,6 +14,8 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/ui/toast';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoContactFormView } from '@/components/crm/bento-contact-form-view';
 
 interface EditContactFormProps {
   contact: {
@@ -29,11 +31,14 @@ interface EditContactFormProps {
 }
 
 export function EditContactForm({ contact }: EditContactFormProps) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const { toast } = useToast();
   const [error, setError] = React.useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = React.useState(false);
   const [accounts, setAccounts] = React.useState<Array<{ id: string; name: string }>>([]);
+  const [accountsLoading, setAccountsLoading] = React.useState(true);
 
   useEffect(() => {
     fetch('/api/v1/crm/accounts', { credentials: 'include' })
@@ -43,6 +48,9 @@ export function EditContactForm({ contact }: EditContactFormProps) {
       })
       .catch(() => {
         setAccounts([]);
+      })
+      .finally(() => {
+        setAccountsLoading(false);
       });
   }, []);
 
@@ -64,8 +72,10 @@ export function EditContactForm({ contact }: EditContactFormProps) {
     source: contact.source ?? '',
   });
 
-  async function onSubmit() {
+  async function onSubmit(e?: React.FormEvent) {
+    if (e?.preventDefault) e.preventDefault();
     setError(null);
+    setFieldErrors({});
     setIsLoading(true);
     try {
       const res = await fetch(`/api/v1/crm/contacts/${contact.id}`, {
@@ -84,7 +94,22 @@ export function EditContactForm({ contact }: EditContactFormProps) {
       });
 
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
+        const errData = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          issues?: Array<{ path: string[]; message: string }>;
+        };
+        if (errData.issues && Array.isArray(errData.issues)) {
+          const fieldMap: Record<string, string> = {};
+          for (const issue of errData.issues) {
+            const field = issue.path[0];
+            if (field) {
+              fieldMap[field] = issue.message;
+            }
+          }
+          setFieldErrors(fieldMap);
+          setError(errData.error || 'Please correct the errors below');
+          return;
+        }
         setError(errData.error || 'Failed to update contact');
         return;
       }
@@ -97,6 +122,35 @@ export function EditContactForm({ contact }: EditContactFormProps) {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  if (isBento) {
+    return (
+      <BentoContactFormView
+        mode="edit"
+        contactId={contact.id}
+        firstName={formData.firstName}
+        setFirstName={(val) => setFormData((prev) => ({ ...prev, firstName: val }))}
+        lastName={formData.lastName}
+        setLastName={(val) => setFormData((prev) => ({ ...prev, lastName: val }))}
+        email={formData.email}
+        setEmail={(val) => setFormData((prev) => ({ ...prev, email: val }))}
+        phone={formData.phone}
+        setPhone={(val) => setFormData((prev) => ({ ...prev, phone: val }))}
+        accountId={formData.accountId}
+        setAccountId={(val) => setFormData((prev) => ({ ...prev, accountId: val }))}
+        status={formData.status}
+        setStatus={(val) => setFormData((prev) => ({ ...prev, status: val }))}
+        source={formData.source}
+        setSource={(val) => setFormData((prev) => ({ ...prev, source: val }))}
+        accounts={accounts}
+        accountsLoading={accountsLoading}
+        onSubmit={onSubmit}
+        isLoading={isLoading}
+        error={error}
+        fieldErrors={fieldErrors}
+      />
+    );
   }
 
   return (
@@ -117,7 +171,7 @@ export function EditContactForm({ contact }: EditContactFormProps) {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              onSubmit();
+              void onSubmit();
             }}
             className="space-y-4"
           >

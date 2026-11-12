@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoAccountFormView } from '@/components/crm/bento-account-form-view';
 
 interface EditAccountFormProps {
   account: {
@@ -17,6 +19,7 @@ interface EditAccountFormProps {
 }
 
 export function EditAccountForm({ account }: EditAccountFormProps) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -33,7 +36,8 @@ export function EditAccountForm({ account }: EditAccountFormProps) {
     status: account.status,
   });
 
-  async function onSubmit() {
+  async function onSubmit(e?: React.FormEvent) {
+    if (e?.preventDefault) e.preventDefault();
     setError(null);
     setIsLoading(true);
     try {
@@ -64,14 +68,32 @@ export function EditAccountForm({ account }: EditAccountFormProps) {
     }
   }
 
+  if (isBento) {
+    return (
+      <BentoAccountFormView
+        mode="edit"
+        accountId={account.id}
+        name={formData.name}
+        setName={(val) => setFormData((prev) => ({ ...prev, name: val }))}
+        website={formData.website}
+        setWebsite={(val) => setFormData((prev) => ({ ...prev, website: val }))}
+        address={formData.address}
+        setAddress={(val) => setFormData((prev) => ({ ...prev, address: val }))}
+        status={formData.status}
+        setStatus={(val) => setFormData((prev) => ({ ...prev, status: val }))}
+        onSubmit={onSubmit}
+        isLoading={isLoading}
+        error={error}
+      />
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-lg">
         <CardHeader>
           <CardTitle className="text-2xl">Edit Account</CardTitle>
-          <CardDescription>
-            Update account details for {account.name}
-          </CardDescription>
+          <CardDescription>Update account details for {account.name}</CardDescription>
         </CardHeader>
         <CardContent>
           {error && (
@@ -82,7 +104,7 @@ export function EditAccountForm({ account }: EditAccountFormProps) {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              onSubmit();
+              void onSubmit();
             }}
             className="space-y-4"
           >
@@ -154,16 +176,18 @@ export function EditAccountForm({ account }: EditAccountFormProps) {
                   fetch(`/api/v1/crm/accounts/${account.id}`, {
                     method: 'DELETE',
                     credentials: 'include',
-                  }).then((res) => {
-                    if (!res.ok) {
+                  })
+                    .then((res) => {
+                      if (!res.ok) {
+                        setError('Unable to archive account');
+                        return;
+                      }
+                      router.push('/crm/accounts');
+                      router.refresh();
+                    })
+                    .catch(() => {
                       setError('Unable to archive account');
-                      return;
-                    }
-                    router.push('/crm/accounts');
-                    router.refresh();
-                  }).catch(() => {
-                    setError('Unable to archive account');
-                  });
+                    });
                 }
               }}
               className="w-full mt-2"
