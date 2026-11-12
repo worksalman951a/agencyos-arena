@@ -14,6 +14,7 @@ import {
 import { listContracts } from '@/lib/services/documents/contract-service';
 import { listInvoices, type InvoiceResponse } from '@/lib/services/crm/invoice-service';
 import { getCurrentPermissions } from '@/lib/current-user';
+import { formatMinorUnitsAsCurrency } from '@/lib/currencies';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import {
@@ -64,6 +65,8 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   // `invoice.create` and a project that is neither deleted nor archived.
   const canCreateInvoice =
     permissions.has('invoice.create') && !project.deletedAt && project.status !== 'archived';
+  const canLogTime =
+    permissions.has('time.entry.create') && !project.deletedAt && project.status !== 'archived';
 
   const projectContracts = contractsResult.ok
     ? (
@@ -81,7 +84,16 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
     ? workspaceResult.data
     : {
         milestones: [],
-        timeSummary: { entryCount: 0, totalHours: 0, billableHours: 0, nonBillableHours: 0 },
+        timeSummary: {
+          entryCount: 0,
+          totalHours: 0,
+          billableHours: 0,
+          nonBillableHours: 0,
+          ratedBillableEntryCount: 0,
+          unratedBillableEntryCount: 0,
+          unratedBillableHours: 0,
+          billableAmountsByCurrency: [],
+        },
         counts: { files: 0, approvals: 0, changeOrders: 0 },
         activity: [],
       };
@@ -162,6 +174,14 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         >
           Time Entries ({workspace.timeSummary.totalHours.toFixed(1)} hrs)
         </Link>
+        {canLogTime && (
+          <Link
+            href={`/projects/time-entries/new?projectId=${encodeURIComponent(project.id)}`}
+            className="px-3 py-1.5 rounded-md border border-input bg-background text-sm font-medium hover:bg-muted"
+          >
+            + Log Time
+          </Link>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -208,6 +228,28 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
                 </div>
               </div>
             </div>
+            {(workspace.timeSummary.billableAmountsByCurrency.length > 0 ||
+              workspace.timeSummary.unratedBillableEntryCount > 0) && (
+              <div
+                className="border rounded-md p-2.5 text-sm flex flex-wrap items-center justify-between gap-2"
+                data-testid="project-billable-summary"
+              >
+                <span className="text-xs text-muted-foreground uppercase">Billable Value</span>
+                <div className="flex flex-wrap items-center gap-3 font-medium">
+                  {workspace.timeSummary.billableAmountsByCurrency.map((bucket) => (
+                    <span key={bucket.currency} className="text-green-700">
+                      {formatMinorUnitsAsCurrency(bucket.amountMinor, bucket.currency)}{' '}
+                      <span className="text-xs text-muted-foreground">{bucket.currency}</span>
+                    </span>
+                  ))}
+                  {workspace.timeSummary.unratedBillableEntryCount > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      ({workspace.timeSummary.unratedBillableHours.toFixed(1)} hrs unrated)
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="rounded-md border bg-background p-4">

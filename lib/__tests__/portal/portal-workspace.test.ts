@@ -61,6 +61,7 @@ import {
 import { readStoredFile } from '@/lib/portal/storage';
 import {
   downloadPortalFile,
+  getPortalProject,
   listPortalInvoices,
   listPortalNotifications,
   listPortalProjects,
@@ -74,6 +75,7 @@ const mockListGrantedIds = listGrantedResourceIds as unknown as ReturnType<typeo
 const mockReadStoredFile = readStoredFile as unknown as ReturnType<typeof vi.fn>;
 
 const mockProjectFindMany = prisma.project.findMany as unknown as ReturnType<typeof vi.fn>;
+const mockProjectFindFirst = prisma.project.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockProjectFileFindFirst = prisma.projectFile.findFirst as unknown as ReturnType<
   typeof vi.fn
 >;
@@ -152,6 +154,46 @@ describe('listPortalProjects', () => {
     expect(serialized).not.toContain('budget');
     expect(serialized).not.toContain('assignee');
     expect(serialized).not.toContain('clientId');
+  });
+});
+
+describe('getPortalProject', () => {
+  it('never selects or exposes project invoices, time entries, budgets, or clientId', async () => {
+    mockRequireGrantedResource.mockResolvedValue({ grant: { id: 'grant_p1' }, resource: {} });
+    mockProjectFindFirst.mockResolvedValue({
+      id: 'project_1',
+      name: 'Client Portal Project',
+      description: 'Phase 5A client-mismatch verification',
+      status: 'active',
+      startDate: null,
+      endDate: null,
+      milestones: [],
+      tasks: [{ status: 'done' }],
+      files: [],
+      invoices: [{ id: 'inv_third_party', number: 'INV-999', clientId: 'other_contact' }],
+      timeEntries: [{ id: 'te_1', hours: '5', hourlyRate: '200', currency: 'USD' }],
+      clientId: 'contact_1',
+      budget: '50000',
+    });
+    mockListGrantedIds.mockResolvedValue([]);
+
+    const detail = await getPortalProject('project_1');
+
+    expect(mockInvoiceFindMany).not.toHaveBeenCalled();
+    const { select } = mockProjectFindFirst.mock.calls[0][0] as {
+      select: Record<string, unknown>;
+    };
+    expect(select).not.toHaveProperty('invoices');
+    expect(select).not.toHaveProperty('timeEntries');
+    expect(select).not.toHaveProperty('clientId');
+    expect(select).not.toHaveProperty('budget');
+
+    const serialized = JSON.stringify(detail);
+    expect(serialized).not.toContain('inv_third_party');
+    expect(serialized).not.toContain('INV-999');
+    expect(serialized).not.toContain('other_contact');
+    expect(serialized).not.toContain('te_1');
+    expect(serialized).not.toContain('50000');
   });
 });
 

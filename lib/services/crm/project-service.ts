@@ -18,6 +18,7 @@ import {
   ProjectTaskInput,
   ProjectTaskUpdateInput,
 } from '@/lib/schemas/crm/project.schema';
+import { summarizeTimeEntries, type TimeEntrySummary } from '@/lib/projects/time-entry-billing';
 
 export interface ProjectResponse {
   id: string;
@@ -82,12 +83,7 @@ export interface ProjectMilestoneSummary {
 
 export interface ProjectWorkspaceDetails {
   milestones: ProjectMilestoneSummary[];
-  timeSummary: {
-    entryCount: number;
-    totalHours: number;
-    billableHours: number;
-    nonBillableHours: number;
-  };
+  timeSummary: TimeEntrySummary;
   counts: {
     files: number;
     approvals: number;
@@ -957,8 +953,11 @@ export async function getProjectWorkspaceDetails(
         select: { id: true, milestoneId: true, status: true },
       }),
       prisma.timeEntry.findMany({
-        where: { organizationId, task: { projectId } },
-        select: { id: true, hours: true, billable: true },
+        where: {
+          organizationId,
+          OR: [{ projectId }, { task: { projectId } }],
+        },
+        select: { id: true, hours: true, billable: true, hourlyRate: true, currency: true },
       }),
       prisma.projectFile.count({ where: { projectId, organizationId } }),
       prisma.projectApproval.count({ where: { projectId, organizationId } }),
@@ -1004,18 +1003,14 @@ export async function getProjectWorkspaceDetails(
     }
   );
 
-  let totalHours = 0;
-  let billableHours = 0;
-  for (const entry of timeEntries as Array<{
-    hours: { toString: () => string };
-    billable: boolean;
-  }>) {
-    const hrs = Number(entry.hours.toString());
-    if (!Number.isNaN(hrs)) {
-      totalHours += hrs;
-      if (entry.billable) billableHours += hrs;
-    }
-  }
+  const timeSummary = summarizeTimeEntries(
+    timeEntries as Array<{
+      hours: { toString: () => string };
+      billable: boolean;
+      hourlyRate?: { toString: () => string } | null;
+      currency?: string | null;
+    }>
+  );
 
   const taskIds = tasks.map((t: { id: string }) => t.id);
   const milestoneIds = milestones.map((m: { id: string }) => m.id);
@@ -1065,12 +1060,7 @@ export async function getProjectWorkspaceDetails(
 
   return {
     milestones: milestoneSummaries,
-    timeSummary: {
-      entryCount: timeEntries.length,
-      totalHours: Number(totalHours.toFixed(2)),
-      billableHours: Number(billableHours.toFixed(2)),
-      nonBillableHours: Number((totalHours - billableHours).toFixed(2)),
-    },
+    timeSummary,
     counts: {
       files: filesCount,
       approvals: approvalsCount,

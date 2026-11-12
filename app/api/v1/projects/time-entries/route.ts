@@ -1,14 +1,17 @@
 /**
  * AgencyOS Projects API - Time Entries
  *
- * GET    /api/v1/projects/time-entries?taskId=&projectId=&billable= - List time entries
- * POST   /api/v1/projects/time-entries                              - Create a time entry
+ * GET    /api/v1/projects/time-entries?taskId=&projectId=&userId=&billable=&from=&to= - List time entries
+ * POST   /api/v1/projects/time-entries                                                - Create a time entry
  */
 
 import { NextResponse } from 'next/server';
 
 import { listTimeEntries, createTimeEntry } from '@/lib/services/projects/time-entry-service';
-import { timeEntryCreateSchema } from '@/lib/schemas/projects/time-entry.schema';
+import {
+  timeEntryCreateSchema,
+  timeEntryQuerySchema,
+} from '@/lib/schemas/projects/time-entry.schema';
 import { apiErrorFrom } from '@/lib/api/route-error';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
@@ -20,18 +23,24 @@ function errorResponse(message: string, status: number, issues?: unknown[]) {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const taskId = searchParams.get('taskId') || undefined;
-    const projectId = searchParams.get('projectId') || undefined;
-    const billableParam = searchParams.get('billable');
-
-    let billable: boolean | undefined;
-    if (billableParam === 'true') billable = true;
-    else if (billableParam === 'false') billable = false;
-    else if (billableParam !== null && billableParam !== '') {
-      return errorResponse('billable filter must be true or false', 400);
+    const rawQuery: Record<string, string> = {};
+    for (const [key, value] of searchParams.entries()) {
+      if (value !== '') rawQuery[key] = value;
     }
 
-    const data = await listTimeEntries(taskId, projectId, billable);
+    const parsed = timeEntryQuerySchema.safeParse(rawQuery);
+    if (!parsed.success) {
+      return errorResponse('Invalid query parameters', 400, parsed.error.issues);
+    }
+
+    const billable =
+      parsed.data.billable === 'true' ? true : parsed.data.billable === 'false' ? false : undefined;
+
+    const data = await listTimeEntries(parsed.data.taskId, parsed.data.projectId, billable, {
+      userId: parsed.data.userId,
+      from: parsed.data.from,
+      to: parsed.data.to,
+    });
     return NextResponse.json(data);
   } catch (err) {
     const { status, message } = apiErrorFrom(err);

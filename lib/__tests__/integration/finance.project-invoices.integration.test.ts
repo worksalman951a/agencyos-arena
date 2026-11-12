@@ -31,6 +31,7 @@ import {
   createMemberWithPermissions,
   createOrganizationWithAdmin,
   jsonFetch,
+  sessionFor,
   type TestAccount,
 } from './batch4-provisioning';
 import { SERVER_URL } from './test-config';
@@ -73,6 +74,7 @@ const sequenceOf = (number: string) => Number(/(\d+)$/.exec(number)?.[1]);
 
 describeIfDb('Project-to-invoice linking (real PostgreSQL)', () => {
   const createdOrganizations: string[] = [];
+  const createdUsers: string[] = [];
 
   let admin: TestAccount; // organization A, every permission
   let foreign: TestAccount; // organization B, every permission
@@ -194,9 +196,10 @@ describeIfDb('Project-to-invoice linking (real PostgreSQL)', () => {
       .deleteMany({
         where: {
           id: {
-            in: [admin, foreign, financeOnly, projectOnly]
-              .map((account) => account?.userId)
-              .filter(Boolean),
+            in: [
+              ...[admin, foreign, financeOnly, projectOnly].map((account) => account?.userId),
+              ...createdUsers,
+            ].filter(Boolean),
           },
         },
       })
@@ -448,6 +451,129 @@ describeIfDb('Project-to-invoice linking (real PostgreSQL)', () => {
       expect(await invoiceCount(foreign.organizationId)).toBe(before);
 
       expect(await storedProjectId(linked.id)).toBe(projectA);
+    });
+
+    it('keeps third-party project/client mismatch isolated across finance-only API and portal views', async () => {
+      const contactA = (await prisma.contact.create({
+        data: {
+          organizationId: admin.organizationId,
+          firstName: 'Alice',
+          lastName: 'ProjectOwner',
+          email: `alice-mismatch-${Date.now()}@integration.invalid`,
+        },
+      })) as { id: string };
+      const contactB = (await prisma.contact.create({
+        data: {
+          organizationId: admin.organizationId,
+          firstName: 'Bob',
+          lastName: 'ThirdPartyPayer',
+          email: `bob-mismatch-${Date.now()}@integration.invalid`,
+        },
+      })) as { id: string };
+
+      const projRes = await api(admin, '/api/v1/crm/projects', {
+        method: 'POST',
+        body: {
+          name: 'Secret Client A Project',
+          clientId: contactA.id,
+          status: 'active',
+        },
+      });
+      expect(projRes.status).toBe(201);
+      const clientAProjectId = (projRes.body as { id: string }).id;
+
+      const inv = await createInvoice({
+        projectId: clientAProjectId,
+        clientId: contactB.id,
+        title: 'Third Party Sponsor Invoice',
+      });
+
+      // 1. Finance-only member (no project.read) sees invoice's clientB without project or clientA
+      const financeView = await getInvoice(financeOnly, inv.id);
+      expect(financeView.project).toBeNull();
+      expect(JSON.stringify(financeView)).not.toContain('Secret Client A Project');
+      expect(JSON.stringify(financeView)).not.toContain('ProjectOwner');
+      expect(JSON.stringify(financeView)).not.toContain(contactA.id);
+
+      // 2. Portal Client A (granted project) and Portal Client B (granted invoice) remain isolated
+      const clientAUser = (await prisma.user.create({
+        data: {
+          email: `portal-a-${Date.now()}@integration.invalid`,
+          name: 'Alice Portal',
+          organizationId: null,
+          userType: 'client',
+          status: 'active',
+        },
+      })) as { id: string };
+      createdUsers.push(clientAUser.id);
+      const clientBUser = (await prisma.user.create({
+        data: {
+          email: `portal-b-${Date.now()}@integration.invalid`,
+          name: 'Bob Portal',
+          organizationId: null,
+          userType: 'client',
+          status: 'active',
+        },
+      })) as { id: string };
+      createdUsers.push(clientBUser.id);
+
+      const accessA = (await prisma.clientAccess.create({
+        data: {
+          organizationId: admin.organizationId,
+          userId: clientAUser.id,
+          contactId: contactA.id,
+          canViewInvoices: true,
+        },
+      })) as { id: string };
+      const accessB = (await prisma.clientAccess.create({
+        data: {
+          organizationId: admin.organizationId,
+          userId: clientBUser.id,
+          contactId: contactB.id,
+          canViewInvoices: true,
+        },
+      })) as { id: string };
+
+      await prisma.clientResourceGrant.createMany({
+        data: [
+          {
+            organizationId: admin.organizationId,
+            clientAccessId: accessA.id,
+            resourceType: 'project',
+            resourceId: clientAProjectId,
+          },
+          {
+            organizationId: admin.organizationId,
+            clientAccessId: accessB.id,
+            resourceType: 'invoice',
+            resourceId: inv.id,
+          },
+        ],
+      });
+
+      const [tokenA, tokenB] = await Promise.all([
+        sessionFor(clientAUser.id),
+        sessionFor(clientBUser.id),
+      ]);
+
+      const portalProjectRes = await fetch(`${SERVER_URL}/portal/projects/${clientAProjectId}`, {
+        headers: { Cookie: `better-auth.session_token=${tokenA}` },
+      });
+      const portalProjectHtml = await portalProjectRes.text();
+      expect(portalProjectRes.status).toBe(200);
+      expect(portalProjectHtml).toContain('Secret Client A Project');
+      expect(portalProjectHtml).not.toContain(inv.number);
+      expect(portalProjectHtml).not.toContain('Third Party Sponsor Invoice');
+      expect(portalProjectHtml).not.toContain('ThirdPartyPayer');
+
+      const portalInvoicesRes = await fetch(`${SERVER_URL}/portal/invoices`, {
+        headers: { Cookie: `better-auth.session_token=${tokenB}` },
+      });
+      const portalInvoicesHtml = await portalInvoicesRes.text();
+      expect(portalInvoicesRes.status).toBe(200);
+      expect(portalInvoicesHtml).toContain(inv.number);
+      expect(portalInvoicesHtml).not.toContain('Secret Client A Project');
+      expect(portalInvoicesHtml).not.toContain('ProjectOwner');
     });
   });
 
@@ -1002,8 +1128,14 @@ describeIfDb('Project-to-invoice linking (real PostgreSQL)', () => {
         .$transaction(async (tx: typeof prisma) => {
           await tx.$executeRawUnsafe(`ALTER TABLE "Invoice" DROP CONSTRAINT "${FK_NAME}"`);
           await tx.$executeRawUnsafe(`DROP INDEX "Invoice_organizationId_projectId_idx"`);
-          await tx.$executeRawUnsafe(`DROP INDEX "Project_id_organizationId_key"`);
           await tx.$executeRawUnsafe(`ALTER TABLE "Invoice" DROP COLUMN "projectId"`);
+          // Project_id_organizationId_key is also referenced by TimeEntry (migration 0022).
+          // Drop TimeEntry's composite FK first inside this rolled-back test so the
+          // full rollback of the shared unique index can still be verified.
+          await tx.$executeRawUnsafe(
+            `ALTER TABLE "TimeEntry" DROP CONSTRAINT IF EXISTS "TimeEntry_projectId_organizationId_fkey"`
+          );
+          await tx.$executeRawUnsafe(`DROP INDEX "Project_id_organizationId_key"`);
           const columns = (await tx.$queryRawUnsafe(
             `SELECT count(*)::int AS n FROM information_schema.columns
               WHERE table_schema = current_schema() AND table_name = 'Invoice' AND column_name = 'projectId'`
