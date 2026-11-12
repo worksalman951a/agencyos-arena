@@ -180,7 +180,9 @@ letting it run unattended.
 ## 5. The structured result
 
 Every run writes a JSON document (default `<dir>/last-run.json`, mode `0600`)
-and prints the same document as a single line:
+and prints the same document as a single line. A run that fails on a
+misconfiguration leaves one behind too — the trace matters more than the
+tidy exit:
 
 ```
 [scheduled-backup] RESULT {"tool":"agencyos-scheduled-backup","schemaVersion":1,…}
@@ -272,6 +274,10 @@ self-hosted ntfy/Gotify instance, a script on the host. The request has a
 `hook.status` and in `hook.error` but does **not** change the run's exit
 code, so a broken notification endpoint cannot turn a good backup into a
 failed one (or hide a real failure).
+
+The hook is resolved independently of the backup configuration, so a run that
+cannot even reach the database — a missing `DATABASE_URL`, say — still
+reports itself to the endpoint.
 
 The token is sent as a bearer header and is never written to the log or to
 the result file. The webhook URL is logged with its userinfo, query string

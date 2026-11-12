@@ -184,6 +184,36 @@ export function parseArgs(argv) {
 }
 
 /**
+ * Resolve the webhook independently of the rest of the configuration.
+ *
+ * The hook is the reporting channel, so it must survive a failure in the
+ * *backup* configuration: a run that cannot reach the database still has to
+ * tell the monitoring endpoint about it.
+ *
+ * @param {Record<string, any>} options
+ * @param {{ env?: Record<string, string | undefined> }} [context]
+ * @returns {{ hookUrl: string | null, hookToken: string | null }}
+ */
+export function resolveHook(options, { env = process.env } = {}) {
+  const hookUrl = options.hookUrl ?? env.BACKUP_HOOK_URL ?? null;
+  if (!hookUrl) {
+    return { hookUrl: null, hookToken: env.BACKUP_HOOK_TOKEN ?? null };
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(hookUrl);
+  } catch {
+    throw new UsageError('The webhook URL is not a valid URL.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new UsageError('The webhook URL must use the http or https scheme.');
+  }
+
+  return { hookUrl, hookToken: env.BACKUP_HOOK_TOKEN ?? null };
+}
+
+/**
  * Merge command line, environment and defaults into one configuration.
  *
  * @param {Record<string, any>} options
@@ -208,19 +238,6 @@ export function resolveConfig(options, { env = process.env } = {}) {
     throw new UsageError(
       `Lock stale threshold must be a non-negative number (got ${JSON.stringify(String(lockStaleRaw))}).`
     );
-  }
-
-  const hookUrl = options.hookUrl ?? env.BACKUP_HOOK_URL ?? null;
-  if (hookUrl) {
-    let parsed;
-    try {
-      parsed = new URL(hookUrl);
-    } catch {
-      throw new UsageError('The webhook URL is not a valid URL.');
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new UsageError('The webhook URL must use the http or https scheme.');
-    }
   }
 
   let source = null;
@@ -248,11 +265,29 @@ export function resolveConfig(options, { env = process.env } = {}) {
       options.lockFile ?? env.BACKUP_LOCK_FILE ?? path.join(directory, DEFAULT_LOCK_FILE)
     ),
     lockStaleSeconds,
-    hookUrl,
-    hookToken: env.BACKUP_HOOK_TOKEN ?? null,
     backupScript: BACKUP_SCRIPT,
     source,
   };
+}
+
+/**
+ * Best-effort location of the result file, used when the configuration
+ * itself could not be resolved, so that a misconfigured run still leaves a
+ * trace for the operator.
+ *
+ * @param {Record<string, any>} options
+ * @param {Record<string, string | undefined>} env
+ * @returns {string | null}
+ */
+export function fallbackResultFile(options, env) {
+  try {
+    const directory = path.resolve(options.dir ?? env.BACKUP_DIR ?? defaultBackupDir());
+    return path.resolve(
+      options.resultFile ?? env.BACKUP_RESULT_FILE ?? path.join(directory, DEFAULT_RESULT_FILE)
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -675,9 +710,25 @@ export async function runScheduledBackup(argv = [], deps = {}) {
   let exitCode = EXIT.OK;
   /** @type {ReturnType<typeof resolveConfig> | null} */
   let config = null;
+  /** @type {string | null} */
+  let resultFilePath = null;
+
+  // The hook is resolved first and on its own: a run that cannot even reach
+  // the database still has to tell the monitoring endpoint about it.
+  let hook = { hookUrl: null, hookToken: null };
+  /** @type {Error | null} */
+  let hookError = null;
+  try {
+    hook = resolveHook(options, { env });
+    result.hook.url = hook.hookUrl ? redactHookUrl(hook.hookUrl) : null;
+  } catch (error) {
+    hookError = error;
+  }
 
   try {
+    if (hookError) throw hookError;
     config = resolveConfig(options, { env });
+    resultFilePath = config.resultFile;
     result.directory = config.directory;
     result.source = config.source;
     result.lock.path = config.lockFile;
@@ -687,7 +738,6 @@ export async function runScheduledBackup(argv = [], deps = {}) {
       directory: config.directory,
       mode: config.retentionOnly ? 'retention-only' : 'backup-and-retention',
     };
-    result.hook.url = config.hookUrl ? redactHookUrl(config.hookUrl) : null;
 
     // 1. The destination must be usable before anything is written or removed.
     try {
@@ -814,6 +864,9 @@ export async function runScheduledBackup(argv = [], deps = {}) {
       exitCode,
     };
     logger.error?.(`[scheduled-backup] FAILED: ${result.error.message}`);
+    // A misconfigured run still leaves a trace, if a result file can be
+    // located at all.
+    resultFilePath ??= fallbackResultFile(options, env);
   }
 
   // 5. Finish the structured result.
@@ -822,9 +875,9 @@ export async function runScheduledBackup(argv = [], deps = {}) {
 
   // 6. Deliver the hook, then persist the result. The hook has a bounded
   //    timeout, so the result file is always written afterwards.
-  if (config?.hookUrl) {
+  if (hook.hookUrl) {
     try {
-      const hookOutcome = await sendHook(config.hookUrl, config.hookToken, result);
+      const hookOutcome = await sendHook(hook.hookUrl, hook.hookToken, result);
       result.hook.status = hookOutcome.ok ? 'sent' : 'failed';
       result.hook.httpStatus = hookOutcome.status ?? null;
       result.hook.error = hookOutcome.ok
@@ -836,13 +889,13 @@ export async function runScheduledBackup(argv = [], deps = {}) {
     }
   }
 
-  if (config?.resultFile) {
+  if (resultFilePath) {
     try {
-      await mkdir(path.dirname(config.resultFile), { recursive: true, mode: 0o700 });
-      await writeFileAtomic(config.resultFile, `${JSON.stringify(result, null, 2)}\n`);
+      await mkdir(path.dirname(resultFilePath), { recursive: true, mode: 0o700 });
+      await writeFileAtomic(resultFilePath, `${JSON.stringify(result, null, 2)}\n`);
     } catch (error) {
       logger.error?.(
-        `[scheduled-backup] WARNING: could not write the result file ${config.resultFile}: ${sanitizeMessage(error.message)}`
+        `[scheduled-backup] WARNING: could not write the result file ${resultFilePath}: ${sanitizeMessage(error.message)}`
       );
     }
   }

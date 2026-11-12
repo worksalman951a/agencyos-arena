@@ -320,6 +320,75 @@ describe('scheduled backup runner', () => {
     expect(outcome.exitCode).toBe(EXIT.UNSAFE);
     expect(outcome.result!.error.message).toMatch(/positive integer/);
   });
+
+  it('leaves a result file behind even when the configuration is wrong', async () => {
+    const outcome = await runScheduledBackup(['--dir', backupDir], {
+      runBackup: fakeBackupCommand().stub,
+      logger: silentLogger(),
+      env: {},
+    });
+
+    expect(outcome.exitCode).toBe(EXIT.UNSAFE);
+
+    const written = JSON.parse(await readFile(path.join(backupDir, 'last-run.json'), 'utf8'));
+    expect(written.status).toBe('failed');
+    expect(written.error.message).toMatch(/DATABASE_URL/);
+  });
+
+  it('still reports to the webhook when the backup cannot run', async () => {
+    const delivered: Array<{
+      url: string;
+      token: string | null;
+      payload: Record<string, unknown>;
+    }> = [];
+
+    const outcome = await runScheduledBackup(['--dir', backupDir], {
+      runBackup: fakeBackupCommand().stub,
+      logger: silentLogger(),
+      env: { BACKUP_HOOK_URL: 'https://hooks.example.test/backup' },
+      sendHook: async (url: string, token: string | null, payload: Record<string, unknown>) => {
+        delivered.push({ url, token, payload });
+        return { ok: true, status: 200 };
+      },
+    });
+
+    expect(outcome.exitCode).toBe(EXIT.UNSAFE);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].url).toBe('https://hooks.example.test/backup');
+    expect(delivered[0].payload.status).toBe('failed');
+    expect((delivered[0].payload.error as { message: string }).message).toMatch(/DATABASE_URL/);
+  });
+
+  it('refuses a webhook URL that is not http(s)', async () => {
+    const outcome = await runScheduledBackup(
+      ['--dir', backupDir, '--hook-url', 'file:///etc/passwd'],
+      {
+        runBackup: fakeBackupCommand().stub,
+        logger: silentLogger(),
+        env: { DATABASE_URL: APP_URL },
+      }
+    );
+
+    expect(outcome.exitCode).toBe(EXIT.UNSAFE);
+    expect(outcome.result!.error.message).toMatch(/http or https/);
+  });
+
+  it('never puts the webhook token or its query string in the result', async () => {
+    const outcome = await runScheduledBackup(
+      ['--dir', backupDir, '--hook-url', 'https://hooks.example.test/backup?token=url_secret'],
+      {
+        runBackup: fakeBackupCommand().stub,
+        logger: silentLogger(),
+        env: { DATABASE_URL: APP_URL, BACKUP_HOOK_TOKEN: 'header_secret' },
+        sendHook: async () => ({ ok: true, status: 200 }),
+      }
+    );
+
+    const serialized = JSON.stringify(outcome.result);
+    expect(serialized).not.toContain('url_secret');
+    expect(serialized).not.toContain('header_secret');
+    expect(outcome.result!.hook.url).toBe('https://hooks.example.test/backup');
+  });
 });
 
 describe('retention', () => {
