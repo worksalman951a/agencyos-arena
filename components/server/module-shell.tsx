@@ -18,6 +18,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { BentoAppShell } from '@/components/layout/bento-app-shell';
 import { isBentoShellEnabled } from '@/components/layout/bento-shell-eval';
 import { requireOrganization } from '@/lib/permissions';
+import { BentoShellProvider } from '@/components/providers/bento-theme-provider';
 
 export async function ModuleShell({ children }: { children: React.ReactNode }) {
   const user = await getSessionUser();
@@ -46,16 +47,20 @@ export async function ModuleShell({ children }: { children: React.ReactNode }) {
   // If organization has bento_shell enabled, render the Premium Bento layout
   if (bentoEnabled) {
     return (
-      <BentoAppShell user={user} sections={sections} branding={branding}>
-        {children}
-      </BentoAppShell>
+      <BentoShellProvider isBento={true}>
+        <BentoAppShell user={user} sections={sections} branding={branding}>
+          {children}
+        </BentoAppShell>
+      </BentoShellProvider>
     );
   }
 
   // Default secure fallback: render existing verified AppShell
   return (
-    <AppShell user={user} sections={sections} branding={branding}>
-      {children}
-    </AppShell>
+    <BentoShellProvider isBento={false}>
+      <AppShell user={user} sections={sections} branding={branding}>
+        {children}
+      </AppShell>
+    </BentoShellProvider>
   );
 }

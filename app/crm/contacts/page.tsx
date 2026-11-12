@@ -2,13 +2,17 @@
  * AgencyOS CRM Contacts page.
  * Client component that lists contacts with View/Edit/Delete actions
  * and toast notifications for delete operations.
+ *
+ * Supports dual presentation:
+ * - If Bento shell is enabled, renders BentoContactsView (3-column responsive Bento grid).
+ * - If Bento shell is disabled / fallback, renders standard accessible legacy table view.
  */
 
 'use client';
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,11 +25,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoContactsView, type ContactItem } from '@/components/crm/bento-contacts-view';
 
 interface Contact {
   id: string;
   organizationId: string;
   accountId: string | null;
+  account?: { id: string; name: string } | null;
   firstName: string | null;
   lastName: string;
   email: string | null;
@@ -41,7 +48,9 @@ interface Contact {
 }
 
 export default function ContactsPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const isBento = useBentoShell();
   const { toast } = useToast();
   const toastRef = React.useRef(toast);
   // Keep the ref in sync with the latest toast function so the data-fetching
@@ -139,157 +148,186 @@ export default function ContactsPage() {
     }
   }
 
+  const handleSearchChange = (newSearch: string) => {
+    const query = new URLSearchParams(searchParams.toString());
+    if (newSearch) {
+      query.set('search', newSearch);
+    } else {
+      query.delete('search');
+    }
+    query.set('page', '1');
+    router.push(`/crm/contacts?${query.toString()}`);
+  };
+
   return (
     <div className="space-y-6 p-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-2xl font-bold">Contacts</h1>
-        <Link
-          href="/crm/contacts/new"
-          className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
-        >
-          New Contact
-        </Link>
-      </div>
+      {isBento ? (
+        <BentoContactsView
+          contacts={contacts as ContactItem[]}
+          total={total}
+          totalPages={totalPages}
+          page={page}
+          isLoading={isLoading}
+          searchVal={searchVal}
+          includeDeleted={includeDeleted}
+          onSearchChange={handleSearchChange}
+          onDeleteRequest={(c) => setPendingDelete(c as Contact)}
+          deletingId={deletingId}
+        />
+      ) : (
+        <>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <h1 className="text-2xl font-bold">Contacts</h1>
+            <Link
+              href="/crm/contacts/new"
+              className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
+            >
+              New Contact
+            </Link>
+          </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <form className="flex gap-2 max-w-sm">
-          <input
-            type="text"
-            name="search"
-            defaultValue={searchVal}
-            placeholder="Search contacts..."
-            className="flex-1 border border-input rounded-md px-3 py-2 text-sm"
-          />
-          {includeDeleted && <input type="hidden" name="includeDeleted" value="true" />}
-          <button
-            type="submit"
-            className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
-          >
-            Search
-          </button>
-        </form>
-        <Button asChild variant={includeDeleted ? 'secondary' : 'outline'} size="sm">
-          <Link
-            href={includeDeleted ? '/crm/contacts' : '/crm/contacts?includeDeleted=true'}
-            aria-pressed={includeDeleted}
-          >
-            {includeDeleted ? 'Hide deleted' : 'Show deleted'}
-          </Link>
-        </Button>
-      </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <form className="flex gap-2 max-w-sm">
+              <input
+                type="text"
+                name="search"
+                defaultValue={searchVal}
+                placeholder="Search contacts..."
+                className="flex-1 border border-input rounded-md px-3 py-2 text-sm"
+              />
+              {includeDeleted && <input type="hidden" name="includeDeleted" value="true" />}
+              <button
+                type="submit"
+                className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+              >
+                Search
+              </button>
+            </form>
+            <Button asChild variant={includeDeleted ? 'secondary' : 'outline'} size="sm">
+              <Link
+                href={includeDeleted ? '/crm/contacts' : '/crm/contacts?includeDeleted=true'}
+                aria-pressed={includeDeleted}
+              >
+                {includeDeleted ? 'Hide deleted' : 'Show deleted'}
+              </Link>
+            </Button>
+          </div>
 
-      {includeDeleted && (
-        <p className="text-sm text-muted-foreground">
-          Deleted contacts are included. They are kept for reference and are not restored from here.
-        </p>
-      )}
+          {includeDeleted && (
+            <p className="text-sm text-muted-foreground">
+              Deleted contacts are included. They are kept for reference and are not restored from
+              here.
+            </p>
+          )}
 
-      {isLoading && (
-        <div className="flex items-center justify-center py-8 text-muted-foreground">
-          Loading contacts…
-        </div>
-      )}
+          {isLoading && (
+            <div className="flex items-center justify-center py-8 text-muted-foreground">
+              Loading contacts…
+            </div>
+          )}
 
-      {!isLoading && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-border text-sm text-muted-foreground">
-                <th className="pb-3 font-medium">Name</th>
-                <th className="pb-3 font-medium">Email</th>
-                <th className="pb-3 font-medium">Phone</th>
-                <th className="pb-3 font-medium">Account</th>
-                <th className="pb-3 font-medium">Status</th>
-                <th className="pb-3 font-medium w-24">Created</th>
-                <th className="pb-3 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {contacts.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-8 text-muted-foreground">
-                    No contacts found.
-                  </td>
-                </tr>
-              ) : (
-                contacts.map((contact) => (
-                  <tr key={contact.id} className="border-b border-border hover:bg-muted/50">
-                    <td className="py-4 font-medium">
-                      <Link
-                        href={`/crm/contacts/${contact.id}`}
-                        className="text-accent hover:underline"
-                      >
-                        {contact.firstName} {contact.lastName}
-                      </Link>
-                    </td>
-                    <td className="py-4">{contact.email ?? '—'}</td>
-                    <td className="py-4">{contact.phone ?? '—'}</td>
-                    <td className="py-4">
-                      {contact.accountId ? (
-                        <Link
-                          href={`/crm/accounts/${contact.accountId}`}
-                          className="text-accent hover:underline text-sm"
-                        >
-                          View Account
-                        </Link>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">—</span>
-                      )}
-                    </td>
-                    <td className="py-4">
-                      <span>{contact.status}</span>
-                      {contact.deletedAt && (
-                        <span className="ml-2 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">
-                          Deleted
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-4 text-sm text-muted-foreground">
-                      {new Date(contact.createdAt).toLocaleDateString()}
-                    </td>
-                    <td className="py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Link
-                          href={`/crm/contacts/${contact.id}`}
-                          className="text-xs text-muted-foreground hover:text-accent"
-                          title="View"
-                        >
-                          View
-                        </Link>
-                        <Link
-                          href={`/crm/contacts/${contact.id}/edit`}
-                          className="text-xs text-muted-foreground hover:text-accent"
-                          title="Edit"
-                        >
-                          Edit
-                        </Link>
-                        {contact.deletedAt ? (
-                          <span className="text-xs text-muted-foreground">Deleted</span>
-                        ) : (
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => setPendingDelete(contact)}
-                            disabled={deletingId === contact.id}
-                            title="Delete"
-                          >
-                            {deletingId === contact.id ? 'Deleting…' : 'Delete'}
-                          </Button>
-                        )}
-                      </div>
-                    </td>
+          {!isLoading && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-border text-sm text-muted-foreground">
+                    <th className="pb-3 font-medium">Name</th>
+                    <th className="pb-3 font-medium">Email</th>
+                    <th className="pb-3 font-medium">Phone</th>
+                    <th className="pb-3 font-medium">Account</th>
+                    <th className="pb-3 font-medium">Status</th>
+                    <th className="pb-3 font-medium w-24">Created</th>
+                    <th className="pb-3 font-medium text-right">Actions</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+                </thead>
+                <tbody>
+                  {contacts.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center py-8 text-muted-foreground">
+                        No contacts found.
+                      </td>
+                    </tr>
+                  ) : (
+                    contacts.map((contact) => (
+                      <tr key={contact.id} className="border-b border-border hover:bg-muted/50">
+                        <td className="py-4 font-medium">
+                          <Link
+                            href={`/crm/contacts/${contact.id}`}
+                            className="text-accent hover:underline"
+                          >
+                            {contact.firstName} {contact.lastName}
+                          </Link>
+                        </td>
+                        <td className="py-4">{contact.email ?? '—'}</td>
+                        <td className="py-4">{contact.phone ?? '—'}</td>
+                        <td className="py-4">
+                          {contact.accountId ? (
+                            <Link
+                              href={`/crm/accounts/${contact.accountId}`}
+                              className="text-accent hover:underline text-sm"
+                            >
+                              View Account
+                            </Link>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">—</span>
+                          )}
+                        </td>
+                        <td className="py-4">
+                          <span>{contact.status}</span>
+                          {contact.deletedAt && (
+                            <span className="ml-2 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">
+                              Deleted
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-4 text-sm text-muted-foreground">
+                          {new Date(contact.createdAt).toLocaleDateString()}
+                        </td>
+                        <td className="py-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Link
+                              href={`/crm/contacts/${contact.id}`}
+                              className="text-xs text-muted-foreground hover:text-accent"
+                              title="View"
+                            >
+                              View
+                            </Link>
+                            <Link
+                              href={`/crm/contacts/${contact.id}/edit`}
+                              className="text-xs text-muted-foreground hover:text-accent"
+                              title="Edit"
+                            >
+                              Edit
+                            </Link>
+                            {contact.deletedAt ? (
+                              <span className="text-xs text-muted-foreground">Deleted</span>
+                            ) : (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => setPendingDelete(contact)}
+                                disabled={deletingId === contact.id}
+                                title="Delete"
+                              >
+                                {deletingId === contact.id ? 'Deleting…' : 'Delete'}
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-      {!isLoading && totalPages > 1 && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          Page {page} of {totalPages} ({total} total)
-        </div>
+          {!isLoading && totalPages > 1 && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              Page {page} of {totalPages} ({total} total)
+            </div>
+          )}
+        </>
       )}
 
       <AlertDialog

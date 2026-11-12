@@ -1,0 +1,182 @@
+/* ============================================================================
+   Bento CRM Contacts & Contact Record Styles
+   Scoped to .bento-crm container
+   ========================================================================== */
+
+.bento-crm {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+/* ── Toolbar ────────────────────────────────────────────────────────────── */
+
+.bento-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bento-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  min-width: 260px;
+  flex: 0 1 320px;
+  border-radius: var(--pm-r-pill, 9999px);
+  border: 1px solid var(--pm-line, #e2e8f0);
+  background: var(--pm-tile, #ffffff);
+  color: var(--pm-ink-3, #64748b);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.bento-search:focus-within {
+  border-color: var(--pm-accent, #0f766e);
+  box-shadow: 0 0 0 3px var(--pm-accent-soft, #ccfbf1);
+}
+
+.bento-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  font-size: 13px;
+  color: var(--pm-ink, #0f172a);
+}
+
+.bento-search input::placeholder {
+  color: var(--pm-ink-4, #94a3b8);
+}
+
+/* ── Bento 3-Column CRM Grid ───────────────────────────────────────────── */
+
+.bento-crm-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 4.2fr) minmax(0, 2.8fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1200px) {
+  .bento-crm-grid {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  }
+  .bento-crm-side {
+    grid-column: 1 / -1;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .bento-crm-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bento-crm-side {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* ── Contacts Table / Row ──────────────────────────────────────────────── */
+
+.bento-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.bento-table-head {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) 90px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--pm-line, #e2e8f0);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pm-ink-3, #64748b);
+}
+
+.bento-table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) 90px;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--pm-line-subtle, #f1f5f9);
+  cursor: pointer;
+  transition: background 120ms ease;
+  text-align: left;
+  width: 100%;
+  background: none;
+  border-left: 3px solid transparent;
+}
+
+.bento-table-row:hover {
+  background: var(--pm-inset, #f8fafc);
+}
+
+.bento-table-row[data-active='true'] {
+  background: var(--pm-accent-soft, #ccfbf1);
+  border-left-color: var(--pm-accent, #0f766e);
+}
+
+/* ── Person Avatar & Meta ──────────────────────────────────────────────── */
+
+.bento-person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bento-person-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pm-ink, #0f172a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bento-person-sub {
+  font-size: 11px;
+  color: var(--pm-ink-3, #64748b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Detail & Context Rails ────────────────────────────────────────────── */
+
+.bento-crm-detail {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.bento-crm-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Contact Record Full View ──────────────────────────────────────────── */
+
+.bento-record-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .bento-record-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
