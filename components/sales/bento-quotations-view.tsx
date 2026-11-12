@@ -20,6 +20,7 @@ import {
   StatStrip,
 } from '@/components/ui/premium/primitives';
 import { Button } from '@/components/ui/button';
+import { sumDecimalAmounts, formatDecimalMoney } from '@/lib/finance/decimal-utils';
 import '@/components/crm/bento-contacts.css';
 
 export interface QuotationItem {
@@ -102,17 +103,11 @@ export function BentoQuotationsView({
   const currencies = Array.from(new Set(quotations.map((q) => q.currency).filter(Boolean)));
   const hasMixedCurrencies = currencies.length > 1;
   const primaryCurrency = currencies[0] ?? 'USD';
-  const totalValue = quotations.reduce((sum, q) => {
-    if (!q.total) return sum;
-    const num = Number(q.total);
-    return sum + (Number.isFinite(num) ? num : 0);
-  }, 0);
+  const totalValueStr = sumDecimalAmounts(quotations.map((q) => q.total));
 
   const formattedTotalValue = hasMixedCurrencies
     ? `${currencies.length} currencies`
-    : totalValue > 0
-      ? `${primaryCurrency} ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : `${primaryCurrency} 0.00`;
+    : `${primaryCurrency} ${formatDecimalMoney(totalValueStr)}`;
 
   const getStatusTone = (status: string): 'ok' | 'warn' | 'idle' | 'neutral' => {
     switch (status.toLowerCase()) {

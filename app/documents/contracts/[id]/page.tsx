@@ -4,14 +4,12 @@
  * PDF export, shareable link, and audit signature log.
  */
 
-import Link from 'next/link';
 import { getContract, type SignatureAuditEntry } from '@/lib/services/documents/contract-service';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { ContractActions } from './ContractActions';
 import { DocumentBrandHeader } from '@/components/documents/document-brand-header';
-import { ExportDocumentPdfButton } from '@/components/documents/export-document-pdf-button';
-import { ShareDocumentButton } from '@/components/documents/share-document-button';
+import { ContractDetailClient } from './contract-detail-client';
 
 export default async function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -30,175 +28,15 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
 
   const contract = result.data;
   const signatures: SignatureAuditEntry[] = contract.signatures ?? [];
-  const latestSigner = signatures[0] ?? null;
 
   return (
     <div className="space-y-6 p-6">
       <DocumentBrandHeader />
-      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">{contract.title}</h1>
-          <p className="text-muted-foreground">
-            Contract &bull; Status: {contract.status}
-            {contract.proposal ? ` · Proposal #${contract.proposal.number}` : ''}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ExportDocumentPdfButton
-            documentKind="CONTRACT"
-            number={contract.id.slice(0, 8).toUpperCase()}
-            title={contract.title}
-            status={contract.status}
-            createdAt={contract.createdAt}
-            projectName={contract.project?.name ?? null}
-            signedAt={contract.signedAt}
-            signerName={
-              latestSigner
-                ? `${latestSigner.signerName} (${latestSigner.signerEmail})`
-                : contract.signer
-                  ? `${contract.signer.name ?? ''} (${contract.signer.email ?? ''})`
-                  : null
-            }
-            signatureReference={contract.signatureReference}
-            notes={
-              contract.proposal
-                ? `Linked Proposal: #${contract.proposal.number} — ${contract.proposal.title}`
-                : null
-            }
-          />
-          <ShareDocumentButton entityType="contract" entityId={contract.id} />
-          {(contract.status === 'draft' || contract.status === 'sent') && (
-            <Link
-              href={`/documents/contracts/${contract.id}/edit`}
-              className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/80"
-            >
-              Edit
-            </Link>
-          )}
-          <Link
-            href="/documents/contracts"
-            className="px-4 py-2 bg-muted text-muted-foreground rounded-md text-sm font-medium hover:bg-muted/80"
-          >
-            Back to Contracts
-          </Link>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="col-span-1 md:col-span-2 space-y-6">
-          <div className="rounded-md border bg-background p-6">
-            <h2 className="text-lg font-semibold mb-4">Contract Details</h2>
-            <dl className="space-y-4">
-              <div className="flex justify-between border-b pb-2">
-                <dt className="text-sm font-medium text-muted-foreground">Status</dt>
-                <dd className="text-sm">
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      contract.status === 'signed'
-                        ? 'bg-green-100 text-green-800'
-                        : contract.status === 'voided'
-                          ? 'bg-red-100 text-red-800'
-                          : contract.status === 'sent'
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-amber-100 text-amber-800'
-                    }`}
-                  >
-                    {contract.status}
-                  </span>
-                </dd>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <dt className="text-sm font-medium text-muted-foreground">Proposal</dt>
-                <dd className="text-sm">
-                  {contract.proposal ? (
-                    <Link
-                      href={`/sales/proposals/${contract.proposal.id}`}
-                      className="text-accent hover:underline"
-                    >
-                      #{contract.proposal.number} — {contract.proposal.title}
-                    </Link>
-                  ) : (
-                    <span className="text-muted-foreground">Not linked</span>
-                  )}
-                </dd>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <dt className="text-sm font-medium text-muted-foreground">Project</dt>
-                <dd className="text-sm">
-                  {contract.project ? (
-                    <Link
-                      href={`/projects/${contract.project.id}`}
-                      className="text-accent hover:underline"
-                    >
-                      {contract.project.name}
-                    </Link>
-                  ) : (
-                    <span className="text-muted-foreground">Not linked</span>
-                  )}
-                </dd>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <dt className="text-sm font-medium text-muted-foreground">Recorded By</dt>
-                <dd className="text-sm">
-                  {contract.signer ? (
-                    <span>
-                      {contract.signer.name} ({contract.signer.email})
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">Not signed</span>
-                  )}
-                </dd>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <dt className="text-sm font-medium text-muted-foreground">Signed At</dt>
-                <dd className="text-sm">
-                  {contract.signedAt ? (
-                    <span>{new Date(contract.signedAt).toLocaleString()}</span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm font-medium text-muted-foreground">Signature Reference</dt>
-                <dd className="text-sm font-mono text-xs">
-                  {contract.signatureReference || <span className="text-muted-foreground">—</span>}
-                </dd>
-              </div>
-            </dl>
-          </div>
-
-          {signatures.length > 0 && (
-            <div className="rounded-md border bg-background p-6">
-              <h2 className="text-lg font-semibold mb-4">Signature Audit Trail</h2>
-              <div className="space-y-3">
-                {signatures.map((sig) => (
-                  <div
-                    key={sig.id}
-                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-md border border-border p-3 text-sm"
-                  >
-                    <div>
-                      <div className="font-medium">{sig.signerName}</div>
-                      <div className="text-xs text-muted-foreground">{sig.signerEmail}</div>
-                    </div>
-                    <div className="text-xs text-muted-foreground sm:text-right">
-                      <div>{new Date(sig.signedAt).toLocaleString()}</div>
-                      <div>Method: {sig.signatureMethod}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="col-span-1 md:col-span-1">
-          <div className="rounded-md border bg-background p-6">
-            <h2 className="text-lg font-semibold mb-4">Actions</h2>
-            <ContractActions contractId={contract.id} status={contract.status} />
-          </div>
-        </div>
-      </div>
+      <ContractDetailClient
+        contract={contract}
+        signatures={signatures}
+        actionsNode={<ContractActions contractId={contract.id} status={contract.status} />}
+      />
     </div>
   );
 }

@@ -11,6 +11,7 @@ import {
   StatStrip,
 } from '@/components/ui/premium/primitives';
 import { Button } from '@/components/ui/button';
+import { sumDecimalAmounts, formatDecimalMoney } from '@/lib/finance/decimal-utils';
 import '@/components/crm/bento-contacts.css';
 
 export interface ProposalItem {
@@ -93,17 +94,11 @@ export function BentoProposalsView({
   const currencies = Array.from(new Set(proposals.map((p) => p.currency).filter(Boolean)));
   const hasMixedCurrencies = currencies.length > 1;
   const primaryCurrency = currencies[0] ?? 'USD';
-  const totalValue = proposals.reduce((sum, p) => {
-    if (!p.total) return sum;
-    const num = Number(p.total);
-    return sum + (Number.isFinite(num) ? num : 0);
-  }, 0);
+  const totalValueStr = sumDecimalAmounts(proposals.map((p) => p.total));
 
   const formattedTotalValue = hasMixedCurrencies
     ? `${currencies.length} currencies`
-    : totalValue > 0
-      ? `${primaryCurrency} ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : `${primaryCurrency} 0.00`;
+    : `${primaryCurrency} ${formatDecimalMoney(totalValueStr)}`;
 
   const getStatusTone = (status: string): 'ok' | 'warn' | 'idle' | 'neutral' => {
     switch (status.toLowerCase()) {

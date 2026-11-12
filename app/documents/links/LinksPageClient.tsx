@@ -4,6 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoLinksView } from '@/components/documents/bento-links-view';
 
 export interface DocumentLinkItem {
   id: string;
@@ -25,6 +27,7 @@ interface EntityOption {
 
 export function LinksPageClient({ initialLinks }: { initialLinks: DocumentLinkItem[] }) {
   const router = useRouter();
+  const isBento = useBentoShell();
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [entityType, setEntityType] = useState<'proposal' | 'quotation' | 'estimate' | 'contract'>(
@@ -58,12 +61,19 @@ export function LinksPageClient({ initialLinks }: { initialLinks: DocumentLinkIt
         : (raw.proposals ?? raw.quotations ?? []);
       const mapped = rows.map((r) => ({
         id: String(r.id),
-        label: r.number
-          ? `#${String(r.number)}${r.title ? ` — ${String(r.title)}` : ''}`
-          : String(r.title || r.id),
+        label:
+          nextType === 'proposal' || nextType === 'quotation'
+            ? `${r.number ? `#${r.number} — ` : ''}${r.title || 'Untitled'}`
+            : nextType === 'estimate'
+              ? `${r.number ? `#${r.number} — ` : ''}Estimate`
+              : `${r.title || 'Contract'} (${r.status || 'draft'})`,
       }));
       setOptions(mapped);
-      if (mapped[0]) setSelectedEntityId(mapped[0].id);
+      if (mapped.length > 0) {
+        setSelectedEntityId(mapped[0].id);
+      }
+    } catch {
+      toast.error('Failed to load records for selection');
     } finally {
       setLoadingOptions(false);
     }
@@ -128,10 +138,9 @@ export function LinksPageClient({ initialLinks }: { initialLinks: DocumentLinkIt
         method: 'DELETE',
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error || 'Failed to revoke link');
+        throw new Error('Failed to revoke link');
       }
-      toast.success('Share link revoked');
+      toast.success('Link revoked');
       router.refresh();
     } catch (err) {
       toast.error((err as Error).message);
@@ -140,43 +149,26 @@ export function LinksPageClient({ initialLinks }: { initialLinks: DocumentLinkIt
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">Shared Document Links</h1>
-          <p className="text-muted-foreground">
-            Token-based, time-bound links for sharing proposals, quotations, estimates, and
-            contracts with clients.
-          </p>
+  const creationModalNode = modalOpen && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-lg bg-card rounded-lg border border-border p-6 shadow-xl space-y-4">
+        <div className="flex items-center justify-between border-b border-border pb-3">
+          <h2 className="text-lg font-bold">Generate Shareable Link</h2>
+          <button
+            type="button"
+            onClick={() => setModalOpen(false)}
+            className="text-muted-foreground hover:text-foreground text-sm font-semibold"
+          >
+            ✕
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={handleOpenCreate}
-          className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
-        >
-          Create Share Link
-        </button>
-      </div>
-
-      {modalOpen && (
-        <form
-          onSubmit={handleCreateLink}
-          className="rounded-md border bg-card p-6 space-y-4 max-w-2xl"
-        >
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold">Generate Client Share Link</h2>
-            <button
-              type="button"
-              onClick={() => setModalOpen(false)}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Close
-            </button>
-          </div>
+        <form onSubmit={handleCreateLink} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label htmlFor="share-entity-type" className="block text-sm font-medium">
+              <label
+                htmlFor="share-entity-type"
+                className="block text-xs font-semibold text-muted-foreground uppercase"
+              >
                 Document Category
               </label>
               <select
@@ -196,7 +188,10 @@ export function LinksPageClient({ initialLinks }: { initialLinks: DocumentLinkIt
               </select>
             </div>
             <div className="space-y-1.5">
-              <label htmlFor="share-entity-id" className="block text-sm font-medium">
+              <label
+                htmlFor="share-entity-id"
+                className="block text-xs font-semibold text-muted-foreground uppercase"
+              >
                 Select Record
               </label>
               <select
@@ -222,7 +217,10 @@ export function LinksPageClient({ initialLinks }: { initialLinks: DocumentLinkIt
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label htmlFor="share-link-expiry" className="block text-sm font-medium">
+              <label
+                htmlFor="share-link-expiry"
+                className="block text-xs font-semibold text-muted-foreground uppercase"
+              >
                 Expires In
               </label>
               <select
@@ -238,7 +236,10 @@ export function LinksPageClient({ initialLinks }: { initialLinks: DocumentLinkIt
               </select>
             </div>
             <div className="space-y-1.5">
-              <label htmlFor="share-link-max-views" className="block text-sm font-medium">
+              <label
+                htmlFor="share-link-max-views"
+                className="block text-xs font-semibold text-muted-foreground uppercase"
+              >
                 Max Views (optional)
               </label>
               <input
@@ -252,24 +253,61 @@ export function LinksPageClient({ initialLinks }: { initialLinks: DocumentLinkIt
               />
             </div>
           </div>
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-2 pt-2 border-t border-border">
             <button
               type="button"
               onClick={() => setModalOpen(false)}
-              className="px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-muted"
+              className="px-4 py-2 border border-border rounded-md text-xs font-medium hover:bg-muted"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={creating || !selectedEntityId}
-              className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90 disabled:opacity-50"
+              className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-xs font-medium hover:bg-accent/90 disabled:opacity-50"
             >
               {creating ? 'Creating…' : 'Create Link'}
             </button>
           </div>
         </form>
-      )}
+      </div>
+    </div>
+  );
+
+  if (isBento) {
+    return (
+      <>
+        <BentoLinksView
+          links={initialLinks}
+          onOpenCreateModal={handleOpenCreate}
+          onRevokeLink={handleRevoke}
+          revokingId={revokingId}
+        />
+        {creationModalNode}
+      </>
+    );
+  }
+
+  // Legacy Presentation
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">Shareable Links</h1>
+          <p className="text-muted-foreground">
+            Generate and manage token-based public share links with expiration and access limits.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleOpenCreate}
+          className="px-4 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90"
+        >
+          New Share Link
+        </button>
+      </div>
+
+      {creationModalNode}
 
       {initialLinks.length === 0 ? (
         <div className="rounded-md border bg-background p-6 text-center space-y-2">
@@ -298,53 +336,51 @@ export function LinksPageClient({ initialLinks }: { initialLinks: DocumentLinkIt
                 return (
                   <tr key={l.id} className="border-b last:border-0 hover:bg-muted/40">
                     <td className="py-4">
-                      <span className="text-sm font-medium">{l.documentTitle}</span>
-                      <br />
-                      <span className="text-xs text-muted-foreground capitalize">
+                      <div className="font-medium">{l.documentTitle}</div>
+                      <div className="text-xs text-muted-foreground capitalize">
                         {l.documentType}
-                      </span>
+                      </div>
                     </td>
-                    <td className="py-4">
-                      <Link
-                        href={`/share/${l.token}`}
-                        target="_blank"
-                        className="font-mono text-xs text-accent hover:underline break-all"
-                      >
-                        /share/{l.token.slice(0, 16)}…
-                      </Link>
-                    </td>
+                    <td className="py-4 font-mono text-xs">/share/{l.token}</td>
                     <td className="py-4 text-sm">
-                      {new Date(l.expiresAt).toLocaleString()}
-                      {isExpired ? (
-                        <span className="ml-2 inline-flex items-center rounded bg-red-100 text-red-800 px-1.5 py-0.5 text-xs">
-                          Expired
-                        </span>
-                      ) : isExhausted ? (
-                        <span className="ml-2 inline-flex items-center rounded bg-amber-100 text-amber-800 px-1.5 py-0.5 text-xs">
-                          Limit Reached
-                        </span>
-                      ) : null}
+                      {new Date(l.expiresAt).toLocaleDateString()}
+                      {isExpired && (
+                        <span className="ml-2 text-xs text-red-600 font-medium">Expired</span>
+                      )}
                     </td>
                     <td className="py-4 text-sm">
                       {l.accessCount}
-                      {l.maxAccess !== null ? ` / ${l.maxAccess}` : ''}
+                      {l.maxAccess ? ` / ${l.maxAccess}` : ''}
+                      {isExhausted && !isExpired && (
+                        <span className="ml-2 text-xs text-amber-600 font-medium">Limit Met</span>
+                      )}
                     </td>
                     <td className="py-4 text-right space-x-2">
                       <button
                         type="button"
-                        onClick={() => handleCopy(l.token)}
-                        className="text-xs font-medium text-accent hover:underline"
+                        onClick={() => void handleCopy(l.token)}
+                        className="text-sm text-accent hover:underline"
                       >
-                        Copy URL
+                        Copy
                       </button>
-                      <button
-                        type="button"
-                        disabled={revokingId === l.id}
-                        onClick={() => handleRevoke(l.id)}
-                        className="text-xs font-medium text-red-600 hover:underline disabled:opacity-50"
+                      <Link
+                        href={`/share/${l.token}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sm text-accent hover:underline"
                       >
-                        {revokingId === l.id ? 'Revoking…' : 'Revoke'}
-                      </button>
+                        Open
+                      </Link>
+                      {!isExpired && (
+                        <button
+                          type="button"
+                          disabled={revokingId === l.id}
+                          onClick={() => void handleRevoke(l.id)}
+                          className="text-sm text-red-600 hover:underline disabled:opacity-50"
+                        >
+                          {revokingId === l.id ? 'Revoking…' : 'Revoke'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
