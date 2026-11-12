@@ -372,7 +372,7 @@ model Contact {
   creator          User?             @relation("CreatedContact", fields: [createdBy], references: [id], onDelete: SetNull)
   updater          User?             @relation("UpdatedContact", fields: [updatedBy], references: [id], onDelete: SetNull)
   projectApprovals ProjectApproval[]
-  portalAccess     ClientPortalAccess?
+  portalAccess     ClientPortalAccess[]
 }
 
 model AccountContact {
