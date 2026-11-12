@@ -21,11 +21,26 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
 // Public paths that don't require authentication
-const PUBLIC_PATHS = ['/', '/login', '/register', '/invite', '/share', '/api/auth', '/api/health'];
+//
+// `/portal/invite` and `/portal/login` are public because an invitee has no
+// session yet; the rest of `/portal` requires a session, and the portal layout
+// additionally requires an active client access row.
+const PUBLIC_PATHS = [
+  '/',
+  '/login',
+  '/register',
+  '/invite',
+  '/share',
+  '/api/auth',
+  '/api/health',
+  '/portal/invite',
+  '/portal/login',
+];
 
 // Paths that require authentication (protected app routes)
 const PROTECTED_PATH_PREFIXES = [
   '/dashboard',
+  '/portal',
   '/crm',
   '/sales',
   '/finance',
@@ -57,9 +72,14 @@ export async function middleware(request: Request) {
     cookieStore.get('better-auth.session_token');
 
   if (!sessionCookie) {
-    // No session cookie -> redirect to login for protected app routes
+    // No session cookie -> redirect to login for protected app routes.
+    //
+    // The portal has its own sign-in page: sending a client to the team login
+    // would be a dead end (a client has no workspace), so /portal/* goes to
+    // /portal/login instead.
     if (PROTECTED_PATH_PREFIXES.some((p) => pathname.startsWith(p))) {
-      return NextResponse.redirect(new URL('/login', request.url));
+      const loginPath = pathname.startsWith('/portal') ? '/portal/login' : '/login';
+      return NextResponse.redirect(new URL(loginPath, request.url));
     }
     return NextResponse.next();
   }

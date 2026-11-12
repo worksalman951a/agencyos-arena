@@ -39,14 +39,14 @@ async function createAuthenticatedUserWithOrg(
 ): Promise<TestActor> {
   const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD, name }),
   });
   expect(signUpRes.status).toBe(200);
 
   const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
   expect(signInRes.status).toBe(200);
@@ -61,6 +61,7 @@ async function createAuthenticatedUserWithOrg(
     headers: {
       Cookie: `better-auth.session_token=${token}`,
       'Content-Type': 'application/json',
+      Origin: SERVER_URL,
       Accept: 'application/json',
     },
     body: JSON.stringify({ organizationName: orgName }),
@@ -81,6 +82,7 @@ function authHeaders(token: string): Record<string, string> {
   return {
     Cookie: `better-auth.session_token=${token}`,
     'Content-Type': 'application/json',
+    Origin: SERVER_URL,
     Accept: 'application/json',
   };
 }
@@ -146,14 +148,14 @@ describeIfDb('Organization settings and document numbering (real PostgreSQL)', (
     const memberEmail = `settings-member-${stamp}${TEST_EMAIL_SUFFIX}`;
     const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ email: memberEmail, password: TEST_PASSWORD, name: 'Plain Member' }),
     });
     expect(signUpRes.status).toBe(200);
 
     const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ email: memberEmail, password: TEST_PASSWORD }),
     });
     expect(signInRes.status).toBe(200);

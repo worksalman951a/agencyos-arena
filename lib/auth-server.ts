@@ -72,6 +72,35 @@ export const auth = betterAuth({
     requireEmailVerification: false,
     autoSignIn: false,
   },
+  /**
+   * A client-portal identity may only hold a session while its access is active.
+   *
+   * Suspending or revoking an access already deletes the client's sessions; this
+   * hook closes the re-login path, so a suspended/revoked client cannot mint a
+   * fresh session and then sit on the portal's "forbidden" page. Internal team
+   * members are untouched (their authorization is RBAC, evaluated per request).
+   */
+  databaseHooks: {
+    session: {
+      create: {
+        before: async (session) => {
+          const user = await prisma.user.findUnique({
+            where: { id: session.userId },
+            select: { userType: true },
+          });
+
+          if (user?.userType !== 'client') return true;
+
+          const access = await prisma.clientAccess.findFirst({
+            where: { userId: session.userId },
+            select: { status: true },
+          });
+
+          return access?.status === 'active';
+        },
+      },
+    },
+  },
   advanced: {
     defaultCookieAttributes: {
       httpOnly: true,

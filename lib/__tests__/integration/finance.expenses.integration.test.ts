@@ -75,7 +75,7 @@ describeIfDb('Expense list (real PostgreSQL)', () => {
   const createExpense = async (body: Record<string, unknown>) => {
     const res = await fetch(`${SERVER_URL}/api/v1/finance/expenses`, {
       method: 'POST',
-      headers: { ...auth(), 'Content-Type': 'application/json' },
+      headers: { ...auth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify(body),
     });
     const text = await res.text();

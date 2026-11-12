@@ -218,7 +218,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
   it('creates and lists project templates and links a template to a new project', async () => {
     const tplRes = await fetch(`${SERVER_URL}/api/v1/projects/templates`, {
       method: 'POST',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
+      headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ name: 'Web Launch Blueprint', description: 'Standard launch plan' }),
     });
     expect(tplRes.status).toBe(201);
@@ -229,7 +229,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
 
     const projRes = await fetch(`${SERVER_URL}/api/v1/crm/projects`, {
       method: 'POST',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
+      headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         name: 'Acme Redesign',
         clientId: contactId,
@@ -260,7 +260,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
   it('manages milestones and tasks with org-scoped assignees and non-disclosing isolation', async () => {
     const msRes = await fetch(`${SERVER_URL}/api/v1/projects/milestones`, {
       method: 'POST',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
+      headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         projectId,
         name: 'Phase 1 Discovery',
@@ -275,7 +275,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
     // Assigning a task to a foreign user fails with 404
     const badTaskRes = await fetch(`${SERVER_URL}/api/v1/crm/projects/${projectId}/tasks`, {
       method: 'POST',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
+      headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ title: 'Cross-org assign', assigneeId: foreignUserId }),
     });
     expect(badTaskRes.status).toBe(404);
@@ -283,7 +283,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
     // Creating a task assigned to the same-org member and milestone succeeds
     const taskRes = await fetch(`${SERVER_URL}/api/v1/crm/projects/${projectId}/tasks`, {
       method: 'POST',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
+      headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({
         title: 'Finalize wireframes',
         status: 'todo',
@@ -302,7 +302,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
     // Partial task update preserves priority/milestone while updating status
     const updateRes = await fetch(`${SERVER_URL}/api/v1/projects/tasks/${taskId}`, {
       method: 'PUT',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
+      headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ status: 'done' }),
     });
     expect(updateRes.status).toBe(200);
@@ -318,7 +318,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
     // Limited user without project.update gets 403
     const forbiddenTaskRes = await fetch(`${SERVER_URL}/api/v1/projects/tasks/${taskId}`, {
       method: 'PUT',
-      headers: { ...limitedAuth(), 'Content-Type': 'application/json' },
+      headers: { ...limitedAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ status: 'todo' }),
     });
     expect(forbiddenTaskRes.status).toBe(403);
@@ -328,7 +328,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
     // Even if client passes deprecated userId = limitedUserId, server records adminUserId
     const cmtRes = await fetch(`${SERVER_URL}/api/v1/projects/tasks/${taskId}/comments`, {
       method: 'POST',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
+      headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ userId: limitedUserId, comment: 'Admin authored note' }),
     });
     expect(cmtRes.status).toBe(201);
@@ -341,7 +341,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
       `${SERVER_URL}/api/v1/projects/tasks/${taskId}/comments/${commentId}`,
       {
         method: 'PUT',
-        headers: { ...limitedAuth(), 'Content-Type': 'application/json' },
+        headers: { ...limitedAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
         body: JSON.stringify({ comment: 'Hijacked' }),
       }
     );
@@ -350,7 +350,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
     // Limited user CAN create and edit their own comment
     const memberCmtRes = await fetch(`${SERVER_URL}/api/v1/projects/tasks/${taskId}/comments`, {
       method: 'POST',
-      headers: { ...limitedAuth(), 'Content-Type': 'application/json' },
+      headers: { ...limitedAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ comment: 'Member note' }),
     });
     expect(memberCmtRes.status).toBe(201);
@@ -361,7 +361,7 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
       `${SERVER_URL}/api/v1/projects/tasks/${taskId}/comments/${memberCmt.id}`,
       {
         method: 'PUT',
-        headers: { ...limitedAuth(), 'Content-Type': 'application/json' },
+        headers: { ...limitedAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
         body: JSON.stringify({ comment: 'Member note edited' }),
       }
     );
@@ -434,99 +434,106 @@ describeIfDb('Projects sub-modules integration (real PostgreSQL)', () => {
     fileId = '';
   });
 
-  it('enforces approval & change order transitions and time entry filters', async () => {
-    const appRes = await fetch(`${SERVER_URL}/api/v1/projects/approvals`, {
-      method: 'POST',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, contactId, status: 'pending', feedback: 'Review v1' }),
-    });
-    expect(appRes.status).toBe(201);
-    const approval = (await appRes.json()) as { id: string; approvedAt: string | null };
-    expect(approval.approvedAt).toBeNull();
-    approvalId = approval.id;
+  it(
+    'enforces approval & change order transitions and time entry filters',
+    { timeout: 120_000 },
+    async () => {
+      const appRes = await fetch(`${SERVER_URL}/api/v1/projects/approvals`, {
+        method: 'POST',
+        headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
+        body: JSON.stringify({ projectId, contactId, status: 'pending', feedback: 'Review v1' }),
+      });
+      expect(appRes.status).toBe(201);
+      const approval = (await appRes.json()) as { id: string; approvedAt: string | null };
+      expect(approval.approvedAt).toBeNull();
+      approvalId = approval.id;
 
-    const approveRes = await fetch(`${SERVER_URL}/api/v1/projects/approvals/${approvalId}`, {
-      method: 'PUT',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'approved', feedback: 'Signed off' }),
-    });
-    expect(approveRes.status).toBe(200);
-    const approved = (await approveRes.json()) as { status: string; approvedAt: string | null };
-    expect(approved.status).toBe('approved');
-    expect(approved.approvedAt).toBeTruthy();
-
-    const invalidAppTransition = await fetch(
-      `${SERVER_URL}/api/v1/projects/approvals/${approvalId}`,
-      {
+      const approveRes = await fetch(`${SERVER_URL}/api/v1/projects/approvals/${approvalId}`, {
         method: 'PUT',
-        headers: { ...adminAuth(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'rejected' }),
-      }
-    );
-    expect(invalidAppTransition.status).toBe(400);
+        headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
+        body: JSON.stringify({ status: 'approved', feedback: 'Signed off' }),
+      });
+      expect(approveRes.status).toBe(200);
+      const approved = (await approveRes.json()) as { status: string; approvedAt: string | null };
+      expect(approved.status).toBe('approved');
+      expect(approved.approvedAt).toBeTruthy();
 
-    // Change order create & approve
-    const coRes = await fetch(`${SERVER_URL}/api/v1/projects/change-orders`, {
-      method: 'POST',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        description: 'Add multilingual support',
-        amount: '2400.00',
-        status: 'pending',
-      }),
-    });
-    expect(coRes.status).toBe(201);
-    const co = (await coRes.json()) as { id: string };
-    changeOrderId = co.id;
+      const invalidAppTransition = await fetch(
+        `${SERVER_URL}/api/v1/projects/approvals/${approvalId}`,
+        {
+          method: 'PUT',
+          headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
+          body: JSON.stringify({ status: 'rejected' }),
+        }
+      );
+      expect(invalidAppTransition.status).toBe(400);
 
-    const coApprove = await fetch(`${SERVER_URL}/api/v1/projects/change-orders/${changeOrderId}`, {
-      method: 'PUT',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'approved' }),
-    });
-    expect(coApprove.status).toBe(200);
-    const coApproved = (await coApprove.json()) as {
-      approvedBy: string | null;
-      approver?: { id: string } | null;
-    };
-    expect(coApproved.approvedBy).toBe(adminUserId);
-    expect(coApproved.approver?.id).toBe(adminUserId);
+      // Change order create & approve
+      const coRes = await fetch(`${SERVER_URL}/api/v1/projects/change-orders`, {
+        method: 'POST',
+        headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
+        body: JSON.stringify({
+          projectId,
+          description: 'Add multilingual support',
+          amount: '2400.00',
+          status: 'pending',
+        }),
+      });
+      expect(coRes.status).toBe(201);
+      const co = (await coRes.json()) as { id: string };
+      changeOrderId = co.id;
 
-    const coRevert = await fetch(`${SERVER_URL}/api/v1/projects/change-orders/${changeOrderId}`, {
-      method: 'PUT',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'pending' }),
-    });
-    expect(coRevert.status).toBe(400);
+      const coApprove = await fetch(
+        `${SERVER_URL}/api/v1/projects/change-orders/${changeOrderId}`,
+        {
+          method: 'PUT',
+          headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
+          body: JSON.stringify({ status: 'approved' }),
+        }
+      );
+      expect(coApprove.status).toBe(200);
+      const coApproved = (await coApprove.json()) as {
+        approvedBy: string | null;
+        approver?: { id: string } | null;
+      };
+      expect(coApproved.approvedBy).toBe(adminUserId);
+      expect(coApproved.approver?.id).toBe(adminUserId);
 
-    // Time entry create + filter by projectId & billable
-    const teRes = await fetch(`${SERVER_URL}/api/v1/projects/time-entries`, {
-      method: 'POST',
-      headers: { ...adminAuth(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        taskId,
-        date: '2026-05-10T00:00:00.000Z',
-        hours: '3.5',
-        description: 'Discovery workshop',
-        billable: true,
-      }),
-    });
-    expect(teRes.status).toBe(201);
-    const te = (await teRes.json()) as { id: string; hours: string };
-    timeEntryId = te.id;
+      const coRevert = await fetch(`${SERVER_URL}/api/v1/projects/change-orders/${changeOrderId}`, {
+        method: 'PUT',
+        headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
+        body: JSON.stringify({ status: 'pending' }),
+      });
+      expect(coRevert.status).toBe(400);
 
-    const teListRes = await fetch(
-      `${SERVER_URL}/api/v1/projects/time-entries?projectId=${projectId}&billable=true`,
-      { headers: adminAuth() }
-    );
-    expect(teListRes.status).toBe(200);
-    const teList = (await teListRes.json()) as Array<{ id: string }>;
-    expect(teList.some((row) => row.id === timeEntryId)).toBe(true);
+      // Time entry create + filter by projectId & billable
+      const teRes = await fetch(`${SERVER_URL}/api/v1/projects/time-entries`, {
+        method: 'POST',
+        headers: { ...adminAuth(), 'Content-Type': 'application/json', Origin: SERVER_URL },
+        body: JSON.stringify({
+          taskId,
+          date: '2026-05-10T00:00:00.000Z',
+          hours: '3.5',
+          description: 'Discovery workshop',
+          billable: true,
+        }),
+      });
+      expect(teRes.status).toBe(201);
+      const te = (await teRes.json()) as { id: string; hours: string };
+      timeEntryId = te.id;
 
-    const teForeign = await fetch(`${SERVER_URL}/api/v1/projects/time-entries/${timeEntryId}`, {
-      headers: foreignAuth(),
-    });
-    expect(teForeign.status).toBe(404);
-  });
+      const teListRes = await fetch(
+        `${SERVER_URL}/api/v1/projects/time-entries?projectId=${projectId}&billable=true`,
+        { headers: adminAuth() }
+      );
+      expect(teListRes.status).toBe(200);
+      const teList = (await teListRes.json()) as Array<{ id: string }>;
+      expect(teList.some((row) => row.id === timeEntryId)).toBe(true);
+
+      const teForeign = await fetch(`${SERVER_URL}/api/v1/projects/time-entries/${timeEntryId}`, {
+        headers: foreignAuth(),
+      });
+      expect(teForeign.status).toBe(404);
+    }
+  );
 });

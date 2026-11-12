@@ -135,6 +135,28 @@ const CRM_PERMISSION_CODES = [
   'template.delete',
 ];
 
+/**
+ * Client-portal administration permissions.
+ *
+ * These gate the *internal* side of the portal (inviting a client, sharing a
+ * resource, reading client feedback). Client identities themselves never receive
+ * permission rows — their capabilities live on ClientAccess.
+ */
+const CLIENT_PORTAL_PERMISSION_CODES = [
+  'client.access.read',
+  'client.access.manage',
+  'client.invitation.read',
+  'client.invitation.create',
+  'client.invitation.revoke',
+  'client.approval.read',
+  'client.approval.create',
+  'client.comment.read',
+  'client.comment.create',
+];
+
+/** Every permission an Administrator role receives on bootstrap. */
+const ADMIN_PERMISSION_CODES = [...CRM_PERMISSION_CODES, ...CLIENT_PORTAL_PERMISSION_CODES];
+
 /** Validate session and return the authenticated user */
 async function getAuthenticatedUser() {
   const cookieStore = await cookies();
@@ -163,7 +185,7 @@ async function getAuthenticatedUser() {
  */
 async function ensureCrmPermissions(tx: typeof prisma) {
   await tx.permission.createMany({
-    data: CRM_PERMISSION_CODES.map((code) => ({
+    data: ADMIN_PERMISSION_CODES.map((code) => ({
       code,
       description: `CRM permission: ${code}`,
     })),
@@ -245,7 +267,7 @@ export async function POST(request: Request) {
 
         // 6. Assign all CRM permissions to the admin role
         const permissions = await tx.permission.findMany({
-          where: { code: { in: CRM_PERMISSION_CODES } },
+          where: { code: { in: ADMIN_PERMISSION_CODES } },
         });
         await tx.rolePermission.createMany({
           data: permissions.map((p: { id: string }) => ({

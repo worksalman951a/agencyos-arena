@@ -238,169 +238,173 @@ describeIfDb('Phase 3B Sales & Documents (real PostgreSQL)', () => {
     expect(deleteAccepted.status).toBe(400);
   });
 
-  it('manages quotations, templates without schema drift, contracts with signature locks, and shareable client links', async () => {
-    // 1. Quotation creation + lifecycle lock
-    const qRes = await jsonFetch('/api/v1/crm/quotations', {
-      method: 'POST',
-      headers: authHeaders(orgAAdmin.token),
-      body: JSON.stringify({
-        contactId: orgAContactId,
-        title: 'Annual Hosting Quotation',
-        currency: 'EUR',
-        lineItems: [
-          { description: 'Managed Cloud', quantity: '12', unitPrice: '200.00', taxRate: '20' },
-        ],
-      }),
-    });
-    expect(qRes.status).toBe(201);
-    const quotation = qRes.body as { id: string; number: string; total: string };
-    expect(quotation.number).toMatch(/^QOT-\d{4}-0001$/);
-    expect(Number(quotation.total)).toBeCloseTo(2880, 2);
+  it(
+    'manages quotations, templates without schema drift, contracts with signature locks, and shareable client links',
+    { timeout: 120_000 },
+    async () => {
+      // 1. Quotation creation + lifecycle lock
+      const qRes = await jsonFetch('/api/v1/crm/quotations', {
+        method: 'POST',
+        headers: authHeaders(orgAAdmin.token),
+        body: JSON.stringify({
+          contactId: orgAContactId,
+          title: 'Annual Hosting Quotation',
+          currency: 'EUR',
+          lineItems: [
+            { description: 'Managed Cloud', quantity: '12', unitPrice: '200.00', taxRate: '20' },
+          ],
+        }),
+      });
+      expect(qRes.status).toBe(201);
+      const quotation = qRes.body as { id: string; number: string; total: string };
+      expect(quotation.number).toMatch(/^QOT-\d{4}-0001$/);
+      expect(Number(quotation.total)).toBeCloseTo(2880, 2);
 
-    // 2. Reusable Templates persisted via DocumentVersion snapshot without polluting Documents list
-    const tpl1Res = await jsonFetch('/api/v1/documents/templates', {
-      method: 'POST',
-      headers: authHeaders(orgAAdmin.token),
-      body: JSON.stringify({
-        name: 'Standard Proposal Template',
-        type: 'proposal',
-        content: 'Prepared for {{client_name}}',
-        variables: { client_name: 'Default Client' },
-        isDefault: true,
-      }),
-    });
-    expect(tpl1Res.status).toBe(201);
-    const tpl1 = tpl1Res.body as {
-      id: string;
-      content: string;
-      variables: Record<string, string>;
-      isDefault: boolean;
-    };
-    expect(tpl1.content).toBe('Prepared for {{client_name}}');
-    expect(tpl1.variables).toEqual({ client_name: 'Default Client' });
-    expect(tpl1.isDefault).toBe(true);
+      // 2. Reusable Templates persisted via DocumentVersion snapshot without polluting Documents list
+      const tpl1Res = await jsonFetch('/api/v1/documents/templates', {
+        method: 'POST',
+        headers: authHeaders(orgAAdmin.token),
+        body: JSON.stringify({
+          name: 'Standard Proposal Template',
+          type: 'proposal',
+          content: 'Prepared for {{client_name}}',
+          variables: { client_name: 'Default Client' },
+          isDefault: true,
+        }),
+      });
+      expect(tpl1Res.status).toBe(201);
+      const tpl1 = tpl1Res.body as {
+        id: string;
+        content: string;
+        variables: Record<string, string>;
+        isDefault: boolean;
+      };
+      expect(tpl1.content).toBe('Prepared for {{client_name}}');
+      expect(tpl1.variables).toEqual({ client_name: 'Default Client' });
+      expect(tpl1.isDefault).toBe(true);
 
-    // Creating a second default template of the same type unsets the first default
-    const tpl2Res = await jsonFetch('/api/v1/documents/templates', {
-      method: 'POST',
-      headers: authHeaders(orgAAdmin.token),
-      body: JSON.stringify({
-        name: 'Enterprise Proposal Template',
-        type: 'proposal',
-        content: 'Enterprise scope for {{company}}',
-        variables: { company: '' },
-        isDefault: true,
-      }),
-    });
-    expect(tpl2Res.status).toBe(201);
+      // Creating a second default template of the same type unsets the first default
+      const tpl2Res = await jsonFetch('/api/v1/documents/templates', {
+        method: 'POST',
+        headers: authHeaders(orgAAdmin.token),
+        body: JSON.stringify({
+          name: 'Enterprise Proposal Template',
+          type: 'proposal',
+          content: 'Enterprise scope for {{company}}',
+          variables: { company: '' },
+          isDefault: true,
+        }),
+      });
+      expect(tpl2Res.status).toBe(201);
 
-    const tpl1Reloaded = await jsonFetch(`/api/v1/documents/templates/${tpl1.id}`, {
-      headers: authHeaders(orgAAdmin.token),
-    });
-    expect(tpl1Reloaded.status).toBe(200);
-    expect((tpl1Reloaded.body as { isDefault: boolean }).isDefault).toBe(false);
+      const tpl1Reloaded = await jsonFetch(`/api/v1/documents/templates/${tpl1.id}`, {
+        headers: authHeaders(orgAAdmin.token),
+      });
+      expect(tpl1Reloaded.status).toBe(200);
+      expect((tpl1Reloaded.body as { isDefault: boolean }).isDefault).toBe(false);
 
-    // Template is stored with folder='__template__' and snapshot payload without schema drift
-    const storedDoc = await prisma.document.findFirst({
-      where: { id: tpl1.id, organizationId: orgAAdmin.organizationId },
-    });
-    expect(storedDoc?.folder).toBe('__template__');
+      // Template is stored with folder='__template__' and snapshot payload without schema drift
+      const storedDoc = await prisma.document.findFirst({
+        where: { id: tpl1.id, organizationId: orgAAdmin.organizationId },
+      });
+      expect(storedDoc?.folder).toBe('__template__');
 
-    // 3. Contract creation -> send -> sign -> immutability
-    const contractRes = await jsonFetch('/api/v1/documents/contracts', {
-      method: 'POST',
-      headers: authHeaders(orgAAdmin.token),
-      body: JSON.stringify({
-        projectId: orgAProjectId,
-        title: 'Master Services Agreement 2026',
-        status: 'sent',
-      }),
-    });
-    expect(contractRes.status).toBe(201);
-    const contract = contractRes.body as { id: string; status: string };
+      // 3. Contract creation -> send -> sign -> immutability
+      const contractRes = await jsonFetch('/api/v1/documents/contracts', {
+        method: 'POST',
+        headers: authHeaders(orgAAdmin.token),
+        body: JSON.stringify({
+          projectId: orgAProjectId,
+          title: 'Master Services Agreement 2026',
+          status: 'sent',
+        }),
+      });
+      expect(contractRes.status).toBe(201);
+      const contract = contractRes.body as { id: string; status: string };
 
-    const signRes = await jsonFetch(`/api/v1/documents/contracts/${contract.id}`, {
-      method: 'POST',
-      headers: authHeaders(orgAAdmin.token),
-      body: JSON.stringify({
-        signerName: 'Ada Lovelace',
-        signerEmail: 'ada@client.example',
-        signatureReference: 'esign-2026-99',
-      }),
-    });
-    expect(signRes.status).toBe(200);
-    expect((signRes.body as { status: string }).status).toBe('signed');
+      const signRes = await jsonFetch(`/api/v1/documents/contracts/${contract.id}`, {
+        method: 'POST',
+        headers: authHeaders(orgAAdmin.token),
+        body: JSON.stringify({
+          signerName: 'Ada Lovelace',
+          signerEmail: 'ada@client.example',
+          signatureReference: 'esign-2026-99',
+        }),
+      });
+      expect(signRes.status).toBe(200);
+      expect((signRes.body as { status: string }).status).toBe('signed');
 
-    // Signed contract cannot be edited, voided, re-signed, or deleted
-    const editSigned = await jsonFetch(`/api/v1/documents/contracts/${contract.id}`, {
-      method: 'PUT',
-      headers: authHeaders(orgAAdmin.token),
-      body: JSON.stringify({ status: 'voided' }),
-    });
-    expect(editSigned.status).toBe(400);
+      // Signed contract cannot be edited, voided, re-signed, or deleted
+      const editSigned = await jsonFetch(`/api/v1/documents/contracts/${contract.id}`, {
+        method: 'PUT',
+        headers: authHeaders(orgAAdmin.token),
+        body: JSON.stringify({ status: 'voided' }),
+      });
+      expect(editSigned.status).toBe(400);
 
-    const deleteSigned = await jsonFetch(`/api/v1/documents/contracts/${contract.id}`, {
-      method: 'DELETE',
-      headers: authHeaders(orgAAdmin.token),
-    });
-    expect(deleteSigned.status).toBe(400);
-
-    // 4. Shareable client link with maxAccess = 2 and revocation
-    const shareRes = await jsonFetch('/api/v1/documents/links', {
-      method: 'POST',
-      headers: authHeaders(orgAAdmin.token),
-      body: JSON.stringify({
-        entityType: 'quotation',
-        entityId: quotation.id,
-        expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-        maxAccess: 2,
-      }),
-    });
-    expect(shareRes.status).toBe(201);
-    const shareLink = shareRes.body as { id: string; token: string; publicUrl: string };
-    expect(shareLink.publicUrl).toBe(`/share/${shareLink.token}`);
-
-    // Unauthenticated client access #1 and #2 succeed; internal org IDs are never exposed
-    const view1 = await jsonFetch(`/api/v1/documents/links/${shareLink.token}`);
-    expect(view1.status).toBe(200);
-    const view1Body = view1.body as Record<string, unknown>;
-    expect(view1Body.organizationId).toBeUndefined();
-    expect(view1Body.accessCount).toBe(1);
-    expect((view1Body.snapshot as { title?: string })?.title).toBe('Annual Hosting Quotation');
-
-    const view2 = await jsonFetch(`/api/v1/documents/links/${shareLink.token}`);
-    expect(view2.status).toBe(200);
-    expect((view2.body as { accessCount: number }).accessCount).toBe(2);
-
-    // Access #3 exceeds maxAccess (2) -> 403
-    const view3 = await jsonFetch(`/api/v1/documents/links/${shareLink.token}`);
-    expect(view3.status).toBe(403);
-
-    // Create another link and revoke it immediately -> 410
-    const revocableRes = await jsonFetch('/api/v1/documents/links', {
-      method: 'POST',
-      headers: authHeaders(orgAAdmin.token),
-      body: JSON.stringify({
-        entityType: 'contract',
-        entityId: contract.id,
-        expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-      }),
-    });
-    expect(revocableRes.status).toBe(201);
-    const revocable = revocableRes.body as { id: string; token: string };
-
-    const revokeRes = await jsonFetch(
-      `/api/v1/documents/links?id=${encodeURIComponent(revocable.id)}`,
-      {
+      const deleteSigned = await jsonFetch(`/api/v1/documents/contracts/${contract.id}`, {
         method: 'DELETE',
         headers: authHeaders(orgAAdmin.token),
-      }
-    );
-    expect(revokeRes.status).toBe(200);
+      });
+      expect(deleteSigned.status).toBe(400);
 
-    const viewRevoked = await jsonFetch(`/api/v1/documents/links/${revocable.token}`);
-    expect(viewRevoked.status).toBe(410);
-  });
+      // 4. Shareable client link with maxAccess = 2 and revocation
+      const shareRes = await jsonFetch('/api/v1/documents/links', {
+        method: 'POST',
+        headers: authHeaders(orgAAdmin.token),
+        body: JSON.stringify({
+          entityType: 'quotation',
+          entityId: quotation.id,
+          expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+          maxAccess: 2,
+        }),
+      });
+      expect(shareRes.status).toBe(201);
+      const shareLink = shareRes.body as { id: string; token: string; publicUrl: string };
+      expect(shareLink.publicUrl).toBe(`/share/${shareLink.token}`);
+
+      // Unauthenticated client access #1 and #2 succeed; internal org IDs are never exposed
+      const view1 = await jsonFetch(`/api/v1/documents/links/${shareLink.token}`);
+      expect(view1.status).toBe(200);
+      const view1Body = view1.body as Record<string, unknown>;
+      expect(view1Body.organizationId).toBeUndefined();
+      expect(view1Body.accessCount).toBe(1);
+      expect((view1Body.snapshot as { title?: string })?.title).toBe('Annual Hosting Quotation');
+
+      const view2 = await jsonFetch(`/api/v1/documents/links/${shareLink.token}`);
+      expect(view2.status).toBe(200);
+      expect((view2.body as { accessCount: number }).accessCount).toBe(2);
+
+      // Access #3 exceeds maxAccess (2) -> 403
+      const view3 = await jsonFetch(`/api/v1/documents/links/${shareLink.token}`);
+      expect(view3.status).toBe(403);
+
+      // Create another link and revoke it immediately -> 410
+      const revocableRes = await jsonFetch('/api/v1/documents/links', {
+        method: 'POST',
+        headers: authHeaders(orgAAdmin.token),
+        body: JSON.stringify({
+          entityType: 'contract',
+          entityId: contract.id,
+          expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+        }),
+      });
+      expect(revocableRes.status).toBe(201);
+      const revocable = revocableRes.body as { id: string; token: string };
+
+      const revokeRes = await jsonFetch(
+        `/api/v1/documents/links?id=${encodeURIComponent(revocable.id)}`,
+        {
+          method: 'DELETE',
+          headers: authHeaders(orgAAdmin.token),
+        }
+      );
+      expect(revokeRes.status).toBe(200);
+
+      const viewRevoked = await jsonFetch(`/api/v1/documents/links/${revocable.token}`);
+      expect(viewRevoked.status).toBe(410);
+    }
+  );
 
   it('enforces multi-tenant isolation (404/400) and RBAC permissions (403)', async () => {
     const orgAPropRes = await jsonFetch('/api/v1/crm/proposals', {

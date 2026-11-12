@@ -20,6 +20,19 @@ const APP_DIR = path.join(process.cwd(), 'app');
  */
 const PUBLIC_DIRS = new Set(['login', 'register', 'api', 'invite', 'share']);
 
+/**
+ * Modules with their own authenticated shell.
+ *
+ * The client portal must render `PortalShell`, not `ModuleShell`: a client
+ * identity has no organization membership, so the internal shell would show an
+ * empty sidebar. The layout may live in a route group (`(workspace)`) because
+ * `/portal/login` and `/portal/invite/[token]` are public and must not inherit
+ * the authenticated shell.
+ */
+const ALTERNATE_SHELLS: Record<string, string> = {
+  portal: 'PortalShell',
+};
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -40,12 +53,19 @@ describe('module layouts', () => {
     expect(modules.length).toBeGreaterThanOrEqual(8);
   });
 
-  it('gives every module a layout that renders ModuleShell', () => {
+  it('gives every module a layout that renders its shell', () => {
     const missing = modules.filter((name) => {
-      const layout = path.join(APP_DIR, name, 'layout.tsx');
-      if (!fs.existsSync(layout)) return true;
-      const source = fs.readFileSync(layout, 'utf8');
-      return !source.includes('ModuleShell');
+      const shell = ALTERNATE_SHELLS[name] ?? 'ModuleShell';
+      const candidates = [
+        path.join(APP_DIR, name, 'layout.tsx'),
+        ...fs
+          .readdirSync(path.join(APP_DIR, name), { withFileTypes: true })
+          .filter((entry) => entry.isDirectory() && entry.name.startsWith('('))
+          .map((entry) => path.join(APP_DIR, name, entry.name, 'layout.tsx')),
+      ].filter((file) => fs.existsSync(file));
+
+      if (candidates.length === 0) return true;
+      return !candidates.some((file) => fs.readFileSync(file, 'utf8').includes(shell));
     });
 
     expect(missing).toEqual([]);
