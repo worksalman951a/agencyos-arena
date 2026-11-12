@@ -87,10 +87,13 @@ describe('brandThemeCss', () => {
     const css = brandThemeCss(resolveBrandTheme('#7c3aed'));
 
     expect(css).toContain(':root{');
-    expect(css).toContain('.dark{');
+    expect(css).toContain('.dark');
     expect(css).toContain('--color-accent:');
     expect(css).toContain('--color-primary:');
     expect(css).toContain('--color-ring:');
+    expect(css).toContain('--pm-accent:');
+    expect(css).toContain('--pm-accent-soft:');
+    expect(css).toContain('--pm-accent-ink:');
 
     for (const forbidden of [
       '--color-destructive',

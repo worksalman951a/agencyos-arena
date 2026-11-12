@@ -110,7 +110,7 @@ export function BentoDashboardView({
             <Button
               asChild
               size="sm"
-              className="h-8 text-xs bg-emerald-700 hover:bg-emerald-800 text-white"
+              className="h-8 text-xs bg-primary text-primary-foreground hover:opacity-90"
             >
               <Link href="/projects/new">
                 <Layers size={13} className="mr-1.5" />
@@ -226,7 +226,7 @@ export function BentoDashboardView({
           <div className="mt-4 pt-3 border-t border-border flex items-center justify-between text-xs">
             <Link
               href="/crm/opportunities"
-              className="font-medium text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 inline-flex items-center gap-1"
+              className="font-medium text-accent hover:underline inline-flex items-center gap-1"
             >
               Open Pipeline Directory <ArrowRight size={12} />
             </Link>

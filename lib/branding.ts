@@ -196,20 +196,33 @@ export function resolveBrandTheme(brandColor: string | null | undefined): BrandT
 /**
  * Inline style string for the two themes.
  *
- * Scoped to `:root`/`.dark` and limited to the tokens above; the rules are
- * emitted after the compiled stylesheet so they win for equal specificity.
+ * Overrides both standard Tailwind tokens (`--color-accent`, `--color-primary`, `--color-ring`)
+ * and Premium Bento tokens (`--pm-accent`, `--pm-accent-soft`, `--pm-accent-ink`).
+ *
+ * Scoped to `:root`/`.dark` and `[data-theme='dark']` so Bento components,
+ * buttons, navigation, and badges seamlessly pick up the configured brand color.
  */
 export function brandThemeCss(theme: BrandTheme): string {
-  const vars = (tone: BrandTheme['light']) =>
-    [
+  const vars = (tone: BrandTheme['light'], isDark: boolean) => {
+    const rgb = hexToRgb(tone.accent);
+    const softBg = isDark
+      ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.2)`
+      : `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)`;
+    const inkColor = isDark ? tone.accent : tone.accent;
+
+    return [
       `--color-accent:${tone.accent};`,
       `--color-accent-foreground:${tone.accentForeground};`,
       `--color-primary:${tone.accent};`,
       `--color-primary-foreground:${tone.accentForeground};`,
       `--color-ring:${tone.ring};`,
+      `--pm-accent:${tone.accent};`,
+      `--pm-accent-soft:${softBg};`,
+      `--pm-accent-ink:${inkColor};`,
     ].join('');
+  };
 
-  return `:root{${vars(theme.light)}}.dark{${vars(theme.dark)}}`;
+  return `:root{${vars(theme.light, false)}}.dark,[data-theme='dark']{${vars(theme.dark, true)}}`;
 }
 
 /**

@@ -6,28 +6,52 @@ type Theme = 'light' | 'dark' | 'system';
 
 const THEME_KEY = 'agencyos-theme';
 
+function getStoredTheme(): Theme {
+  if (typeof window === 'undefined') return 'system';
+  try {
+    const stored = localStorage.getItem(THEME_KEY) as Theme | null;
+    return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
+  } catch {
+    return 'system';
+  }
+}
+
 function getSystemTheme(): 'light' | 'dark' {
-  if (typeof window === 'undefined') return 'light';
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'light';
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // Initialize theme from localStorage (or default to "system")
-  const [theme, setThemeState] = React.useState<Theme>(() => {
-    if (typeof window === 'undefined') return 'system';
-    const stored = localStorage.getItem(THEME_KEY) as Theme | null;
-    return stored ?? 'system';
-  });
+  const [theme, setThemeState] = React.useState<Theme>(getStoredTheme);
+  const [systemTheme, setSystemTheme] = React.useState<'light' | 'dark'>(getSystemTheme);
 
-  const resolvedTheme = theme === 'system' ? getSystemTheme() : theme;
+  // Subscribe to system media query changes
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+
+    const listener = (e: MediaQueryListEvent) => {
+      setSystemTheme(e.matches ? 'dark' : 'light');
+    };
+
+    mql.addEventListener('change', listener);
+    return () => mql.removeEventListener('change', listener);
+  }, []);
+
+  const resolvedTheme: 'light' | 'dark' = theme === 'system' ? systemTheme : theme;
 
   React.useEffect(() => {
     document.documentElement.classList.toggle('dark', resolvedTheme === 'dark');
+    document.documentElement.setAttribute('data-theme', resolvedTheme);
   }, [resolvedTheme]);
 
   const setTheme = (next: Theme) => {
     setThemeState(next);
-    localStorage.setItem(THEME_KEY, next);
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // ignore
+    }
   };
 
   return (

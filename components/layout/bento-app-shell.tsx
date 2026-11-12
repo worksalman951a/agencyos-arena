@@ -32,7 +32,7 @@ interface BentoAppShellProps {
 export function BentoAppShell({ children, user, sections, branding }: BentoAppShellProps) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
-  const { theme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const pathname = usePathname();
   const router = useRouter();
 
@@ -46,7 +46,6 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
   React.useEffect(() => {
     if (!mobileOpen) return;
 
-    // Shift focus into drawer upon opening
     const timer = setTimeout(() => {
       closeButtonRef.current?.focus();
     }, 50);
@@ -100,8 +99,13 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
 
   const activeItem = allNavItems(sections).find((item) => item.href === activeHref);
 
+  // Quick light/dark header toggle cycle: light -> dark -> light
+  const toggleHeaderTheme = () => {
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+  };
+
   return (
-    <div className="pm-shell" data-theme={theme === 'dark' ? 'dark' : 'light'}>
+    <div className="pm-shell" data-theme={resolvedTheme}>
       {/* Brand custom CSS overrides if provided */}
       {branding?.themeCss && (
         <style id="org-brand-theme" dangerouslySetInnerHTML={{ __html: branding.themeCss }} />
@@ -195,7 +199,7 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
             ))}
           </nav>
 
-          {/* User profile & sign out footer */}
+          {/* User profile & sign out footer (sidebar toggle removed per Issue 1) */}
           <div className="ps-foot">
             <div className="ps-user">
               <Avatar name={user.name ?? user.email ?? 'Member'} size="sm" />
@@ -207,20 +211,7 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
               )}
             </div>
 
-            <div className="flex items-center justify-between pt-1">
-              <button
-                type="button"
-                className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground flex items-center gap-2 text-xs"
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                aria-label="Toggle theme"
-                title="Toggle color theme"
-              >
-                {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-                {(!collapsed || mobileOpen) && (
-                  <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
-                )}
-              </button>
-
+            <div className="flex items-center justify-end pt-1">
               <button
                 type="button"
                 className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-danger flex items-center justify-center"
@@ -241,7 +232,7 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
       {/* Main Canvas Area */}
       <div className="pm-canvas" aria-hidden={mobileOpen ? 'true' : undefined}>
         <div className="pm-main">
-          {/* Topbar */}
+          {/* Topbar with Global Header Quick Light/Dark Toggle */}
           <header className="pm-topbar">
             <div className="pm-topbar__left">
               {/* Mobile menu button */}
@@ -263,9 +254,25 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
               </span>
             </div>
 
-            <div className="pm-topbar__right">
-              {/* Action slot or utility triggers */}
+            <div className="pm-topbar__right flex items-center gap-3">
               <div className="text-xs text-muted-foreground hidden sm:block">⌘K Quick Jump</div>
+
+              {/* Global Theme Toggle (Issue 1 Requirement) */}
+              <button
+                type="button"
+                onClick={toggleHeaderTheme}
+                className="p-1.5 rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors flex items-center justify-center"
+                aria-label={
+                  resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
+                }
+                title={
+                  theme === 'system'
+                    ? `Theme: System (${resolvedTheme}) — click to toggle`
+                    : `Theme: ${theme === 'dark' ? 'Dark' : 'Light'} — click to toggle`
+                }
+              >
+                {resolvedTheme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+              </button>
             </div>
           </header>
 

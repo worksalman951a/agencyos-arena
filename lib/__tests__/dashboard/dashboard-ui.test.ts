@@ -14,6 +14,7 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
 describe('dashboard page', () => {
   const src = read('app/dashboard/page.tsx');
+  const clientView = read('app/dashboard/dashboard-client-view.tsx');
 
   it('renders four distinct metrics from the service layer', () => {
     for (const title of [
@@ -22,7 +23,7 @@ describe('dashboard page', () => {
       'Outstanding Receivables',
       'Overdue Amount',
     ]) {
-      expect(src, title).toContain(title);
+      expect(clientView, title).toContain(title);
     }
 
     expect(src).toContain('getDashboardMetrics');
@@ -32,31 +33,31 @@ describe('dashboard page', () => {
 
   it('no longer ships the hardcoded placeholder figures', () => {
     // The literal only survives in the explanatory doc comment.
-    const code = src
+    const code = clientView
       .split('\n')
       .filter((line) => !line.trim().startsWith('*'))
       .join('\n');
     expect(code).not.toContain('$0.00');
     // Opportunity figures are gated on a real (permission-checked) result.
-    expect(code).toContain('opportunities.ok ?');
+    expect(clientView).toContain('opportunities.ok ?');
   });
 
   it('navigates to the real new-project workflow, permission-aware', () => {
     // A <button> with no handler was the bug: the action did nothing.
-    expect(src).toContain('href="/projects/new"');
+    expect(clientView).toContain('href="/projects/new"');
     expect(src).toContain("permissions.has('project.create')");
-    expect(src).not.toMatch(/<button[^>]*>\s*New Project/);
+    expect(clientView).not.toMatch(/<button[^>]*>\s*New Project/);
   });
 
   it('shows currencies separately and never converts', () => {
-    expect(src).toContain('otherCurrencies');
-    expect(src).toContain('no exchange-rate conversion');
+    expect(clientView).toContain('otherCurrencies');
+    expect(clientView).toContain('no exchange-rate conversion');
   });
 
   it('explains permission limits instead of showing misleading zeros', () => {
-    expect(src).toContain('metrics.ok ?');
-    expect(src).toContain('does not include permission to view');
-    expect(src).toContain('do not have permission to view the activity log');
+    expect(clientView).toContain('metrics.ok ?');
+    expect(clientView).toContain('does not include permission to view');
+    expect(clientView).toContain('do not have permission to view the activity log');
   });
 });
 

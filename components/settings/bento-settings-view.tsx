@@ -12,6 +12,9 @@ import {
   Check,
   Shield,
   Sparkles,
+  Sun,
+  Moon,
+  Laptop,
 } from 'lucide-react';
 
 import { Panel, StatStrip, StatusPill } from '@/components/ui/premium/primitives';
@@ -19,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { BRAND_SWATCHES } from '@/lib/branding-constants';
 import { contrastRatio, readableForeground, resolveBrandTheme } from '@/lib/branding';
+import { useTheme } from '@/components/providers/theme-provider';
 
 export interface OrganizationSettings {
   brandName?: string | null;
@@ -205,6 +209,7 @@ export function BentoSettingsView({
   onProfileSave,
 }: BentoSettingsViewProps) {
   const [activeSection, setActiveSection] = React.useState<SectionKey>('organization');
+  const { theme: appTheme, setTheme: setAppTheme, resolvedTheme } = useTheme();
 
   // Preview calculations for Brand & Theme
   const resolvedBrand = React.useMemo(() => {
@@ -551,206 +556,288 @@ export function BentoSettingsView({
                 )
               }
             >
-              <form onSubmit={onBrandingSave} className="p-5 space-y-6">
-                <div className="text-xs text-muted-foreground">
-                  Configure white-label branding, logo artwork, and primary color palette. Accent
-                  colors must provide compliant WCAG AA contrast (≥ 4.5:1) against white text.
-                </div>
-
-                {/* Swatch palette picker */}
-                <div className="space-y-2">
-                  <label className="text-xs font-medium block">
-                    Curated Accessible Palette Swatches
-                  </label>
-                  <div
-                    className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2"
-                    role="radiogroup"
-                    aria-label="Brand accent color swatches"
-                  >
-                    {BRAND_SWATCHES.map((swatch) => {
-                      const isSelected =
-                        brandColor.trim().toLowerCase() === swatch.hex.toLowerCase();
-                      return (
-                        <button
-                          key={swatch.hex}
-                          type="button"
-                          disabled={readOnly}
-                          onClick={() => setBrandColor(swatch.hex)}
-                          className={`p-2 rounded-lg border text-left flex flex-col gap-1.5 transition-all ${
-                            isSelected
-                              ? 'border-accent ring-2 ring-accent/30 bg-accent/5'
-                              : 'border-border hover:border-border/80 bg-background'
-                          }`}
-                        >
-                          <div
-                            className="h-7 w-full rounded flex items-center justify-center font-bold text-xs"
-                            style={{ backgroundColor: swatch.hex, color: swatch.on }}
-                          >
-                            {isSelected && <Check className="h-4 w-4" />}
-                          </div>
-                          <div className="flex items-center justify-between text-[11px]">
-                            <span className="font-medium text-foreground">{swatch.name}</span>
-                            <span className="text-[10px] text-muted-foreground font-mono">
-                              {swatch.ratio}:1
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Custom inputs */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium" htmlFor="bento-brand-name">
-                      Customer-Facing Brand Name
-                    </label>
-                    <input
-                      id="bento-brand-name"
-                      type="text"
-                      value={brandName}
-                      onChange={(e) => setBrandName(e.target.value)}
-                      disabled={readOnly}
-                      className="w-full border border-input rounded-md px-3 py-2 text-xs bg-background disabled:opacity-60"
-                      placeholder="Defaults to organization name"
-                      maxLength={120}
-                    />
-                    <p className="text-[10px] text-muted-foreground">
-                      Shown on printable PDFs, invoice headers, and client portals.
+              <div className="p-5 space-y-6">
+                {/* Appearance Preference Mode (Issue 2 Requirement) */}
+                <div className="space-y-3 pb-5 border-b border-border">
+                  <div>
+                    <h4 className="text-xs font-semibold text-foreground">
+                      Theme &amp; Appearance
+                    </h4>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Choose your interface presentation mode. Selecting System synchronizes with
+                      your device preferences.
                     </p>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium" htmlFor="bento-brand-color">
-                      Custom Brand Hex Color
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={resolvedBrand.color}
-                        onChange={(e) => setBrandColor(e.target.value)}
-                        disabled={readOnly}
-                        className="h-8 w-10 p-0.5 rounded border border-input cursor-pointer disabled:opacity-60"
-                      />
-                      <input
-                        id="bento-brand-color"
-                        type="text"
-                        value={brandColor}
-                        onChange={(e) => setBrandColor(e.target.value)}
-                        disabled={readOnly}
-                        className="flex-1 border border-input rounded-md px-3 py-2 text-xs font-mono bg-background disabled:opacity-60"
-                        placeholder="#047857"
-                        maxLength={7}
-                      />
-                    </div>
-                    {fieldError('branding', 'brandColor') ? (
-                      <p className="text-[11px] text-destructive">
-                        {fieldError('branding', 'brandColor')}
-                      </p>
-                    ) : (
-                      <p className="text-[10px] text-muted-foreground">
-                        WCAG AA Contrast: {resolvedBrand.displayContrast}:1
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5 md:col-span-2">
-                    <label className="text-xs font-medium" htmlFor="bento-logo-url">
-                      Logo Artwork Absolute URL
-                    </label>
-                    <input
-                      id="bento-logo-url"
-                      type="url"
-                      value={logoUrl}
-                      onChange={(e) => setLogoUrl(e.target.value)}
-                      disabled={readOnly}
-                      className="w-full border border-input rounded-md px-3 py-2 text-xs bg-background disabled:opacity-60"
-                      placeholder="https://cdn.youragency.com/logo.png"
-                      maxLength={500}
-                    />
-                    {fieldError('branding', 'logoUrl') && (
-                      <p className="text-[11px] text-destructive">
-                        {fieldError('branding', 'logoUrl')}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Live Client Preview Bento Tile */}
-                <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Live Client Portal Preview
-                  </div>
-                  <div className="rounded-md border border-border bg-background overflow-hidden shadow-xs">
-                    <div
-                      className="px-4 py-3 flex items-center justify-between"
-                      style={{
-                        backgroundColor: resolvedBrand.theme.light.accent,
-                        color: resolvedBrand.onColor,
-                      }}
+                  <div
+                    className="grid grid-cols-3 gap-3"
+                    role="radiogroup"
+                    aria-label="Appearance options"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setAppTheme('light')}
+                      className={`p-3 rounded-lg border text-left flex flex-col gap-2 transition-all ${
+                        appTheme === 'light'
+                          ? 'border-accent ring-2 ring-accent/30 bg-accent/5'
+                          : 'border-border hover:border-border/80 bg-background'
+                      }`}
                     >
-                      <div className="flex items-center gap-2">
-                        {logoUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={logoUrl}
-                            alt="Logo preview"
-                            className="h-6 max-w-[120px] object-contain rounded"
-                          />
-                        ) : (
-                          <div
-                            className="h-6 w-6 rounded flex items-center justify-center font-bold text-xs"
-                            style={{
-                              backgroundColor: 'rgba(255,255,255,0.2)',
-                              color: resolvedBrand.onColor,
-                            }}
-                          >
-                            {(brandName || orgName || 'A').slice(0, 1).toUpperCase()}
-                          </div>
-                        )}
-                        <span className="font-semibold text-sm">
-                          {brandName || orgName || 'AgencyOS Studio'}
-                        </span>
+                      <div className="flex items-center justify-between">
+                        <Sun className="h-4 w-4 text-amber-500" />
+                        {appTheme === 'light' && <Check className="h-3.5 w-3.5 text-accent" />}
                       </div>
-                      <span className="text-[11px] px-2 py-0.5 rounded bg-black/20 font-mono">
-                        Portal #402
-                      </span>
-                    </div>
-                    <div className="p-4 space-y-2 text-xs text-muted-foreground">
-                      <div className="font-medium text-foreground">
-                        Document Preview: Shared Invoice & Proposal Portal
+                      <div>
+                        <div className="text-xs font-semibold text-foreground">Light</div>
+                        <div className="text-[10px] text-muted-foreground">Crisp high contrast</div>
                       </div>
-                      <p>
-                        This sample represents how customers and prospective clients will see shared
-                        contracts, statements of work, and billing documents.
-                      </p>
-                    </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAppTheme('dark')}
+                      className={`p-3 rounded-lg border text-left flex flex-col gap-2 transition-all ${
+                        appTheme === 'dark'
+                          ? 'border-accent ring-2 ring-accent/30 bg-accent/5'
+                          : 'border-border hover:border-border/80 bg-background'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <Moon className="h-4 w-4 text-indigo-400" />
+                        {appTheme === 'dark' && <Check className="h-3.5 w-3.5 text-accent" />}
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold text-foreground">Dark</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          Low-glare night palette
+                        </div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAppTheme('system')}
+                      className={`p-3 rounded-lg border text-left flex flex-col gap-2 transition-all ${
+                        appTheme === 'system'
+                          ? 'border-accent ring-2 ring-accent/30 bg-accent/5'
+                          : 'border-border hover:border-border/80 bg-background'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <Laptop className="h-4 w-4 text-muted-foreground" />
+                        {appTheme === 'system' && <Check className="h-3.5 w-3.5 text-accent" />}
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold text-foreground">System</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          Follows OS ({resolvedTheme})
+                        </div>
+                      </div>
+                    </button>
                   </div>
                 </div>
 
-                {!readOnly && (
-                  <div className="pt-4 border-t border-border flex items-center justify-between">
-                    <div className="text-xs text-muted-foreground">
-                      {saves.branding.message && (
-                        <span
-                          className={
-                            saves.branding.status === 'error'
-                              ? 'text-destructive'
-                              : 'text-emerald-600 dark:text-emerald-400'
-                          }
-                        >
-                          {saves.branding.message}
-                        </span>
+                <form onSubmit={onBrandingSave} className="space-y-6">
+                  <div className="text-xs text-muted-foreground">
+                    Configure white-label branding, logo artwork, and primary color palette. Accent
+                    colors must provide compliant WCAG AA contrast (≥ 4.5:1) against white text.
+                  </div>
+
+                  {/* Swatch palette picker */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium block">
+                      Curated Accessible Palette Swatches
+                    </label>
+                    <div
+                      className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2"
+                      role="radiogroup"
+                      aria-label="Brand accent color swatches"
+                    >
+                      {BRAND_SWATCHES.map((swatch) => {
+                        const isSelected =
+                          brandColor.trim().toLowerCase() === swatch.hex.toLowerCase();
+                        return (
+                          <button
+                            key={swatch.hex}
+                            type="button"
+                            disabled={readOnly}
+                            onClick={() => setBrandColor(swatch.hex)}
+                            className={`p-2 rounded-lg border text-left flex flex-col gap-1.5 transition-all ${
+                              isSelected
+                                ? 'border-accent ring-2 ring-accent/30 bg-accent/5'
+                                : 'border-border hover:border-border/80 bg-background'
+                            }`}
+                          >
+                            <div
+                              className="h-7 w-full rounded flex items-center justify-center font-bold text-xs"
+                              style={{ backgroundColor: swatch.hex, color: swatch.on }}
+                            >
+                              {isSelected && <Check className="h-4 w-4" />}
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="font-medium text-foreground">{swatch.name}</span>
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                {swatch.ratio}:1
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Custom inputs */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium" htmlFor="bento-brand-name">
+                        Customer-Facing Brand Name
+                      </label>
+                      <input
+                        id="bento-brand-name"
+                        type="text"
+                        value={brandName}
+                        onChange={(e) => setBrandName(e.target.value)}
+                        disabled={readOnly}
+                        className="w-full border border-input rounded-md px-3 py-2 text-xs bg-background disabled:opacity-60"
+                        placeholder="Defaults to organization name"
+                        maxLength={120}
+                      />
+                      <p className="text-[10px] text-muted-foreground">
+                        Shown on printable PDFs, invoice headers, and client portals.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium" htmlFor="bento-brand-color">
+                        Custom Brand Hex Color
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={resolvedBrand.color}
+                          onChange={(e) => setBrandColor(e.target.value)}
+                          disabled={readOnly}
+                          className="h-8 w-10 p-0.5 rounded border border-input cursor-pointer disabled:opacity-60"
+                        />
+                        <input
+                          id="bento-brand-color"
+                          type="text"
+                          value={brandColor}
+                          onChange={(e) => setBrandColor(e.target.value)}
+                          disabled={readOnly}
+                          className="flex-1 border border-input rounded-md px-3 py-2 text-xs font-mono bg-background disabled:opacity-60"
+                          placeholder="#047857"
+                          maxLength={7}
+                        />
+                      </div>
+                      {fieldError('branding', 'brandColor') ? (
+                        <p className="text-[11px] text-destructive">
+                          {fieldError('branding', 'brandColor')}
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-muted-foreground">
+                          WCAG AA Contrast: {resolvedBrand.displayContrast}:1
+                        </p>
                       )}
                     </div>
-                    <Button type="submit" size="sm" disabled={saves.branding.status === 'saving'}>
-                      <Save className="h-3.5 w-3.5 mr-1.5" />
-                      {saves.branding.status === 'saving' ? 'Saving…' : 'Save Brand Settings'}
-                    </Button>
+
+                    <div className="space-y-1.5 md:col-span-2">
+                      <label className="text-xs font-medium" htmlFor="bento-logo-url">
+                        Logo Artwork Absolute URL
+                      </label>
+                      <input
+                        id="bento-logo-url"
+                        type="url"
+                        value={logoUrl}
+                        onChange={(e) => setLogoUrl(e.target.value)}
+                        disabled={readOnly}
+                        className="w-full border border-input rounded-md px-3 py-2 text-xs bg-background disabled:opacity-60"
+                        placeholder="https://cdn.youragency.com/logo.png"
+                        maxLength={500}
+                      />
+                      {fieldError('branding', 'logoUrl') && (
+                        <p className="text-[11px] text-destructive">
+                          {fieldError('branding', 'logoUrl')}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                )}
-              </form>
+
+                  {/* Live Client Preview Bento Tile */}
+                  <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Live Client Portal Preview
+                    </div>
+                    <div className="rounded-md border border-border bg-background overflow-hidden shadow-xs">
+                      <div
+                        className="px-4 py-3 flex items-center justify-between"
+                        style={{
+                          backgroundColor: resolvedBrand.theme.light.accent,
+                          color: resolvedBrand.onColor,
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          {logoUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={logoUrl}
+                              alt="Logo preview"
+                              className="h-6 max-w-[120px] object-contain rounded"
+                            />
+                          ) : (
+                            <div
+                              className="h-6 w-6 rounded flex items-center justify-center font-bold text-xs"
+                              style={{
+                                backgroundColor: 'rgba(255,255,255,0.2)',
+                                color: resolvedBrand.onColor,
+                              }}
+                            >
+                              {(brandName || orgName || 'A').slice(0, 1).toUpperCase()}
+                            </div>
+                          )}
+                          <span className="font-semibold text-sm">
+                            {brandName || orgName || 'AgencyOS Studio'}
+                          </span>
+                        </div>
+                        <span className="text-[11px] px-2 py-0.5 rounded bg-black/20 font-mono">
+                          Portal #402
+                        </span>
+                      </div>
+                      <div className="p-4 space-y-2 text-xs text-muted-foreground">
+                        <div className="font-medium text-foreground">
+                          Document Preview: Shared Invoice & Proposal Portal
+                        </div>
+                        <p>
+                          This sample represents how customers and prospective clients will see
+                          shared contracts, statements of work, and billing documents.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {!readOnly && (
+                    <div className="pt-4 border-t border-border flex items-center justify-between">
+                      <div className="text-xs text-muted-foreground">
+                        {saves.branding.message && (
+                          <span
+                            className={
+                              saves.branding.status === 'error'
+                                ? 'text-destructive'
+                                : 'text-emerald-600 dark:text-emerald-400'
+                            }
+                          >
+                            {saves.branding.message}
+                          </span>
+                        )}
+                      </div>
+                      <Button type="submit" size="sm" disabled={saves.branding.status === 'saving'}>
+                        <Save className="h-3.5 w-3.5 mr-1.5" />
+                        {saves.branding.status === 'saving' ? 'Saving…' : 'Save Brand Settings'}
+                      </Button>
+                    </div>
+                  )}
+                </form>
+              </div>
             </Panel>
           )}
 
