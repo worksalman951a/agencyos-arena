@@ -15,6 +15,7 @@ import {
   clientInvitationEmail,
   escapeHtml,
   formatExpiry,
+  passwordResetEmail,
   renderActionEmail,
 } from '@/lib/email/templates';
 
@@ -297,6 +298,85 @@ describe('clientInvitationEmail', () => {
       }
       expect(html).toContain('background-color:#047857;color:#ffffff');
     });
+  });
+});
+
+describe('passwordResetEmail', () => {
+  const RESET_URL = 'https://app.example.test/reset-password/tok_AbC-123_xyz-SECRET';
+
+  function reset(overrides: Partial<Parameters<typeof passwordResetEmail>[0]> = {}) {
+    return passwordResetEmail({ resetUrl: RESET_URL, expiresAt: EXPIRES_AT, ...overrides });
+  }
+
+  it('states what to do, the single use and the expiry', () => {
+    const email = reset();
+
+    expect(email.subject).toBe('Reset your AgencyOS password');
+    expect(email.text).toContain('Choose a new password using the link below.');
+    expect(email.text).toContain('The link can be used once.');
+    expect(email.text).toContain('This link expires on 19 November 2026 at 16:40 UTC.');
+  });
+
+  it('tells a recipient who did not ask to ignore it, and never asks for a password', () => {
+    const email = reset();
+
+    expect(email.text).toContain('If you did not request a password reset');
+    expect(email.text).toContain('your password will not change');
+    expect(email.text).toContain('will never ask you for your password by e-mail');
+  });
+
+  it('contains the reset link and no other link, in both alternatives', () => {
+    const email = reset();
+    const document = parse(email.html);
+
+    expect(email.text.split('\n')).toContain(RESET_URL);
+    const urls = email.text.match(/https?:\/\/\S+/g) ?? [];
+    expect(urls).toEqual([RESET_URL]);
+
+    const links = Array.from(document.querySelectorAll('a'));
+    expect(links.length).toBe(2);
+    for (const link of links) expect(link.getAttribute('href')).toBe(RESET_URL);
+    expect(document.querySelectorAll('img, script, iframe, form, link, style, object').length).toBe(
+      0
+    );
+  });
+
+  it('refuses a non-http(s) action link', () => {
+    for (const resetUrl of [
+      'javascript:alert(1)',
+      'data:text/html,<script>alert(1)</script>',
+      '/reset-password/token',
+      '//evil.example/reset-password/token',
+    ]) {
+      expect(() => reset({ resetUrl }), resetUrl).toThrow();
+    }
+  });
+
+  it('shows the expiry as unambiguous UTC prose', () => {
+    expect(reset({ expiresAt: new Date('2026-12-31T23:30:00.000Z') }).text).toContain(
+      '31 December 2026 at 23:30 UTC'
+    );
+  });
+
+  it('escapes a hostile URL rather than emitting markup', () => {
+    const email = passwordResetEmail({
+      resetUrl: 'https://app.example.test/reset-password/tok?a="><script>alert(1)</script>',
+      expiresAt: EXPIRES_AT,
+    });
+    const document = parse(email.html);
+
+    expect(document.querySelectorAll('script').length).toBe(0);
+    expect(email.html).not.toContain('<script>');
+  });
+
+  it('answers a client-portal identity and a team member with the same message', () => {
+    // Both audiences use one credential and one mailbox; the message names no
+    // organization, role or account type.
+    const email = reset();
+    expect(`${email.subject}\n${email.text}`).not.toMatch(
+      /portal|client|organization|team member|role/i
+    );
+    expect(`${email.subject}\n${email.text}`).not.toMatch(/\b(cuid|usr_|org_)[A-Za-z0-9]+/);
   });
 });
 

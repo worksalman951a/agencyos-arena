@@ -145,3 +145,37 @@ export function clientInvitationEmail(input: ClientInvitationEmailInput): EmailC
     ],
   });
 }
+
+export interface PasswordResetEmailInput {
+  /** Absolute link to the reset page. Contains the single-use token. */
+  resetUrl: string;
+  expiresAt: Date;
+}
+
+/**
+ * Password-reset message.
+ *
+ * Deliberately generic about the account: the same message goes to an internal
+ * team member and a client-portal identity, and it names no organization,
+ * role or internal id. The only facts are that somebody asked to reset "the
+ * AgencyOS account for this address", the one link, and its expiry - which is
+ * what the recipient needs and nothing that would help somebody who guessed
+ * the address learn about the account.
+ */
+export function passwordResetEmail(input: PasswordResetEmailInput): EmailContent {
+  return renderActionEmail({
+    subject: 'Reset your AgencyOS password',
+    heading: 'Reset your password',
+    paragraphs: [
+      'Hello,',
+      'We received a request to reset the password for the AgencyOS account that uses this e-mail address.',
+      'Choose a new password using the link below. The link can be used once.',
+    ],
+    action: { label: 'Reset password', url: input.resetUrl },
+    notes: [
+      `This link expires on ${formatExpiry(input.expiresAt)}.`,
+      'If you did not request a password reset, you can ignore this e-mail - your password will not change.',
+      'AgencyOS will never ask you for your password by e-mail.',
+    ],
+  });
+}

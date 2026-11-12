@@ -26,6 +26,10 @@ const PUBLIC_ROUTES: Record<string, string> = {
     'Sign-up hand-off: authenticates the caller itself before creating the organization.',
   'api/v1/portal/invitations/[token]/route.ts':
     'Client invitation lookup: the unguessable token is the credential and only the invitee-facing fields are returned.',
+  'api/v1/auth/password-reset/request/route.ts':
+    'Password recovery request: the caller cannot sign in; the handler is Origin-checked, throttled, and answers identically for every address.',
+  'api/v1/auth/password-reset/confirm/route.ts':
+    'Password recovery redemption: the 256-bit single-use token is the credential; Origin-checked, throttled, and every failure shares one message.',
 };
 
 /** Routes deliberately disabled until a trusted implementation exists. */
@@ -38,7 +42,12 @@ const DISABLED_ROUTES: Record<string, string> = {
  * Service modules that intentionally do not authenticate: they run inside a
  * transaction opened by a guarded caller, or they are pure helpers.
  */
-const UNGUARDED_SERVICES = new Set(['lib/services/settings/document-numbering.ts']);
+const UNGUARDED_SERVICES = new Set([
+  'lib/services/settings/document-numbering.ts',
+  // Public password recovery: the reset token is the credential, the account
+  // status check runs in the service, and no session exists to guard with.
+  'lib/services/auth/password-reset-service.ts',
+]);
 
 /**
  * Accepted authorization entry points.

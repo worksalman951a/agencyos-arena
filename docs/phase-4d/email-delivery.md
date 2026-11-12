@@ -289,7 +289,8 @@ The limits are constants in `lib/security/rate-limit.ts`.
     runs unless the insert was held back; the form disables its button while a
     request is in flight, and the recipient budget caps the total at five an
     hour.
-13. **Not wired:** team invitations, password reset, e-mail verification.
+13. **Not wired:** team invitations, e-mail verification. Password reset now
+    reuses this delivery path; see `docs/phase-4d/password-recovery.md`.
 14. **Workflow rules still reject `send_email`.** Nothing in the automation
     module changed; its form still explains that with "no SMTP … infrastructure
     exists in this phase", which now describes the automation module only.

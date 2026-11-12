@@ -20,8 +20,13 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { prisma } from '@/lib/db';
-import { ACTIVE_USER_STATUS } from '@/lib/permissions';
-import { RATE_LIMITS, consumeRateLimit, rateLimitKey } from '@/lib/security/rate-limit';
+import { isAccountIdActive } from '@/lib/auth/account-eligibility';
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_RESET_TTL_SECONDS,
+} from '@/lib/auth/password-reset-policy';
+import { RATE_LIMITS, consumeRateLimit } from '@/lib/security/rate-limit';
 
 /**
  * Base URL of the application. Used by Better Auth for origin validation,
@@ -73,6 +78,29 @@ export const auth = betterAuth({
     enabled: true,
     requireEmailVerification: false,
     autoSignIn: false,
+    // Stated explicitly (they match the vendor defaults) so sign-up and the
+    // reset flow use the same policy constants.
+    minPasswordLength: PASSWORD_MIN_LENGTH,
+    maxPasswordLength: PASSWORD_MAX_LENGTH,
+    /**
+     * No `sendResetPassword` hook is configured on purpose.
+     *
+     * Better Auth's `/request-password-reset` endpoint stores the raw token in
+     * `Verification.identifier` and would then need a hook to mail it. This
+     * application only stores token hashes, so recovery uses
+     * `lib/services/auth/password-reset-service.ts`: the same `Verification`
+     * table, the same atomic single-use consume and the same Scrypt hasher, but
+     * under the `password-reset:<sha256>` namespace. With no hook configured,
+     * the vendor endpoint answers `RESET_PASSWORD_DISABLED` instead of minting
+     * a plaintext credential.
+     *
+     * The two options below are therefore latent for that endpoint. They are
+     * set to the values the custom flow already enforces, so enabling the
+     * vendor path later cannot silently lengthen the link's lifetime or skip
+     * session revocation.
+     */
+    resetPasswordTokenExpiresIn: PASSWORD_RESET_TTL_SECONDS,
+    revokeSessionsOnPasswordReset: true,
   },
   /**
    * A session may only be created for an identity that is allowed to hold one.
@@ -94,23 +122,10 @@ export const auth = betterAuth({
     session: {
       create: {
         before: async (session) => {
-          const user = await prisma.user.findUnique({
-            where: { id: session.userId },
-            select: { userType: true, status: true },
-          });
-
-          // An account that no longer exists must never mint a session.
-          if (!user) return false;
-
-          if (user.userType === 'client') {
-            const access = await prisma.clientAccess.findFirst({
-              where: { userId: session.userId },
-              select: { status: true },
-            });
-            return access?.status === 'active';
-          }
-
-          return user.status === ACTIVE_USER_STATUS;
+          // One predicate, shared with password recovery, so the two paths
+          // cannot disagree about a suspended, removed or revoked account.
+          // An account that no longer exists never mints a session.
+          return isAccountIdActive(session.userId);
         },
       },
     },
@@ -149,6 +164,10 @@ export const auth = betterAuth({
       '/change-password': RATE_LIMITS['auth-sensitive'],
       '/change-email': RATE_LIMITS['auth-sensitive'],
       '/request-password-reset': RATE_LIMITS['auth-sensitive'],
+      // The vendor redemption endpoint cannot consume this application's
+      // hashed rows (different identifier namespace), but an open guessing
+      // surface is still bounded rather than left unlimited.
+      '/reset-password': RATE_LIMITS['auth-sensitive'],
       '/send-verification-email': RATE_LIMITS['auth-sensitive'],
     },
   },

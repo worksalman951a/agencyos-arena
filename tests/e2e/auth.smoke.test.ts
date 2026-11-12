@@ -51,6 +51,26 @@ test.describe('Auth smoke tests', () => {
     await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible();
   });
 
+  test('forgot-password page answers uniformly for an unknown address', async ({ page }) => {
+    await page.goto('/forgot-password');
+    await expect(page.getByRole('heading', { name: /forgot your password/i })).toBeVisible();
+
+    await page.getByLabel(/e-mail address/i).fill(`nobody-${Date.now()}@e2e.agencyos.invalid`);
+    await page.getByRole('button', { name: /send reset link/i }).click();
+
+    // The same confirmation is shown whether or not the address exists.
+    const confirmation = page.getByTestId('reset-request-confirmation');
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText(/if an account exists/i);
+    await expect(page.locator('body')).not.toContainText(/tok_|token=/);
+  });
+
+  test('reset-password page rejects a malformed link without a server call', async ({ page }) => {
+    await page.goto('/reset-password/not-a-real-token');
+    await expect(page.getByText(/invalid or has expired/i)).toBeVisible();
+    await expect(page.getByLabel(/new password/i)).toHaveCount(0);
+  });
+
   test('dashboard redirects to login when unauthenticated', async ({ page }) => {
     await page.goto('/dashboard');
     await expect(page).toHaveURL(/\/login/);
