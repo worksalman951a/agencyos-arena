@@ -232,3 +232,55 @@
   background: var(--pm-accent-soft, #ccfbf1);
   border-left-color: var(--pm-accent, #0f766e);
 }
+
+/* ── Bento Leads & Lead Record Styles ───────────────────────────── */
+
+.bento-lead-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: var(--pm-r-md, 8px);
+  background: var(--pm-accent-soft, #ccfbf1);
+  color: var(--pm-accent-ink, #0f766e);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.bento-lead-table-head {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) 90px 90px 100px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--pm-line, #e2e8f0);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pm-ink-3, #64748b);
+}
+
+.bento-lead-table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) 90px 90px 100px;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--pm-line-subtle, #f1f5f9);
+  cursor: pointer;
+  transition: background 120ms ease;
+  text-align: left;
+  width: 100%;
+  background: none;
+  border-left: 3px solid transparent;
+}
+
+.bento-lead-table-row:hover {
+  background: var(--pm-inset, #f8fafc);
+}
+
+.bento-lead-table-row[data-active='true'] {
+  background: var(--pm-accent-soft, #ccfbf1);
+  border-left-color: var(--pm-accent, #0f766e);
+}
