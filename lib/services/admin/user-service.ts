@@ -242,6 +242,16 @@ export async function updateUser(id: string, input: unknown) {
       });
     }
 
+    // Leaving the active state revokes every live session in the same
+    // transaction: a suspended member must not keep working through a cookie
+    // issued before the change. Reactivation never restores these sessions, so
+    // the member signs in again after being reinstated. The status is also
+    // re-checked per request in requireOrganization, which closes the race
+    // between this write and a request already in flight.
+    if (parsed.data.status !== undefined && parsed.data.status !== 'active') {
+      await tx.session.deleteMany({ where: { userId: id } });
+    }
+
     return user;
   });
 
@@ -270,8 +280,9 @@ export async function updateUser(id: string, input: unknown) {
  * Remove a member from the organization.
  *
  * The user row survives (it is their login); the membership and the
- * organization link are cleared. The last active administrator cannot be
- * removed, and nobody can remove themselves.
+ * organization link are cleared, the status becomes `suspended`, and every live
+ * session is revoked. The last active administrator cannot be removed, and
+ * nobody can remove themselves.
  */
 export async function removeMember(id: string) {
   const { userId: actorId, organizationId, email: actorEmail } = await getAuthorizedUser();
@@ -294,6 +305,9 @@ export async function removeMember(id: string) {
   }
 
   await prisma.$transaction(async (tx: typeof prisma) => {
+    // Revoke live sessions before detaching the membership: the removed member
+    // must not keep acting on a cookie issued while they were still a member.
+    await tx.session.deleteMany({ where: { userId: id } });
     await tx.userRole.deleteMany({ where: { userId: id, organizationId } });
     await tx.user.update({
       where: { id },
