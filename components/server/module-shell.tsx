@@ -3,17 +3,10 @@
  *
  * Validates the Better Auth session against the database, resolves the actor's
  * permission codes for their organization, filters the shared navigation down to
- * what they may actually use, and renders the single AppShell.
+ * what they may actually use, and evaluates the organization-scoped Bento shell flag.
  *
- * Every top-level module layout (admin, automation, crm, dashboard, documents,
- * finance, projects, sales, settings) delegates here, so there is one
- * implementation of the sidebar/header and one definition of "authenticated
- * page" instead of a copy per module.
- *
- * Session and permissions are request-cached in lib/current-user.ts, so pages
- * can reuse them without repeating the queries.
- *
- * redirect() throws, so children are never serialized for an invalid session.
+ * If `bento_shell` is enabled for this organization, renders `BentoAppShell`.
+ * Otherwise, defaults safely to the established legacy `AppShell`.
  */
 
 import { redirect } from 'next/navigation';
@@ -22,6 +15,9 @@ import { getCurrentPermissions, getSessionUser } from '@/lib/current-user';
 import { getBranding } from '@/lib/services/settings/branding-service';
 import { filterNavigation, NAV_SECTIONS } from '@/lib/navigation';
 import { AppShell } from '@/components/layout/app-shell';
+import { BentoAppShell } from '@/components/layout/bento-app-shell';
+import { isBentoShellEnabled } from '@/components/layout/bento-shell-eval';
+import { requireOrganization } from '@/lib/permissions';
 
 export async function ModuleShell({ children }: { children: React.ReactNode }) {
   const user = await getSessionUser();
@@ -30,9 +26,33 @@ export async function ModuleShell({ children }: { children: React.ReactNode }) {
     redirect('/login');
   }
 
-  const [permissions, branding] = await Promise.all([getCurrentPermissions(), getBranding()]);
+  // Resolve organization ID safely from trusted session context
+  let organizationId: string | null = null;
+  try {
+    const org = await requireOrganization(user.id);
+    organizationId = org.organizationId;
+  } catch {
+    organizationId = null;
+  }
+
+  const [permissions, branding, bentoEnabled] = await Promise.all([
+    getCurrentPermissions(),
+    getBranding(),
+    isBentoShellEnabled(organizationId),
+  ]);
+
   const sections = filterNavigation(NAV_SECTIONS, permissions);
 
+  // If organization has bento_shell enabled, render the Premium Bento layout
+  if (bentoEnabled) {
+    return (
+      <BentoAppShell user={user} sections={sections} branding={branding}>
+        {children}
+      </BentoAppShell>
+    );
+  }
+
+  // Default secure fallback: render existing verified AppShell
   return (
     <AppShell user={user} sections={sections} branding={branding}>
       {children}

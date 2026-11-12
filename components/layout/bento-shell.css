@@ -1,0 +1,287 @@
+/* ============================================================================
+   AgencyOS Premium Modern Bento Application Shell Styles
+   Scoped specifically to .pm-shell container
+   ========================================================================== */
+
+.pm-shell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--pm-bg, #f8fafc);
+  color: var(--pm-ink, #0f172a);
+  font-family: var(--pm-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+}
+
+.pm-canvas {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--pm-canvas, #f1f5f9);
+}
+
+.pm-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Top Bar ───────────────────────────────────────────────────────────── */
+
+.pm-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--pm-line, #e2e8f0);
+  background: var(--pm-tile, #ffffff);
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.pm-topbar__left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pm-topbar__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pm-ink, #0f172a);
+  white-space: nowrap;
+}
+
+.pm-topbar__meta {
+  font-size: 12px;
+  color: var(--pm-ink-3, #64748b);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pm-topbar__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pm-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  min-width: 0;
+}
+
+/* ── Premium Sidebar Rail ──────────────────────────────────────────────── */
+
+.ps {
+  position: relative;
+  flex: none;
+  width: 248px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--pm-line, #e2e8f0);
+  background: var(--pm-tile, #ffffff);
+  transition: width 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 20;
+}
+
+.ps[data-mode='compact'] {
+  width: 72px;
+}
+
+.ps-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ps-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--pm-line, #e2e8f0);
+  flex-shrink: 0;
+}
+
+.ps-brand__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ps-brand__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--pm-r-md, 8px);
+  background: var(--pm-accent, #0f766e);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.ps-brand__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ps-brand__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pm-ink, #0f172a);
+  truncate: true;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ps-brand__role {
+  font-size: 10.5px;
+  color: var(--pm-ink-3, #64748b);
+  white-space: nowrap;
+}
+
+.ps-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ps-section__label {
+  padding: 4px 8px 2px;
+  font-size: 10.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pm-ink-4, #94a3b8);
+}
+
+.ps-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: var(--pm-r-md, 8px);
+  color: var(--pm-ink-2, #334155);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 120ms ease, color 120ms ease;
+  position: relative;
+}
+
+.ps-item:hover {
+  background: var(--pm-inset, #f8fafc);
+  color: var(--pm-ink, #0f172a);
+}
+
+.ps-item[aria-current='page'] {
+  background: var(--pm-accent-soft, #ccfbf1);
+  color: var(--pm-accent-ink, #115e59);
+  font-weight: 600;
+}
+
+.ps-item__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.ps-item__label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ps-foot {
+  padding: 10px 8px;
+  border-top: 1px solid var(--pm-line, #e2e8f0);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.ps-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--pm-r-md, 8px);
+}
+
+.ps-user__info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.ps-user__name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pm-ink, #0f172a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ps-user__email {
+  font-size: 11px;
+  color: var(--pm-ink-3, #64748b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Mobile Drawer ─────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .ps {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    transform: translateX(-100%);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  }
+
+  .ps[data-mobile-open='true'] {
+    transform: translateX(0);
+  }
+
+  .pm-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.4);
+    backdrop-filter: blur(2px);
+    z-index: 15;
+  }
+}
