@@ -752,12 +752,14 @@ jobs:
       - name: Shipped replica is verified, protected from overwrite and restorable
         run: |
           set -euo pipefail
-          exec > >(tee shipping-step.log) 2>&1
-          trap 'echo "::error title=off-site shipping::failed near line $LINENO: $(tail -n 6 shipping-step.log | tr "\n" "|" | head -c 1500)"' ERR
-
+          # Throwaway credentials. The mask command is issued before output is
+          # captured, so the secret is not written to the step log file.
           S3_USER="ci$(openssl rand -hex 8)"
           S3_SECRET="$(openssl rand -hex 24)"
           echo "::add-mask::$S3_SECRET"
+          exec > >(tee shipping-step.log) 2>&1
+          trap 'echo "::error title=off-site shipping::failed near line $LINENO: $(tail -n 6 shipping-step.log | tr "\n" "|" | head -c 1500)"' ERR
+
           # Pinned release of the Versity S3 Gateway, checked against its
           # published SHA-256 before it is executed.
           curl -fsSL -o s3-gateway.tar.gz "$S3_GATEWAY_URL"
