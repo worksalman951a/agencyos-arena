@@ -3,7 +3,8 @@
  *
  * Reuses the platform `Notification` + `NotificationPreference` models and the
  * existing preference evaluation, so a client or a teammate who muted a type is
- * never notified. Delivery stays in-app (no SMTP in this phase, ADR-0002).
+ * never notified. Delivery stays in-app: notifications are not e-mailed. (The
+ * invitation e-mail is a separate path, lib/email, and is not a notification.)
  */
 
 import { prisma } from '@/lib/db';

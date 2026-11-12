@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 
+import { invitationEmailNotice, type DeliveryNotice } from '@/lib/email/delivery-notice';
 import { CLIENT_ROLE_PRESETS } from '@/lib/portal/capabilities';
 
 /**
@@ -11,6 +12,10 @@ import { CLIENT_ROLE_PRESETS } from '@/lib/portal/capabilities';
  * The raw acceptance link is displayed exactly once: only its hash is stored, so
  * it cannot be recovered later. Capability defaults come from the selected role
  * preset, but the server validates and stores the flags it receives.
+ *
+ * When e-mail delivery is enabled the server also e-mails the link to the
+ * client. The form reports what the server said about that - sent, or not sent -
+ * and shows the link either way, so a failed e-mail never strands an invitation.
  */
 export function InviteClientForm({
   contacts,
@@ -21,6 +26,7 @@ export function InviteClientForm({
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [inviteLink, setInviteLink] = React.useState<string | null>(null);
+  const [emailNotice, setEmailNotice] = React.useState<DeliveryNotice | null>(null);
   const [role, setRole] = React.useState('client_reviewer');
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -30,6 +36,7 @@ export function InviteClientForm({
     setPending(true);
     setError(null);
     setInviteLink(null);
+    setEmailNotice(null);
 
     try {
       const res = await fetch('/api/v1/admin/client-invitations', {
@@ -43,7 +50,12 @@ export function InviteClientForm({
         }),
       });
 
-      const body = (await res.json().catch(() => ({}))) as { error?: string; acceptPath?: string };
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        acceptPath?: string;
+        email?: string;
+        emailDelivery?: unknown;
+      };
       if (!res.ok) {
         setError(body.error ?? 'Could not create the invitation.');
         return;
@@ -51,6 +63,7 @@ export function InviteClientForm({
 
       const path = body.acceptPath ?? '';
       setInviteLink(`${window.location.origin}${path}`);
+      setEmailNotice(invitationEmailNotice(body.emailDelivery, body.email));
       form.reset();
       router.refresh();
     } catch {
@@ -130,6 +143,18 @@ export function InviteClientForm({
       {error ? (
         <p role="alert" className="text-sm text-red-700">
           {error}
+        </p>
+      ) : null}
+
+      {emailNotice ? (
+        <p
+          role="status"
+          data-testid="client-invitation-email-status"
+          className={
+            emailNotice.tone === 'success' ? 'text-sm text-green-800' : 'text-sm text-amber-800'
+          }
+        >
+          {emailNotice.text}
         </p>
       ) : null}
 

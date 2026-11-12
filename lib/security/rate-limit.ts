@@ -95,6 +95,27 @@ export const RATE_LIMITS = {
   'auth-sign-up': { window: 60, max: 20 },
   /** Password reset / change / verification resend: spam and enumeration. */
   'auth-sensitive': { window: 60, max: 5 },
+
+  /* ---------------------------------------------------------------------
+   * Outbound invitation e-mail. Not wired into a route: consumed in
+   * lib/email/sending-limit.ts at the moment a message is about to be sent,
+   * after authorization, and only when e-mail delivery is enabled. Exhausting
+   * one of these never refuses the request - the invitation is still created
+   * and its link returned - it only stops the e-mail.
+   * ------------------------------------------------------------------- */
+
+  /** To one address, from any organization: no flooding by revoke-and-reinvite. */
+  'invitation-email-recipient': { window: 60 * 60, max: 5 },
+  /**
+   * On behalf of one organization. Keyed on the organization rather than the
+   * session, so signing in again does not buy a second budget.
+   */
+  'invitation-email-organization': { window: 60 * 60, max: 30 },
+  /**
+   * For the whole deployment: a ceiling on what a caller who registers many
+   * organizations can make the mail server send.
+   */
+  'invitation-email-deployment': { window: 60 * 60, max: 200 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitPolicy = keyof typeof RATE_LIMITS;

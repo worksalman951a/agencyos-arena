@@ -3,6 +3,11 @@
  * POST /api/v1/admin/client-invitations - invite a contact into the portal.
  *
  * The raw token is returned exactly once; only its hash is stored.
+ *
+ * POST also e-mails the acceptance link to the invited address when e-mail
+ * delivery is enabled (docs/phase-4d/email-delivery.md). The response always
+ * carries `emailDelivery` - `sent`, `failed` (with a reason) or `disabled` - and
+ * stays 201 either way: a failed e-mail does not undo the invitation.
  */
 
 import { NextResponse } from 'next/server';

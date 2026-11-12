@@ -391,6 +391,33 @@ describeIfDb('Client Portal integration (real PostgreSQL)', () => {
       expect(row.status).toBe('pending');
     });
 
+    it('with e-mail delivery off, says so instead of claiming an e-mail was sent', async () => {
+      // The server under test runs without EMAIL_TRANSPORT (CI and the local
+      // default). The response must report that, still hand over the link, and
+      // leave no trace of a delivery in the audit trail.
+      const email = `no-email-${EMAIL_DOMAIN}`;
+      const invite = await api(agencyToken, '/api/v1/admin/client-invitations', {
+        method: 'POST',
+        body: { email, contactId: await freshContact(email), role: 'client_viewer' },
+      });
+
+      expect(invite.status, invite.text).toBe(201);
+      expect(invite.json.emailDelivery).toEqual({ status: 'disabled' });
+      expect(invite.json.acceptPath).toBe(`/portal/invite/${invite.json.token}`);
+
+      const audit = await prisma.auditLog.findMany({
+        where: {
+          organizationId: agencyOrgId,
+          entityType: 'ClientInvitation',
+          entityId: invite.json.id,
+        },
+        select: { action: true },
+      });
+      expect(audit.map((entry: { action: string }) => entry.action)).toEqual([
+        'client.invitation.create',
+      ]);
+    });
+
     it('serves the public invitation view without a session, exposing only invitee-facing fields', async () => {
       const view = await api(null, `/api/v1/portal/invitations/${await liveInvitationToken()}`);
 
