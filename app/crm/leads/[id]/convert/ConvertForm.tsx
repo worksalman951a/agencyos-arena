@@ -6,6 +6,11 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import {
+  BentoConvertLeadView,
+  type ConvertLeadFormData,
+} from '@/components/crm/bento-convert-lead-view';
 
 interface ConvertFormProps {
   leadId: string;
@@ -30,6 +35,7 @@ interface ConvertFormProps {
 }
 
 export function ConvertForm({ leadId, lead }: ConvertFormProps) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -38,16 +44,7 @@ export function ConvertForm({ leadId, lead }: ConvertFormProps) {
     opportunityTitle: string;
   } | null>(null);
 
-  const [formData, setFormData] = React.useState<{
-    title: string;
-    description: string;
-    value: string;
-    currency: string;
-    pipelineId: string;
-    stageId: string;
-    ownerId: string;
-    closeDate: string;
-  }>({
+  const [formData, setFormData] = React.useState<ConvertLeadFormData>({
     title: '',
     description: '',
     value: lead.expectedValue ?? '',
@@ -99,6 +96,21 @@ export function ConvertForm({ leadId, lead }: ConvertFormProps) {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  if (isBento) {
+    return (
+      <BentoConvertLeadView
+        leadId={leadId}
+        lead={lead}
+        formData={formData}
+        setFormData={setFormData}
+        onSubmit={onSubmit}
+        isLoading={isLoading}
+        error={error}
+        success={success}
+      />
+    );
   }
 
   // If already converted, show the already-converted state

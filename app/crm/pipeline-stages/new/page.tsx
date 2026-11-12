@@ -6,14 +6,24 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoPipelineStageFormView } from '@/components/crm/bento-pipeline-stage-form-view';
 
 export default function CreatePipelineStagePage() {
+  const isBento = useBentoShell();
   const router = useRouter();
   const searchParams = useSearchParams();
   const pipelineId = searchParams.get('pipelineId');
 
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
+
+  const [bentoName, setBentoName] = React.useState('');
+  const [bentoOrder, setBentoOrder] = React.useState(0);
+  const [bentoColor, setBentoColor] = React.useState('#3b82f6');
+  const [bentoProb, setBentoProb] = React.useState('');
+  const [bentoWon, setBentoWon] = React.useState(false);
+  const [bentoLost, setBentoLost] = React.useState(false);
 
   const form = useForm<{
     name: string;
@@ -85,6 +95,40 @@ export default function CreatePipelineStagePage() {
     );
   }
 
+  if (isBento) {
+    return (
+      <BentoPipelineStageFormView
+        mode="new"
+        pipelineId={pipelineId}
+        name={bentoName}
+        setName={setBentoName}
+        order={bentoOrder}
+        setOrder={setBentoOrder}
+        color={bentoColor}
+        setColor={setBentoColor}
+        probability={bentoProb}
+        setProbability={setBentoProb}
+        isWon={bentoWon}
+        setIsWon={setBentoWon}
+        isLost={bentoLost}
+        setIsLost={setBentoLost}
+        onSubmit={() =>
+          onSubmit({
+            name: bentoName,
+            order: bentoOrder,
+            color: bentoColor,
+            probability: bentoProb,
+            isWon: bentoWon,
+            isLost: bentoLost,
+          })
+        }
+        isLoading={isLoading}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-md">

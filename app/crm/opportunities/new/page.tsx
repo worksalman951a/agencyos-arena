@@ -5,28 +5,19 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import {
+  BentoOpportunityFormView,
+  type OpportunityFormData,
+} from '@/components/crm/bento-opportunity-form-view';
 
 export default function CreateOpportunityPage() {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
 
-  const [formData, setFormData] = React.useState<{
-    contactId: string;
-    accountId: string;
-    leadId: string;
-    pipelineId: string;
-    stageId: string;
-    title: string;
-    description: string;
-    value: string;
-    currency: string;
-    closeDate: string;
-    ownerId: string;
-    status: string;
-    probability: string;
-    lossReason: string;
-  }>({
+  const [formData, setFormData] = React.useState<OpportunityFormData>({
     contactId: '',
     accountId: '',
     leadId: '',
@@ -84,6 +75,20 @@ export default function CreateOpportunityPage() {
     }
   }
 
+  if (isBento) {
+    return (
+      <BentoOpportunityFormView
+        mode="new"
+        formData={formData}
+        setFormData={setFormData}
+        onSubmit={onSubmit}
+        isLoading={isLoading}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-lg">

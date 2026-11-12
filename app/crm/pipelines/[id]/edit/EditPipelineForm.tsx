@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoPipelineFormView } from '@/components/crm/bento-pipeline-form-view';
 
 interface EditPipelineFormProps {
   pipeline: {
@@ -17,6 +19,7 @@ interface EditPipelineFormProps {
 }
 
 export function EditPipelineForm({ pipeline }: EditPipelineFormProps) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -32,6 +35,10 @@ export function EditPipelineForm({ pipeline }: EditPipelineFormProps) {
       isDefault: pipeline.isDefault,
     },
   });
+
+  const bentoName = form.watch('name');
+  const bentoDesc = form.watch('description');
+  const bentoDefault = form.watch('isDefault');
 
   React.useEffect(() => {
     if (pipeline) {
@@ -73,6 +80,25 @@ export function EditPipelineForm({ pipeline }: EditPipelineFormProps) {
     }
   }
 
+  if (isBento) {
+    return (
+      <BentoPipelineFormView
+        mode="edit"
+        pipelineId={pipeline.id}
+        name={bentoName}
+        setName={(val) => form.setValue('name', val, { shouldDirty: true })}
+        description={bentoDesc}
+        setDescription={(val) => form.setValue('description', val, { shouldDirty: true })}
+        isDefault={bentoDefault}
+        setIsDefault={(val) => form.setValue('isDefault', val, { shouldDirty: true })}
+        onSubmit={() => onSubmit(form.getValues())}
+        isLoading={isLoading}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-md">

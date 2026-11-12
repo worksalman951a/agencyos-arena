@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoPipelineStageFormView } from '@/components/crm/bento-pipeline-stage-form-view';
 
 interface EditPipelineStageFormProps {
   stage: {
@@ -21,6 +23,7 @@ interface EditPipelineStageFormProps {
 }
 
 export function EditPipelineStageForm({ stage }: EditPipelineStageFormProps) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -42,6 +45,13 @@ export function EditPipelineStageForm({ stage }: EditPipelineStageFormProps) {
       isLost: stage.isLost,
     },
   });
+
+  const bentoName = form.watch('name');
+  const bentoOrder = form.watch('order');
+  const bentoColor = form.watch('color');
+  const bentoProb = form.watch('probability');
+  const bentoWon = form.watch('isWon');
+  const bentoLost = form.watch('isLost');
 
   React.useEffect(() => {
     if (stage) {
@@ -99,6 +109,37 @@ export function EditPipelineStageForm({ stage }: EditPipelineStageFormProps) {
     }
   }
 
+  if (isBento) {
+    return (
+      <BentoPipelineStageFormView
+        mode="edit"
+        pipelineId={stage.pipelineId}
+        name={bentoName}
+        setName={(val) => form.setValue('name', val, { shouldDirty: true })}
+        order={bentoOrder}
+        setOrder={(val) => form.setValue('order', val, { shouldDirty: true })}
+        color={bentoColor}
+        setColor={(val) => form.setValue('color', val, { shouldDirty: true })}
+        probability={bentoProb}
+        setProbability={(val) => form.setValue('probability', val, { shouldDirty: true })}
+        isWon={bentoWon}
+        setIsWon={(val) => {
+          form.setValue('isWon', val, { shouldDirty: true });
+          if (val) form.setValue('isLost', false, { shouldDirty: true });
+        }}
+        isLost={bentoLost}
+        setIsLost={(val) => {
+          form.setValue('isLost', val, { shouldDirty: true });
+          if (val) form.setValue('isWon', false, { shouldDirty: true });
+        }}
+        onSubmit={() => onSubmit(form.getValues())}
+        isLoading={isLoading}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-md">

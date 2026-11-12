@@ -5,6 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import {
+  BentoOpportunityFormView,
+  type OpportunityFormData,
+} from '@/components/crm/bento-opportunity-form-view';
 
 interface EditOpportunityFormProps {
   opportunity: {
@@ -27,26 +32,12 @@ interface EditOpportunityFormProps {
 }
 
 export function EditOpportunityForm({ opportunity }: EditOpportunityFormProps) {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
 
-  const [formData, setFormData] = React.useState<{
-    title: string;
-    description: string;
-    value: string;
-    currency: string;
-    closeDate: string;
-    ownerId: string;
-    status: string;
-    probability: string;
-    lossReason: string;
-    contactId: string;
-    accountId: string;
-    leadId: string;
-    pipelineId: string;
-    stageId: string;
-  }>({
+  const [formData, setFormData] = React.useState<OpportunityFormData>({
     title: opportunity.title,
     description: opportunity.description ?? '',
     value: opportunity.value ?? '',
@@ -106,6 +97,34 @@ export function EditOpportunityForm({ opportunity }: EditOpportunityFormProps) {
     }
   }
 
+  const handleArchive = () => {
+    if (window.confirm('Archive this opportunity?')) {
+      fetch(`/api/v1/crm/opportunities/${opportunity.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      }).then(() => {
+        router.push('/crm/opportunities');
+        router.refresh();
+      });
+    }
+  };
+
+  if (isBento) {
+    return (
+      <BentoOpportunityFormView
+        mode="edit"
+        opportunityId={opportunity.id}
+        formData={formData}
+        setFormData={setFormData}
+        onSubmit={onSubmit}
+        isLoading={isLoading}
+        error={error}
+        onArchive={handleArchive}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-lg">

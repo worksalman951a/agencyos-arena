@@ -6,8 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
+import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import { BentoPipelineFormView } from '@/components/crm/bento-pipeline-form-view';
 
 export default function CreatePipelinePage() {
+  const isBento = useBentoShell();
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -19,6 +22,10 @@ export default function CreatePipelinePage() {
   }>({
     defaultValues: { name: '', description: '', isDefault: false },
   });
+
+  const [bentoName, setBentoName] = React.useState('');
+  const [bentoDesc, setBentoDesc] = React.useState('');
+  const [bentoDefault, setBentoDefault] = React.useState(false);
 
   async function onSubmit(data: { name: string; description: string; isDefault: boolean }) {
     setError(null);
@@ -50,6 +57,26 @@ export default function CreatePipelinePage() {
     }
   }
 
+  if (isBento) {
+    return (
+      <BentoPipelineFormView
+        mode="new"
+        name={bentoName}
+        setName={setBentoName}
+        description={bentoDesc}
+        setDescription={setBentoDesc}
+        isDefault={bentoDefault}
+        setIsDefault={setBentoDefault}
+        onSubmit={() =>
+          onSubmit({ name: bentoName, description: bentoDesc, isDefault: bentoDefault })
+        }
+        isLoading={isLoading}
+        error={error}
+      />
+    );
+  }
+
+  // Legacy fallback view
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <Card className="w-full max-w-md">
