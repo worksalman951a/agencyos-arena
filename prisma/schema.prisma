@@ -1159,6 +1159,15 @@ model ClientAccess {
 /// Only the SHA-256 hash of the token is stored; the raw token is returned once
 /// to the administrator who created it. Mirrors the organization `Invitation`
 /// security properties but never grants organization membership or a role.
+/// Client-portal invitation issued by an administrator.
+///
+/// "At most one live invitation per organization and recipient" is enforced by
+/// the partial unique index `ClientInvitation_pending_org_email_key`
+/// (migration `0020`), not by this file: Prisma cannot express a partial index.
+/// The predicate is `status = 'pending'`, so accepted, revoked and expired
+/// invitations never block a replacement. Do not add a plain
+/// `@@unique([organizationId, email])` - it would forbid re-inviting after
+/// acceptance or revocation. See docs/phase-4d/client-invitation-concurrency.md.
 model ClientInvitation {
   id             String  @id @default(cuid())
   organizationId String
