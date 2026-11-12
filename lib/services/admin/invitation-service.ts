@@ -14,9 +14,10 @@
  *   redeemed by a different account.
  * - Every mutation is scoped to the administrator's organization and audited.
  *
- * Not implemented here on purpose: outbound e-mail delivery (no SMTP in this
- * phase, ADR-0002). The API returns the acceptance link so an administrator can
- * deliver it out-of-band; this is called out in the completion notes.
+ * Not implemented here: outbound e-mail. The API returns the acceptance link so
+ * an administrator can deliver it out-of-band. The mailer added in Phase 4D /
+ * Batch 4A (lib/email, docs/phase-4d/email-delivery.md) is wired to client-portal
+ * invitations only; team invitations are unchanged.
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';

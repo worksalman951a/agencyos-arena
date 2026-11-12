@@ -37,13 +37,18 @@ vi.mock('next/headers', () => ({
 vi.mock('@/lib/portal/audit', () => ({ writePortalAudit: vi.fn() }));
 vi.mock('@/lib/portal/notify', () => ({ notifyUser: vi.fn(), notifyInternalStaff: vi.fn() }));
 vi.mock('@/lib/portal/internal-actor', () => ({ requireInternalActor: vi.fn() }));
+// The sender is replaced, so no test in this file can send e-mail. Its own
+// behaviour is covered in lib/__tests__/email/.
+vi.mock('@/lib/email/invitation-emails', () => ({ sendClientInvitationEmail: vi.fn() }));
 
 import { createHash } from 'node:crypto';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
+import { sendClientInvitationEmail } from '@/lib/email/invitation-emails';
+import { writePortalAudit } from '@/lib/portal/audit';
 import { requireInternalActor } from '@/lib/portal/internal-actor';
 import {
   acceptClientInvitation,
@@ -55,6 +60,8 @@ import {
 const mockGetSession = auth.api.getSession as unknown as ReturnType<typeof vi.fn>;
 const mockCookies = cookies as unknown as ReturnType<typeof vi.fn>;
 const mockRequireInternalActor = requireInternalActor as unknown as ReturnType<typeof vi.fn>;
+const mockSendInvitationEmail = sendClientInvitationEmail as unknown as ReturnType<typeof vi.fn>;
+const mockWritePortalAudit = writePortalAudit as unknown as ReturnType<typeof vi.fn>;
 const mockUserFindUnique = prisma.user.findUnique as unknown as ReturnType<typeof vi.fn>;
 const mockContactFindFirst = prisma.contact.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockAccessFindFirst = prisma.clientAccess.findFirst as unknown as ReturnType<typeof vi.fn>;
@@ -103,31 +110,42 @@ function invitation(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const ACTOR = {
+  userId: 'admin_1',
+  organizationId,
+  email: 'admin@agency.test',
+  role: 'employee',
+};
+
+const CONTACT = {
+  id: 'contact_1',
+  email: 'clara@client.test',
+  firstName: 'Clara',
+  lastName: 'Client',
+  accountId: 'account_1',
+  organization: { name: 'Acme Agency' },
+};
+
+/** A request that passes every check of `createClientInvitation`. */
+function arrangeInvitationCreation() {
+  vi.resetAllMocks();
+  mockRequireInternalActor.mockResolvedValue(ACTOR);
+  mockContactFindFirst.mockResolvedValue(CONTACT);
+  mockAccessFindFirst.mockResolvedValue(null);
+  mockInvitationFindFirst.mockResolvedValue(null);
+  mockInvitationCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+    id: 'invitation_1',
+    createdAt: new Date(),
+    ...data,
+  }));
+  mockWritePortalAudit.mockResolvedValue(undefined);
+  // What the sender answers when e-mail delivery is switched off (the default).
+  mockSendInvitationEmail.mockResolvedValue({ status: 'disabled' });
+}
+
 describe('createClientInvitation', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockRequireInternalActor.mockResolvedValue({
-      userId: 'admin_1',
-      organizationId,
-      email: 'admin@agency.test',
-      role: 'employee',
-    });
-    mockContactFindFirst.mockResolvedValue({
-      id: 'contact_1',
-      email: 'clara@client.test',
-      firstName: 'Clara',
-      lastName: 'Client',
-      accountId: 'account_1',
-    });
-    mockAccessFindFirst.mockResolvedValue(null);
-    mockInvitationFindFirst.mockResolvedValue(null);
-    mockInvitationCreate.mockImplementation(
-      async ({ data }: { data: Record<string, unknown> }) => ({
-        id: 'invitation_1',
-        createdAt: new Date(),
-        ...data,
-      })
-    );
+    arrangeInvitationCreation();
   });
 
   it('stores only the SHA-256 hash of the token and returns the raw token once', async () => {
@@ -232,6 +250,343 @@ describe('createClientInvitation', () => {
         role: 'administrator',
       } as unknown)
     ).rejects.toMatchObject({ statusCode: 400 });
+  });
+});
+
+describe('createClientInvitation: e-mail delivery', () => {
+  const input = { email: 'clara@client.test', contactId: 'contact_1', role: 'client_approver' };
+  const SENT = { status: 'sent', messageId: '<message-1@example.test>', attempts: 1 };
+
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    arrangeInvitationCreation();
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+  });
+
+  function auditActions(): string[] {
+    return mockWritePortalAudit.mock.calls.map((call) => (call[0] as { action: string }).action);
+  }
+
+  it('e-mails the invitation last: after authorization, the tenant-scoped checks and the insert', async () => {
+    const order: string[] = [];
+    mockRequireInternalActor.mockImplementation(async (permission: string) => {
+      order.push(`authorize:${permission}`);
+      return ACTOR;
+    });
+    mockContactFindFirst.mockImplementation(async () => {
+      order.push('contact');
+      return CONTACT;
+    });
+    mockAccessFindFirst.mockImplementation(async () => {
+      order.push('no-active-access');
+      return null;
+    });
+    mockInvitationFindFirst.mockImplementation(async () => {
+      order.push('no-live-invitation');
+      return null;
+    });
+    mockInvitationCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      order.push('store');
+      return { id: 'invitation_1', createdAt: new Date(), ...data };
+    });
+    mockWritePortalAudit.mockImplementation(async (entry: { action: string }) => {
+      order.push(`audit:${entry.action}`);
+    });
+    mockSendInvitationEmail.mockImplementation(async () => {
+      order.push('email');
+      return SENT;
+    });
+
+    await createClientInvitation(input);
+
+    expect(order).toEqual([
+      'authorize:client.invitation.create',
+      'contact',
+      'no-active-access',
+      'no-live-invitation',
+      'store',
+      'audit:client.invitation.create',
+      'email',
+      'audit:client.invitation.email_sent',
+    ]);
+  });
+
+  it('takes the recipient, the organization and the link from its own records', async () => {
+    const result = await createClientInvitation(input);
+    const stored = mockInvitationCreate.mock.calls[0][0].data as { expiresAt: Date };
+
+    expect(mockSendInvitationEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendInvitationEmail).toHaveBeenCalledWith({
+      // The session's organization - the payload cannot name one (see below).
+      organizationId,
+      // Read through the contact, which was looked up inside that organization.
+      organizationName: 'Acme Agency',
+      // The address stored on the invitation.
+      to: 'clara@client.test',
+      recipientName: 'Clara',
+      acceptPath: `/portal/invite/${result.token}`,
+      expiresAt: stored.expiresAt,
+    });
+    expect(mockContactFindFirst).toHaveBeenCalledWith({
+      where: { id: 'contact_1', organizationId, deletedAt: null },
+      select: expect.objectContaining({ organization: { select: { name: true } } }),
+    });
+  });
+
+  it('e-mails the address stored on the invitation, in its normalized form', async () => {
+    await createClientInvitation({ ...input, email: '  Clara@Client.TEST ' });
+
+    const stored = mockInvitationCreate.mock.calls[0][0].data as { email: string };
+    expect(mockSendInvitationEmail.mock.calls[0][0].to).toBe(stored.email);
+    expect(stored.email).toBe('clara@client.test');
+  });
+
+  describe('sends nothing when the invitation is not created', () => {
+    const refusals: Array<[string, () => void, unknown, number | undefined]> = [
+      ['the payload is invalid', () => undefined, { email: 'not-an-address' }, 400],
+      [
+        'the payload names an organization',
+        () => undefined,
+        { ...input, organizationId: 'org_other' },
+        400,
+      ],
+      [
+        'the payload asks for an internal role',
+        () => undefined,
+        { ...input, role: 'administrator' },
+        400,
+      ],
+      [
+        'the caller is not signed in',
+        () =>
+          mockRequireInternalActor.mockRejectedValue(
+            Object.assign(new Error('Unauthenticated'), { statusCode: 401 })
+          ),
+        input,
+        401,
+      ],
+      [
+        'the caller lacks the permission, or is a client identity',
+        () =>
+          mockRequireInternalActor.mockRejectedValue(
+            Object.assign(new Error('Forbidden'), { statusCode: 403 })
+          ),
+        input,
+        403,
+      ],
+      [
+        'the contact belongs to another organization',
+        () => mockContactFindFirst.mockResolvedValue(null),
+        { ...input, contactId: 'contact_other_tenant' },
+        404,
+      ],
+      [
+        'the address is not the address of the contact',
+        () => undefined,
+        { ...input, email: 'attacker@evil.example' },
+        400,
+      ],
+      [
+        'the contact already has portal access',
+        () => mockAccessFindFirst.mockResolvedValue({ id: 'access_1', status: 'active' }),
+        input,
+        409,
+      ],
+      [
+        'a live invitation already exists for the address',
+        () =>
+          mockInvitationFindFirst.mockResolvedValue({
+            id: 'invitation_live',
+            expiresAt: new Date(Date.now() + 60_000),
+          }),
+        input,
+        409,
+      ],
+      [
+        'the invitation cannot be stored',
+        () => mockInvitationCreate.mockRejectedValue(new Error('database unavailable')),
+        input,
+        undefined,
+      ],
+      [
+        'its creation cannot be audited',
+        () => mockWritePortalAudit.mockRejectedValue(new Error('database unavailable')),
+        input,
+        undefined,
+      ],
+    ];
+
+    it.each(refusals)('%s', async (_label, arrange, payload, statusCode) => {
+      arrange();
+
+      const attempt = createClientInvitation(payload);
+
+      await (statusCode
+        ? expect(attempt).rejects.toMatchObject({ statusCode })
+        : expect(attempt).rejects.toThrow());
+      expect(mockSendInvitationEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  it('reports an accepted e-mail in the response and in the audit trail', async () => {
+    mockSendInvitationEmail.mockResolvedValue({ ...SENT, attempts: 2 });
+
+    const result = await createClientInvitation(input);
+
+    expect(result.emailDelivery).toEqual({ status: 'sent' });
+    expect(auditActions()).toEqual(['client.invitation.create', 'client.invitation.email_sent']);
+    expect(mockWritePortalAudit).toHaveBeenLastCalledWith({
+      organizationId,
+      actorId: 'admin_1',
+      actorName: 'admin@agency.test',
+      action: 'client.invitation.email_sent',
+      entityType: 'ClientInvitation',
+      entityId: 'invitation_1',
+      after: { messageId: '<message-1@example.test>', attempts: 2 },
+    });
+  });
+
+  it.each([
+    'configuration',
+    'invalid_message',
+    'rate_limited',
+    'connection',
+    'timeout',
+    'tls',
+    'authentication',
+    'rejected',
+    'unknown',
+  ])('reports a "%s" failure truthfully and still hands over the invitation', async (reason) => {
+    mockSendInvitationEmail.mockResolvedValue({ status: 'failed', reason, attempts: 1 });
+
+    const result = await createClientInvitation(input);
+
+    // The invitation stands and its link is returned once, exactly as before.
+    expect(result.status).toBe('pending');
+    expect(result.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(result.acceptPath).toBe(`/portal/invite/${result.token}`);
+    // ...and nothing anywhere says the e-mail went out.
+    expect(result.emailDelivery).toEqual({ status: 'failed', reason });
+    expect(auditActions()).toEqual(['client.invitation.create', 'client.invitation.email_failed']);
+    expect(mockWritePortalAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: 'client.invitation.email_failed',
+        entityId: 'invitation_1',
+        after: { reason, attempts: 1 },
+      })
+    );
+  });
+
+  it('reports disabled delivery as disabled and records no delivery', async () => {
+    const result = await createClientInvitation(input);
+
+    expect(result.emailDelivery).toEqual({ status: 'disabled' });
+    expect(auditActions()).toEqual(['client.invitation.create']);
+  });
+
+  it('only adds a field to the response; everything that was returned still is', async () => {
+    const result = await createClientInvitation(input);
+
+    expect(result).toEqual({
+      id: 'invitation_1',
+      email: 'clara@client.test',
+      contactId: 'contact_1',
+      contactName: 'Clara Client',
+      status: 'pending',
+      role: 'client_approver',
+      expiresAt: expect.any(Date),
+      token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      acceptPath: `/portal/invite/${result.token}`,
+      emailDelivery: { status: 'disabled' },
+    });
+  });
+
+  it('still returns the invitation when the delivery outcome cannot be audited', async () => {
+    mockSendInvitationEmail.mockResolvedValue(SENT);
+    mockWritePortalAudit
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('database unavailable'));
+
+    const result = await createClientInvitation(input);
+
+    expect(result.emailDelivery).toEqual({ status: 'sent' });
+    expect(result.token).toBeTruthy();
+    expect(consoleError.mock.calls).toEqual([
+      [
+        '[email] could not record a delivery outcome in the audit trail',
+        { entityType: 'ClientInvitation', entityId: 'invitation_1', event: 'email_sent' },
+      ],
+    ]);
+  });
+
+  it('still returns the invitation if the sender itself fails, and reports no delivery', async () => {
+    mockSendInvitationEmail.mockRejectedValue(new Error('unexpected'));
+
+    const result = await createClientInvitation(input);
+
+    expect(result.token).toBeTruthy();
+    expect(result.emailDelivery).toEqual({ status: 'failed', reason: 'unknown' });
+    expect(auditActions()).toEqual(['client.invitation.create', 'client.invitation.email_failed']);
+  });
+
+  it('keeps the token and the link out of the audit trail and the log', async () => {
+    const outcomes = [
+      SENT,
+      { status: 'failed', reason: 'rejected', attempts: 1 },
+      { status: 'disabled' },
+    ];
+    const tokens: string[] = [];
+    for (const outcome of outcomes) {
+      mockSendInvitationEmail.mockResolvedValueOnce(outcome);
+      tokens.push((await createClientInvitation(input)).token);
+    }
+    mockSendInvitationEmail.mockRejectedValueOnce(
+      new Error(`failed for /portal/invite/${tokens[0]}`)
+    );
+    tokens.push((await createClientInvitation(input)).token);
+
+    const recorded = JSON.stringify([mockWritePortalAudit.mock.calls, consoleError.mock.calls]);
+    for (const token of tokens) expect(recorded).not.toContain(token);
+    expect(recorded).not.toContain('/portal/invite/');
+    // The delivery entries do not repeat the address either.
+    const deliveryEntries = mockWritePortalAudit.mock.calls
+      .map((call) => call[0] as { action: string })
+      .filter((entry) => entry.action.includes('email_'));
+    expect(deliveryEntries.length).toBe(3);
+    expect(JSON.stringify(deliveryEntries)).not.toContain('clara@client.test');
+  });
+
+  it('still hands over the invitation if the organization name is unavailable', async () => {
+    mockContactFindFirst.mockResolvedValue({ ...CONTACT, organization: undefined });
+
+    const result = await createClientInvitation(input);
+
+    expect(result.token).toBeTruthy();
+    expect(mockSendInvitationEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId, organizationName: '' })
+    );
+  });
+
+  it('sends exactly one e-mail per invitation', async () => {
+    mockSendInvitationEmail.mockResolvedValue(SENT);
+
+    await createClientInvitation(input);
+
+    expect(mockSendInvitationEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not e-mail when an invitation is revoked', async () => {
+    mockInvitationFindFirst.mockResolvedValue(invitation());
+    mockInvitationUpdate.mockResolvedValue({ id: 'invitation_1', status: 'revoked' });
+
+    await revokeClientInvitation('invitation_1');
+
+    expect(mockSendInvitationEmail).not.toHaveBeenCalled();
   });
 });
 

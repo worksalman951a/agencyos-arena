@@ -16,6 +16,17 @@
  *   client - cannot be converted into a client of this organization.
  * - The identity created is `userType = "client"` with no `organizationId` and no
  *   `UserRole` rows: internal RBAC can never resolve permissions for it.
+ *
+ * E-mail delivery (Phase 4D / Batch 4A, docs/phase-4d/email-delivery.md):
+ * - Creating an invitation e-mails the acceptance link to the invited address,
+ *   as the last step - after validation, the permission check, the
+ *   organization-scoped contact lookup and the conflict checks, and after the
+ *   invitation is stored.
+ * - It is attempted once per invitation. Nothing but that request ever holds the
+ *   raw token, so nothing else can send the link again.
+ * - A failed delivery does not invalidate the invitation and is never reported
+ *   as sent: the response and the audit trail say what happened, and the
+ *   administrator still receives the link once to hand over.
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -24,11 +35,17 @@ import { cookies } from 'next/headers';
 
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth-server';
+import { sendClientInvitationEmail } from '@/lib/email/invitation-emails';
+import {
+  deliveryAuditRecord,
+  summarizeDelivery,
+  type EmailDeliveryResult,
+} from '@/lib/email/types';
 import { CLIENT_ROLE_PRESETS } from '@/lib/portal/capabilities';
 import { codedError } from '@/lib/portal/access-control';
 import { writePortalAudit } from '@/lib/portal/audit';
 import { notifyUser } from '@/lib/portal/notify';
-import { requireInternalActor } from '@/lib/portal/internal-actor';
+import { requireInternalActor, type InternalActor } from '@/lib/portal/internal-actor';
 import {
   CLIENT_INVITATION_TTL_DAYS,
   clientInvitationCreateSchema,
@@ -77,6 +94,58 @@ function contactName(contact: { firstName: string | null; lastName: string }): s
   return [contact.firstName, contact.lastName].filter(Boolean).join(' ').trim();
 }
 
+/**
+ * E-mail the acceptance link. Never throws: the invitation is already stored
+ * and its one-time link must still reach the administrator, so a sender that
+ * fails in a way it should not is reported as a failed delivery instead.
+ */
+async function deliverInvitationEmail(
+  delivery: Parameters<typeof sendClientInvitationEmail>[0]
+): Promise<EmailDeliveryResult> {
+  try {
+    return await sendClientInvitationEmail(delivery);
+  } catch (error) {
+    console.error('[email] the invitation e-mail could not be handed over', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
+    return { status: 'failed', reason: 'unknown', attempts: 0 };
+  }
+}
+
+/**
+ * Record the outcome of the invitation e-mail in the audit trail.
+ *
+ * Best effort by design: the invitation is already stored and its one-time link
+ * must still reach the administrator, so a failed audit write is logged rather
+ * than thrown. Losing the entry can only understate what was delivered.
+ */
+async function auditInvitationEmail(
+  actor: InternalActor,
+  invitationId: string,
+  delivery: EmailDeliveryResult
+): Promise<void> {
+  const record = deliveryAuditRecord(delivery);
+  if (!record) return;
+
+  try {
+    await writePortalAudit({
+      organizationId: actor.organizationId,
+      actorId: actor.userId,
+      actorName: actor.email,
+      action: `client.invitation.${record.event}`,
+      entityType: 'ClientInvitation',
+      entityId: invitationId,
+      after: record.details,
+    });
+  } catch {
+    console.error('[email] could not record a delivery outcome in the audit trail', {
+      entityType: 'ClientInvitation',
+      entityId: invitationId,
+      event: record.event,
+    });
+  }
+}
+
 /** List invitations for the caller's organization. */
 export async function listClientInvitations(): Promise<ClientInvitationResponse[]> {
   const actor = await requireInternalActor('client.invitation.read');
@@ -107,7 +176,12 @@ export async function listClientInvitations(): Promise<ClientInvitationResponse[
 }
 
 /**
- * Invite a CRM contact into the portal. The raw token is returned exactly once.
+ * Invite a CRM contact into the portal and e-mail them the acceptance link.
+ *
+ * The raw token is returned exactly once. `emailDelivery` in the result says
+ * whether the message was accepted by the mail server (`sent`), could not be
+ * delivered (`failed`, with a reason) or was not attempted because delivery is
+ * switched off (`disabled`).
  */
 export async function createClientInvitation(input: unknown) {
   const parsed = clientInvitationCreateSchema.safeParse(input);
@@ -118,7 +192,16 @@ export async function createClientInvitation(input: unknown) {
 
   const contact = await prisma.contact.findFirst({
     where: { id: contactId, organizationId: actor.organizationId, deletedAt: null },
-    select: { id: true, email: true, firstName: true, lastName: true, accountId: true },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      accountId: true,
+      // The name shown in the invitation e-mail. Read through the contact, so it
+      // can only ever be the name of the organization that owns the contact.
+      organization: { select: { name: true } },
+    },
   });
   if (!contact) throw codedError('Contact not found', 404);
   if (contact.email && !emailsMatch(contact.email, email)) {
@@ -179,6 +262,23 @@ export async function createClientInvitation(input: unknown) {
     after: { email, contactId: contact.id, role, expiresAt, ...flags },
   });
 
+  const acceptPath = `/portal/invite/${token}`;
+
+  // Every check above has passed and the invitation is stored: only now is the
+  // e-mail attempted. It never throws, and a failure leaves the invitation
+  // valid - the outcome is reported, not hidden and not assumed.
+  const delivery = await deliverInvitationEmail({
+    organizationId: actor.organizationId,
+    // Optional access on purpose: `prisma` is untyped here, and nothing after
+    // the insert may throw - the stored invitation's link would be lost.
+    organizationName: contact.organization?.name ?? '',
+    to: invitation.email,
+    recipientName: contact.firstName,
+    acceptPath,
+    expiresAt,
+  });
+  await auditInvitationEmail(actor, invitation.id, delivery);
+
   return {
     id: invitation.id,
     email: invitation.email,
@@ -189,7 +289,8 @@ export async function createClientInvitation(input: unknown) {
     expiresAt: invitation.expiresAt,
     // Shown once, never stored in plaintext.
     token,
-    acceptPath: `/portal/invite/${token}`,
+    acceptPath,
+    emailDelivery: summarizeDelivery(delivery),
   };
 }
 

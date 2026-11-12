@@ -145,6 +145,10 @@ X-Forwarded-For $remote_addr;` for nginx). The proxy must not merely append.
 | `invitation-create`         | 3600 s | 30  | session  | mints bearer credentials                                                |
 | `organization-bootstrap`    | 3600 s | 10  | session  | once per account, ever                                                  |
 
+Batch 4A added three `invitation-email-*` policies to the same table. They are
+not request limits - they bound outbound invitation e-mail and never produce a
+`429` - and are described in [`email-delivery.md`](./email-delivery.md#7-limits).
+
 `429` responses carry `Retry-After` and `RateLimit-Limit` /
 `RateLimit-Remaining` / `RateLimit-Reset` headers and a generic body that names
 no resource. Counters reset when the window elapses; the window restarts on the
