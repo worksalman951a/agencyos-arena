@@ -18,11 +18,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ci_arena_test_2026}
       POSTGRES_DB: agencyos
     ports:
-      - "${POSTGRES_HOST_PORT:-5433}:${POSTGRES_INTERNAL_PORT:-5432}"
+      - '${POSTGRES_HOST_PORT:-5433}:${POSTGRES_INTERNAL_PORT:-5432}'
     volumes:
       - agencyos_a_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agencyos -d agencyos"]
+      test: ['CMD-SHELL', 'pg_isready -U agencyos -d agencyos']
       interval: 5s
       timeout: 5s
       retries: 5
@@ -35,18 +35,45 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: "postgresql://agencyos:${POSTGRES_PASSWORD:-ci_arena_test_2026}@postgres:${POSTGRES_INTERNAL_PORT:-5432}/agencyos?schema=public"
+      DATABASE_URL: 'postgresql://agencyos:${POSTGRES_PASSWORD:-ci_arena_test_2026}@postgres:${POSTGRES_INTERNAL_PORT:-5432}/agencyos?schema=public'
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-ci_nextauth_secret_arena_2026}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-ci_better_auth_secret_arena_2026}
-      BETTER_AUTH_URL: "http://localhost:${APP_PORT:-3001}"
-      NODE_ENV: "development"
-      PORT: "${APP_PORT:-3001}"
+      BETTER_AUTH_URL: 'http://localhost:${APP_PORT:-3001}'
+      NODE_ENV: 'development'
+      PORT: '${APP_PORT:-3001}'
     ports:
-      - "${APP_PORT:-3001}:${APP_PORT:-3001}"
+      - '${APP_PORT:-3001}:${APP_PORT:-3001}'
     volumes:
       - .:/app
       - /app/node_modules
     command: npm run dev
+
+  # Optional one-shot backup runner (Phase 4D / Batch 3B).
+  #
+  # It is NOT started by `docker compose up`: it runs when the platform
+  # schedules it, e.g. `docker compose --profile backup run --rm backup`
+  # from cron, a Kubernetes CronJob, or a container platform's scheduler.
+  # The profile keeps it out of the default development stack.
+  backup:
+    image: agencyos-backup:local
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    profiles: ['backup']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: 'postgresql://agencyos:${POSTGRES_PASSWORD:-ci_arena_test_2026}@postgres:${POSTGRES_INTERNAL_PORT:-5432}/agencyos?schema=public'
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_COUNT: '${BACKUP_RETENTION_COUNT:-7}'
+      BACKUP_LABEL: '${BACKUP_LABEL:-scheduled}'
+      BACKUP_HOOK_URL: '${BACKUP_HOOK_URL:-}'
+      BACKUP_HOOK_TOKEN: '${BACKUP_HOOK_TOKEN:-}'
+    volumes:
+      # Archives land on the host, not inside the container.
+      - '${BACKUP_HOST_DIR:-./backups}:/backups'
+    restart: 'no'
 
 volumes:
   agencyos_a_postgres_data:

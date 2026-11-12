@@ -20,6 +20,7 @@
     "db:studio": "prisma studio",
     "db:backfill-document-permissions": "node --experimental-strip-types scripts/backfill-document-permissions.ts",
     "db:backup": "node scripts/backup/backup.mjs",
+    "db:backup:scheduled": "node scripts/backup/scheduled-backup.mjs",
     "db:verify-restore": "node scripts/backup/verify-restore.mjs",
     "prepare": "husky"
   },

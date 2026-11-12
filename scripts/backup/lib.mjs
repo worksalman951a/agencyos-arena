@@ -41,6 +41,10 @@ export const EXIT = Object.freeze({
   INTEGRITY: 4,
   /** Post-restore data verification found a mismatch. */
   VERIFY_FAILED: 5,
+  /** Another backup run holds the lock; this run was refused (Batch 3B). */
+  LOCKED: 6,
+  /** The backup destination is missing or not writable (Batch 3B). */
+  STORAGE: 7,
 });
 
 /**
