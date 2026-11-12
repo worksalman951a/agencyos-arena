@@ -23,6 +23,9 @@ vi.mock('@/lib/db', () => ({
     quotation: {
       findMany: vi.fn(),
     },
+    contract: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -145,6 +148,7 @@ describe('Phase 11G-1: Client Portal Data Authorization & Scoping', () => {
       ] as unknown as Awaited<ReturnType<typeof prisma.proposal.findMany>>);
 
       vi.mocked(prisma.quotation.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.contract.findMany).mockResolvedValue([]);
 
       const docs = await listClientPortalDocuments();
 

@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { generateClientPortalInvoicePdf } from '@/lib/services/portal/portal-pdf-service';
+import {
+  generateClientPortalInvoicePdf,
+  generateClientPortalProposalPdf,
+  generateClientPortalQuotationPdf,
+  generateClientPortalContractPdf,
+} from '@/lib/services/portal/portal-pdf-service';
 
 export async function GET(request: Request) {
   try {
@@ -11,17 +16,25 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Missing type or id parameter' }, { status: 400 });
     }
 
-    if (type !== 'invoice') {
+    let pdfResult: { pdfBuffer: Uint8Array; number: string };
+
+    if (type === 'invoice') {
+      pdfResult = await generateClientPortalInvoicePdf(id);
+    } else if (type === 'proposal') {
+      pdfResult = await generateClientPortalProposalPdf(id);
+    } else if (type === 'quotation') {
+      pdfResult = await generateClientPortalQuotationPdf(id);
+    } else if (type === 'contract') {
+      pdfResult = await generateClientPortalContractPdf(id);
+    } else {
       return NextResponse.json({ error: 'Unsupported PDF document type' }, { status: 400 });
     }
 
-    const { pdfBuffer, number } = await generateClientPortalInvoicePdf(id);
-
-    return new NextResponse(Buffer.from(pdfBuffer), {
+    return new NextResponse(Buffer.from(pdfResult.pdfBuffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="Invoice-${number}.pdf"`,
+        'Content-Disposition': `attachment; filename="${type.toUpperCase()}-${pdfResult.number}.pdf"`,
       },
     });
   } catch (error) {
