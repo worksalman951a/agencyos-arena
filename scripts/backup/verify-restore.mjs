@@ -337,6 +337,15 @@ async function main() {
     admin,
     `SELECT 1 FROM pg_database WHERE datname = '${targetDatabase.replace(/'/g, "''")}';`
   );
+  // A failed probe is not "the database does not exist": proceeding on an
+  // empty result would mean creating a database we could not confirm was
+  // absent. Fail closed.
+  if (exists.code !== 0) {
+    throw Object.assign(
+      new Error(`Could not check whether ${targetDatabase} exists: ${exists.stderrTail.trim()}`),
+      { exitCode: EXIT.TOOL_FAILED }
+    );
+  }
   if (exists.output.trim() === '1') {
     throw Object.assign(
       new Error(`Target database ${targetDatabase} already exists; refusing to reuse it.`),
@@ -393,7 +402,21 @@ async function main() {
     // -------------------------------------------------------------------------
     const report = await queryJson(target, INTEGRITY_QUERY);
 
-    const present = new Set((report.tables ?? []).map((name) => name.replace(/^public\./, '')));
+    // Fail closed on a malformed report. Without this, a psql that returns
+    // something unexpected (a different client, a proxy, an error page) would
+    // surface as "name.replace is not a function" rather than "verification
+    // could not run", and a crash is easy to mistake for a tool bug.
+    if (!Array.isArray(report.tables) || !report.tables.every((t) => typeof t === 'string')) {
+      throw Object.assign(
+        new Error(
+          'Verification query returned an unexpected table list; refusing to report success: ' +
+            JSON.stringify(report.tables).slice(0, 200)
+        ),
+        { exitCode: EXIT.VERIFY_FAILED }
+      );
+    }
+
+    const present = new Set(report.tables.map((name) => name.replace(/^public\./, '')));
     const missingTables = CRITICAL_TABLES.filter((table) => !present.has(table));
     if (missingTables.length > 0) {
       throw Object.assign(

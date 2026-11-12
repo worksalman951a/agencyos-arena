@@ -32,6 +32,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWriteStream } from 'node:fs';
+import { chmod } from 'node:fs/promises';
 
 import {
   EXIT,
@@ -218,11 +219,26 @@ async function main() {
   let dumpExit;
   try {
     // `wx`: a stale partial file from a killed previous run is a real error,
-    // not something to truncate silently.
+    // not something to truncate silently. Close the handle immediately: the
+    // stream below takes over the file, and an open handle here would also
+    // block the rename on platforms with mandatory locking.
     const handle = await openExclusive(tempPath);
     await handle.close();
+    // `createWriteStream` does not apply `mode` to a file that already exists,
+    // so the permission is set explicitly here — dumps may contain every row
+    // in the database and must not be world-readable.
+    await chmod(tempPath, 0o600);
 
-    const sink = createWriteStream(tempPath, { mode: 0o600 });
+    const sink = createWriteStream(tempPath);
+    // Register the completion promise BEFORE the child runs. `pipe` ends the
+    // destination when the child's stdout closes, so for a small or fast dump
+    // 'close' can fire before `runTool` resolves; awaiting afterwards would
+    // then wait forever on an event that has already happened.
+    const sinkDone = new Promise((resolve, reject) => {
+      sink.on('close', resolve);
+      sink.on('error', reject);
+    });
+
     dumpExit = await runTool(
       'pg_dump',
       [
@@ -236,17 +252,13 @@ async function main() {
       ],
       {
         env: libpqEnv(connection),
+        // `pipe` forwards backpressure and calls `sink.end()` on child close.
         stdout: (stream) => {
           stream.pipe(sink);
         },
       }
-    ).then(async (result) => {
-      await new Promise((resolve, reject) => {
-        sink.on('finish', resolve);
-        sink.on('error', reject);
-      });
-      return result;
-    });
+    );
+    await sinkDone;
 
     if (dumpExit.code !== 0) {
       throw Object.assign(
@@ -284,7 +296,15 @@ async function main() {
     }
 
     const listing = Buffer.concat(listChunks).toString('utf8');
-    const tableCount = (listing.match(/^[^;]*TABLE DATA /gm) ?? []).length;
+    // `pg_restore --list` entry lines are
+    //   `6; 0 16385 TABLE DATA public "User" postgres`
+    // i.e. they begin with an entry id, and `TABLE DATA` always follows a
+    // numeric catalog OID. Matching on a line prefix that assumes the tag comes
+    // first (as an earlier version did) silently matches nothing, which would
+    // reject every real archive as corrupt.
+    const tableCount = listing
+      .split('\n')
+      .filter((line) => /^\d+;\s+\d+\s+\d+\s+TABLE DATA (?!ATTACH\b)/.test(line)).length;
     if (tableCount === 0) {
       throw Object.assign(
         new Error(

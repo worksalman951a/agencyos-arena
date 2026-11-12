@@ -555,6 +555,90 @@ describe('manifest shape', () => {
   });
 });
 
+describe('pg_restore --list parsing', () => {
+  /**
+   * Regression guard. An earlier version matched `/^[^;]*TABLE DATA /m`, which
+   * cannot match a real entry line because every line begins with an entry id
+   * (`6; 0 16385 TABLE DATA public "User" postgres`) and `[^;]*` stops at the
+   * first `;`. It counted zero table-data entries for every archive, so the
+   * tool rejected every backup it produced as corrupt. Only running it against
+   * a real pg_dump caught this, so the shape is pinned here.
+   */
+  const countTableData = (listing: string): number =>
+    listing.split('\n').filter((line) => /^\d+;\s+\d+\s+\d+\s+TABLE DATA (?!ATTACH\b)/.test(line))
+      .length;
+
+  const realListing = `;
+; Archive created at 2026-11-12 07:07:19 UTC
+;     dbname: agencyos
+;     TOC Entries: 812
+;     Compression: 6
+;
+1; 2615 2200 SCHEMA - public postgres
+2; 0 0 COMMENT - SCHEMA public postgres
+3; 1259 16385 TABLE public "User" postgres
+4; 1259 16387 TABLE public "Organization" postgres
+5; 0 16385 TABLE DATA public "User" postgres
+6; 0 16387 TABLE DATA public "Organization" postgres
+7; 2606 16400 CONSTRAINT public "User_pkey" postgres
+8; 0 0 ACL - SCHEMA public postgres
+`;
+
+  it('counts table-data entries in real pg_restore --list output', () => {
+    expect(countTableData(realListing)).toBe(2);
+  });
+
+  it('does not count TABLE (definition) lines as table data', () => {
+    const onlyDefinitions = `1; 1259 16385 TABLE public "User" postgres
+2; 1259 16387 TABLE public "Organization" postgres
+`;
+    expect(countTableData(onlyDefinitions)).toBe(0);
+  });
+
+  it('does not count TABLE DATA ATTACH lines as table data', () => {
+    const attach = '1; 0 16385 TABLE DATA ATTACH public "User" postgres\n';
+    expect(countTableData(attach)).toBe(0);
+  });
+
+  it('returns zero for an archive holding only schema', () => {
+    const schemaOnly = `1; 2615 2200 SCHEMA - public postgres
+2; 1259 16385 TABLE public "User" postgres
+`;
+    expect(countTableData(schemaOnly)).toBe(0);
+  });
+
+  it('handles windows line endings without losing entries', () => {
+    const crlf = '1; 0 16385 TABLE DATA public "User" postgres\r\n';
+    expect(countTableData(crlf)).toBe(1);
+  });
+});
+
+describe('backup script regression: partial artifacts', () => {
+  const script = path.resolve(process.cwd(), 'scripts/backup/backup.mjs');
+
+  it('writes the archive to a .partial name, never directly to the final name', async () => {
+    // The script must not leave a file at the final path until the archive has
+    // been validated. With no pg_dump on PATH it fails early; the assertion is
+    // that failure produces no .dump and no leftover .partial.
+    const dir = path.join(workDir, 'artifacts');
+    await mkdtemp(path.join(workDir, 'x-')).then(() => undefined);
+
+    await expect(
+      run(process.execPath, [script, '--dir', dir], {
+        env: {
+          ...process.env,
+          DATABASE_URL: 'postgresql://u:p@127.0.0.1:1/db',
+          PATH: '/nonexistent-bin',
+        },
+      })
+    ).rejects.toBeDefined();
+
+    const entries = await readdir(dir).catch(() => [] as string[]);
+    expect(entries.filter((f) => f.endsWith('.dump'))).toEqual([]);
+    expect(entries.filter((f) => f.includes('.partial-'))).toEqual([]);
+  });
+});
+
 describe('EXIT codes', () => {
   it('are distinct so a CI step can branch on the failure class', () => {
     const codes = [EXIT.OK, EXIT.UNSAFE, EXIT.TOOL_FAILED, EXIT.INTEGRITY, EXIT.VERIFY_FAILED];
