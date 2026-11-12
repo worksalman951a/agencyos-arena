@@ -22,6 +22,8 @@ const PUBLIC_ROUTES: Record<string, string> = {
   'api/health/route.ts': 'Liveness probe: unauthenticated by design, reports no tenant data.',
   'api/v1/documents/links/[token]/route.ts':
     'Public share links: the unguessable token is the credential.',
+  'api/v1/documents/links/[token]/pdf/route.ts':
+    'Public share link PDF download: the unguessable token is the credential.',
   'api/auth/bootstrap-organization/route.ts':
     'Sign-up hand-off: authenticates the caller itself before creating the organization.',
 };

@@ -37,9 +37,6 @@ export default async function SharedDocumentPublicPage({
           <p className="text-xs text-slate-600 leading-relaxed">
             {errorMessage ?? 'This shared link is invalid, revoked, or has expired.'}
           </p>
-          <div className="text-[11px] text-slate-400 font-mono bg-slate-50 py-1.5 px-3 rounded border border-slate-200">
-            /share/{token.slice(0, 10)}…
-          </div>
           <p className="text-[11px] text-slate-400">
             Nothing about the document is shown here by design &bull; A dead link must not leak its
             contents.

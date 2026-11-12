@@ -2,7 +2,10 @@
 
 import * as React from 'react';
 import { ShieldCheck, CheckCircle2 } from 'lucide-react';
-import { SharedDocumentPrintButton } from '@/app/share/[token]/SharedDocumentActions';
+import {
+  SharedDocumentPrintButton,
+  SharedDocumentDownloadPdfButton,
+} from '@/app/share/[token]/SharedDocumentActions';
 import '@/components/crm/bento-contacts.css';
 
 interface LineItem {
@@ -49,6 +52,7 @@ export function BentoSharedDocumentView({
   documentType,
   expiresAt,
   snapshot,
+  token,
 }: BentoSharedDocumentViewProps) {
   const branding = snapshot?.branding ?? null;
   const brandName = branding?.brandName || 'AgencyOS';
@@ -86,6 +90,7 @@ export function BentoSharedDocumentView({
 
         <div className="flex items-center gap-2">
           <SharedDocumentPrintButton />
+          <SharedDocumentDownloadPdfButton token={token} />
         </div>
       </header>
 

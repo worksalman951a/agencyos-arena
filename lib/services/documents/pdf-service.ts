@@ -854,3 +854,155 @@ export function generateContractPdf(
   applyFooters(doc, brandName);
   return new Uint8Array(doc.output('arraybuffer'));
 }
+
+/**
+ * Generates an authoritative server-side PDF document for a shared document snapshot.
+ * Used for secure token-based public downloads (/api/v1/documents/links/[token]/pdf).
+ */
+export function generateSharedDocumentPdf(
+  snapshot: {
+    entityType?: 'proposal' | 'quotation' | 'estimate' | 'contract' | string;
+    number?: string | null;
+    title: string;
+    status: string;
+    currency?: string | null;
+    validUntil?: string | null;
+    subtotal?: string | null;
+    tax?: string | null;
+    total?: string | null;
+    notes?: string | null;
+    clientName?: string | null;
+    signedAt?: string | null;
+    signatureReference?: string | null;
+    items?: Array<{
+      description: string;
+      quantity: string;
+      unitPrice: string;
+      taxRate: string;
+      amount: string;
+    }>;
+    branding?: {
+      brandName?: string | null;
+      brandColor?: string | null;
+      logoUrl?: string | null;
+    } | null;
+  },
+  branding?: PdfBranding
+): Uint8Array {
+  const entityType = snapshot.entityType || 'document';
+  const resolvedBrandName = snapshot.branding?.brandName || branding?.brandName || 'AgencyOS';
+  const resolvedBranding: PdfBranding = {
+    brandName: resolvedBrandName,
+    brandColor: snapshot.branding?.brandColor || branding?.brandColor,
+    logoUrl: snapshot.branding?.logoUrl || branding?.logoUrl,
+  };
+
+  if (entityType === 'contract') {
+    const pseudoContract: ContractResponse = {
+      id: snapshot.number || 'SHARED',
+      title: snapshot.title,
+      status: snapshot.status || 'draft',
+      signedAt: snapshot.signedAt ? new Date(snapshot.signedAt) : null,
+      signedBy: snapshot.clientName || null,
+      signatureReference: snapshot.signatureReference || null,
+      proposalId: null,
+      projectId: null,
+      organizationId: 'shared',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      signer: snapshot.clientName ? { id: 'signer', name: snapshot.clientName, email: null } : null,
+      proposal: snapshot.number
+        ? { id: 'prop', number: snapshot.number, title: snapshot.title, status: 'linked' }
+        : null,
+      project: null,
+    };
+    return generateContractPdf(pseudoContract, resolvedBranding);
+  }
+
+  if (entityType === 'proposal') {
+    const pseudoProposal = {
+      id: snapshot.number || 'SHARED',
+      organizationId: 'shared',
+      title: snapshot.title,
+      number: snapshot.number || 'PROP-SHARED',
+      status: snapshot.status || 'draft',
+      currency: snapshot.currency || 'USD',
+      validUntil: snapshot.validUntil ? new Date(snapshot.validUntil) : null,
+      subtotal: snapshot.subtotal || '0.00',
+      tax: snapshot.tax || '0.00',
+      total: snapshot.total || '0.00',
+      notes: snapshot.notes || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      contactId: null,
+      contact: snapshot.clientName
+        ? { id: 'c', firstName: snapshot.clientName, lastName: '' }
+        : null,
+      items: (snapshot.items || []).map((it, idx) => ({
+        id: `item-${idx}`,
+        proposalId: 'shared',
+        description: it.description,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        taxRate: it.taxRate,
+        amount: it.amount,
+        sortOrder: idx,
+        createdAt: new Date(),
+      })),
+    } as unknown as ProposalResponse;
+    return generateProposalPdf(pseudoProposal, resolvedBranding);
+  }
+
+  if (entityType === 'quotation') {
+    const pseudoQuotation = {
+      id: snapshot.number || 'SHARED',
+      organizationId: 'shared',
+      title: snapshot.title,
+      number: snapshot.number || 'QUOT-SHARED',
+      status: snapshot.status || 'draft',
+      currency: snapshot.currency || 'USD',
+      validUntil: snapshot.validUntil ? new Date(snapshot.validUntil) : null,
+      subtotal: snapshot.subtotal || '0.00',
+      tax: snapshot.tax || '0.00',
+      total: snapshot.total || '0.00',
+      notes: snapshot.notes || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      contactId: null,
+      contact: snapshot.clientName
+        ? { id: 'c', firstName: snapshot.clientName, lastName: '' }
+        : null,
+      items: (snapshot.items || []).map((it, idx) => ({
+        id: `item-${idx}`,
+        quotationId: 'shared',
+        description: it.description,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        taxRate: it.taxRate,
+        amount: it.amount,
+        sortOrder: idx,
+        createdAt: new Date(),
+      })),
+    } as unknown as QuotationResponse;
+    return generateQuotationPdf(pseudoQuotation, resolvedBranding);
+  }
+
+  // Fallback: estimate / generic line-item document
+  const pseudoEstimate: EstimateResponse = {
+    id: snapshot.number || 'SHARED',
+    organizationId: 'shared',
+    number: snapshot.number || 'EST-SHARED',
+    status: snapshot.status || 'draft',
+    currency: snapshot.currency || 'USD',
+    clientId: 'client',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    validUntil: snapshot.validUntil ? new Date(snapshot.validUntil) : null,
+    total: snapshot.total || snapshot.subtotal || '0.00',
+    notes: snapshot.notes || null,
+    client: snapshot.clientName
+      ? { id: 'c', firstName: snapshot.clientName, lastName: '', email: '' }
+      : null,
+  };
+  return generateEstimatePdf(pseudoEstimate, resolvedBranding);
+}
