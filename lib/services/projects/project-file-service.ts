@@ -9,6 +9,7 @@ import { requirePermission, requireOrganization, type AuthorizedUser } from '@/l
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 import { ProjectFileCreateInput } from '@/lib/schemas/projects/project-file.schema';
+import { scanFileBuffer } from '@/lib/services/security/malware-scanner-service';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -338,11 +339,60 @@ export async function uploadProjectFile(input: {
   }
 
   const storageRoot = resolveStorageRoot();
+  const bytes = Buffer.from(await input.file.arrayBuffer());
+
+  // 1. Scan file bytes through malware scanner lifecycle
+  const scanResult = await scanFileBuffer(bytes);
+
+  if (scanResult.verdict === 'INFECTED') {
+    // Quarantine file bytes in secure quarantine subfolder for forensic review
+    const quarantinePath = path.join(
+      storageRoot,
+      'quarantine',
+      organizationId,
+      `INFECTED-${crypto.randomUUID()}-${safeName}`
+    );
+    await fs.mkdir(path.dirname(quarantinePath), { recursive: true });
+    await fs.writeFile(quarantinePath, bytes);
+
+    await createAuditLog({
+      actorId: userId,
+      actorName: actorEmail,
+      action: 'security.malware.detected',
+      entityType: 'ProjectFile',
+      entityId: input.projectId,
+      metadata: {
+        fileName: safeName,
+        threatName: scanResult.threatName,
+        quarantinePath,
+      },
+      organizationId,
+    });
+
+    const error = new Error(
+      'Upload rejected: file contains suspected malware or malicious payload'
+    ) as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 422;
+    throw error;
+  }
+
+  if (scanResult.verdict === 'SCAN_ERROR') {
+    const error = new Error(
+      'File scan error: security scanner unavailable or failed to verify file'
+    ) as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 503;
+    throw error;
+  }
+
+  // 2. Safe file storage only after verified CLEAN verdict
   const relativeStoragePath = path.join(organizationId, `${crypto.randomUUID()}-${safeName}`);
   const absolutePath = assertSafeStoragePath(storageRoot, relativeStoragePath);
 
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  const bytes = Buffer.from(await input.file.arrayBuffer());
   await fs.writeFile(absolutePath, bytes);
 
   let created: ProjectFileRecord;
