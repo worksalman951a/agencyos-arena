@@ -57,6 +57,7 @@ export const SKIP = Object.freeze({
   ESCAPES_BACKUP_DIR: 'escapes_backup_dir',
   DELETE_FAILED: 'delete_failed',
   ALREADY_ABSENT: 'already_absent',
+  MANIFEST_LEFTOVER: 'manifest_leftover',
 });
 
 /**
@@ -351,6 +352,7 @@ export function planRetention(verified, { keep = 7 } = {}) {
  *   deleted: Array<{ name: string, bytes: number | null }>,
  *   planned: Array<{ name: string, bytes: number | null }>,
  *   failed: Array<{ name: string, reason: string, error?: string }>,
+ *   warnings: Array<{ name: string, reason: string, error?: string }>,
  * }>}
  */
 export async function applyRetention(plan, { directory, dryRun = false } = {}) {
@@ -363,6 +365,8 @@ export async function applyRetention(plan, { directory, dryRun = false } = {}) {
   const planned = [];
   /** @type {Array<{ name: string, reason: string, error?: string }>} */
   const failed = [];
+  /** @type {Array<{ name: string, reason: string, error?: string }>} */
+  const warnings = [];
 
   for (const entry of plan.delete) {
     // 1. Lexical containment: the path must be inside the configured root.
@@ -403,8 +407,6 @@ export async function applyRetention(plan, { directory, dryRun = false } = {}) {
       // manifest is left in place, so the archive stays verifiable and the
       // next run can retry rather than find an orphan.
       await rm(entry.archivePath, { force: false });
-      deleted.push({ name: entry.name, bytes: entry.bytes });
-      await rm(entry.manifestPath, { force: true });
     } catch (error) {
       if (error.code === 'ENOENT') {
         failed.push({ name: entry.name, reason: SKIP.ALREADY_ABSENT });
@@ -415,8 +417,24 @@ export async function applyRetention(plan, { directory, dryRun = false } = {}) {
         reason: SKIP.DELETE_FAILED,
         error: error.message,
       });
+      continue;
+    }
+
+    deleted.push({ name: entry.name, bytes: entry.bytes });
+
+    // The manifest goes second. If it cannot be removed the archive is
+    // already gone, so what is left is an inert leftover rather than a failed
+    // deletion — worth reporting, but not worth failing the run over.
+    try {
+      await rm(entry.manifestPath, { force: true });
+    } catch (error) {
+      warnings.push({
+        name: entry.name,
+        reason: SKIP.MANIFEST_LEFTOVER,
+        error: error.message,
+      });
     }
   }
 
-  return { deleted, planned, failed };
+  return { deleted, planned, failed, warnings };
 }

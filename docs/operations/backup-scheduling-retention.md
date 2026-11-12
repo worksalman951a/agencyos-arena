@@ -223,11 +223,12 @@ tidy exit:
     "deleted": ["agencyos-…dump"],
     "planned": [],
     "skipped": [{ "name": "agencyos-…dump", "reason": "symlink" }],
+    "failures": [],
     "warnings": [],
     "unrelated": 2,
     "partials": 0,
   },
-  "lock": { "path": "…", "acquired": true, "reclaimed": false },
+  "lock": { "path": "…", "acquired": true, "reclaimed": false, "released": true },
   "hook": { "status": "sent", "url": "https://…", "httpStatus": 200, "error": null },
   "error": null, // { code, message, exitCode } when the run failed
 }
@@ -236,6 +237,12 @@ tidy exit:
 The result contains **no credentials**: no password, no user, no unredacted
 connection URL. The source is described by host, port and database only, and
 error messages are redacted and truncated.
+
+`retention.failures` lists the files that could **not** be removed; the run
+then fails with exit `3`, because a retention policy that could not be applied
+is a problem the operator has to see. `retention.warnings` lists leftovers that
+did not stop the deletion — a manifest that could not be removed after its
+archive was, for example.
 
 ---
 

@@ -698,6 +698,7 @@ export async function runScheduledBackup(argv = [], deps = {}) {
       deleted: [],
       planned: [],
       skipped: [],
+      failures: [],
       warnings: [],
       unrelated: 0,
       partials: 0,
@@ -828,7 +829,11 @@ export async function runScheduledBackup(argv = [], deps = {}) {
         result.retention.deleted = outcome.deleted.map((item) => item.name);
         result.retention.planned = outcome.planned.map((item) => item.name);
         result.retention.skipped = inspection.skipped;
-        result.retention.warnings = outcome.failed.map((item) => ({
+        result.retention.failures = outcome.failed.map((item) => ({
+          name: item.name,
+          reason: item.reason,
+        }));
+        result.retention.warnings = outcome.warnings.map((item) => ({
           name: item.name,
           reason: item.reason,
         }));
