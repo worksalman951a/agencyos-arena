@@ -43,14 +43,14 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD ?? 'test_arena_password_2026';
 async function createAuthenticatedUserWithOrg(email: string, name: string, orgName: string) {
   const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD, name }),
   });
   expect(signUpRes.status).toBe(200);
 
   const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
   expect(signInRes.status).toBe(200);
@@ -99,7 +99,7 @@ describeIfDb('CRM Opportunities integration (real PostgreSQL)', () => {
     try {
       await fetch(`${SERVER_URL}/api/auth/session`, {
         method: 'GET',
-        headers: { Accept: 'application/json' },
+        headers: { Accept: 'application/json', Origin: SERVER_URL },
       });
     } catch {
       throw new Error(`HTTP server unavailable at ${SERVER_URL}`);
@@ -232,6 +232,7 @@ describeIfDb('CRM Opportunities integration (real PostgreSQL)', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({

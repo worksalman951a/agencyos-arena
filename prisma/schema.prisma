@@ -289,16 +289,25 @@ model CustomFieldValue {
 }
 
 /// Feature flags
+/// Per-organization feature flag.
+///
+/// A flag key is unique *within* an organization, never globally: every tenant
+/// gets its own row for the same key (for example `bento_shell`), so each
+/// organization can opt in or out independently. The scope is part of the
+/// uniqueness constraint (`@@unique([organizationId, flagKey])`) and of the
+/// lookup key the application uses.
 model FeatureFlag {
   id             String   @id @default(cuid())
   organizationId String
-  flagKey        String   @unique
+  flagKey        String
   enabled        Boolean  @default(false)
   description    String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, flagKey])
 }
 
 /// Webhook events

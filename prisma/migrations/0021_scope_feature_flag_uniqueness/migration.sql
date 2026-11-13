@@ -1,0 +1,50 @@
+-- Migration 0021: scope FeatureFlag uniqueness to the organization.
+--
+-- Problem
+-- -------
+-- 0001_init created
+--     CREATE UNIQUE INDEX "FeatureFlag_flagKey_key" ON "FeatureFlag"("flagKey");
+-- a GLOBAL unique index, while the model and every read path are
+-- organization-scoped:
+--   * bootstrap-organization seeds one `bento_shell` row per new organization,
+--   * isBentoShellEnabled() / listFeatureFlags() / updateFeatureFlag() always
+--     filter by organizationId.
+-- The result was that only the first organization could bootstrap on a database
+-- at all; every later one failed with
+--     Unique constraint failed on the constraint: `FeatureFlag_flagKey_key`
+-- and returned a 500 from /api/auth/bootstrap-organization (which is why the
+-- e2e job lost 28 of its 30 failures to "bootstrap failed: Internal error").
+--
+-- Fix
+-- ---
+-- Uniqueness becomes (organizationId, flagKey): the same key may exist once per
+-- tenant, and never twice inside one tenant. The composite index also covers the
+-- per-tenant lookups (`where: { organizationId, flagKey }` and
+-- `where: { organizationId }`) through its leading column, so no additional
+-- index is needed.
+--
+-- Existing rows are preserved exactly. No row is inserted, updated or deleted:
+-- every flag keeps its id, organizationId, flagKey, enabled value, description
+-- and timestamps. A globally unique set of keys is trivially also unique per
+-- organization, so the new index cannot conflict with existing data - no
+-- clean-up, re-keying or guesswork is required, and no flag value changes.
+--
+-- Locking / deployment
+-- --------------------
+--  * DROP INDEX and CREATE UNIQUE INDEX take a short SHARE ROW EXCLUSIVE lock on
+--    "FeatureFlag". With a handful of flag rows this is a sub-second catalog
+--    operation.
+--  * Deploy this migration BEFORE the application version that relies on
+--    per-organization keys. The previous application version keeps working: it
+--    never inserts a second row for a key that already exists.
+--
+-- Rollback (only possible while no two organizations share a flag key):
+--   DROP INDEX IF EXISTS "FeatureFlag_organizationId_flagKey_key";
+--   CREATE UNIQUE INDEX "FeatureFlag_flagKey_key" ON "FeatureFlag"("flagKey");
+
+-- DropIndex: global uniqueness on flagKey
+DROP INDEX IF EXISTS "FeatureFlag_flagKey_key";
+
+-- CreateIndex: a flag key is unique per organization
+-- (matches @@unique([organizationId, flagKey]) in schema.prisma)
+CREATE UNIQUE INDEX "FeatureFlag_organizationId_flagKey_key" ON "FeatureFlag"("organizationId", "flagKey");

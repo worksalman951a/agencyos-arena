@@ -14,11 +14,65 @@
  * - Notification dispatch: checks recipient user preferences (`isNotificationAllowed`).
  * - In-app notification creation with automatic email transport dispatch if enabled.
  * - Audit logging: all scheduled batch executions record structured audit logs.
+ *
+ * Authorization
+ * -------------
+ * This module is a trusted, already-authorized batch worker: it holds no session
+ * of its own and runs either for one organization or system-wide across all of
+ * them. Because it can therefore never widen its own scope from a request, every
+ * caller MUST authorize the request first and hand over the organization that was
+ * authorized - see `SchedulerAuthorization` below and the consumer in
+ * `app/api/v1/automation/scheduler/run/route.ts`, which accepts only a
+ * `CRON_SECRET` bearer token or a session holding `workflow.update`. There is
+ * deliberately no second session lookup in here: the sweeps are idempotent and
+ * organization-scoped by the same trusted value, so an unauthenticated caller
+ * never reaches them.
  */
 
 import { prisma } from '@/lib/db';
 import { isNotificationAllowed } from '@/lib/services/automation/notification-service';
 import { emailTransport } from '@/lib/services/automation/email-service';
+
+/**
+ * Who authorized this run, and for which tenant.
+ *
+ * The authorization audit (`lib/__tests__/audit/api-route-guards.test.ts`)
+ * requires every service that reaches the database to carry an explicit
+ * authorization decision. Keeping the type here - rather than an untyped
+ * `organizationId?: string` - makes the contract visible at the call site and in
+ * review:
+ *
+ * - `cron`: a server-to-server invocation authenticated with `CRON_SECRET`.
+ *   With no organization, the worker sweeps every organization.
+ * - `session`: an authenticated user holding `workflow.update`; always scoped to
+ *   the organization their role was checked against.
+ */
+export interface SchedulerAuthorization {
+  actor: 'cron' | 'session';
+  /** The authorized tenant; omitted only for a system-wide `cron` sweep. */
+  organizationId?: string;
+}
+
+/** Fail closed: a sweep can never run without a recorded authorization decision. */
+function assertAuthorized(authorization: SchedulerAuthorization): void {
+  if (!authorization || (authorization.actor !== 'cron' && authorization.actor !== 'session')) {
+    const error = new Error('Scheduler run requires an authorized caller') as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 401;
+    throw error;
+  }
+
+  if (authorization.actor === 'session' && !authorization.organizationId) {
+    const error = new Error(
+      'A session-triggered scheduler run requires an organization'
+    ) as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 403;
+    throw error;
+  }
+}
 
 export interface SchedulerExecutionResult {
   workflow: string;
@@ -53,8 +107,11 @@ function releaseLock(): void {
  * 1. Process Overdue Invoices
  */
 export async function processOverdueInvoices(
-  organizationId?: string
+  authorization: SchedulerAuthorization
 ): Promise<SchedulerExecutionResult> {
+  assertAuthorized(authorization);
+  const organizationId = authorization.organizationId;
+
   const result: SchedulerExecutionResult = {
     workflow: 'overdue_invoices',
     evaluated: 0,
@@ -173,8 +230,11 @@ export async function processOverdueInvoices(
  * 2. Process Overdue Tasks
  */
 export async function processOverdueTasks(
-  organizationId?: string
+  authorization: SchedulerAuthorization
 ): Promise<SchedulerExecutionResult> {
+  assertAuthorized(authorization);
+  const organizationId = authorization.organizationId;
+
   const result: SchedulerExecutionResult = {
     workflow: 'overdue_tasks',
     evaluated: 0,
@@ -271,8 +331,11 @@ export async function processOverdueTasks(
  * 3. Process Pending Project Approvals (>= 48 hours old)
  */
 export async function processPendingApprovals(
-  organizationId?: string
+  authorization: SchedulerAuthorization
 ): Promise<SchedulerExecutionResult> {
+  assertAuthorized(authorization);
+  const organizationId = authorization.organizationId;
+
   const result: SchedulerExecutionResult = {
     workflow: 'pending_approvals',
     evaluated: 0,
@@ -371,8 +434,11 @@ export async function processPendingApprovals(
  * Execute all scheduled workflows in one coordinated batch.
  */
 export async function runScheduledAutomation(
-  organizationId?: string
+  authorization: SchedulerAuthorization
 ): Promise<ScheduledRunSummary> {
+  assertAuthorized(authorization);
+  const organizationId = authorization.organizationId;
+
   const startTime = Date.now();
   const timestamp = new Date();
 
@@ -382,9 +448,9 @@ export async function runScheduledAutomation(
 
   try {
     const [invoices, tasks, approvals] = await Promise.all([
-      processOverdueInvoices(organizationId),
-      processOverdueTasks(organizationId),
-      processPendingApprovals(organizationId),
+      processOverdueInvoices(authorization),
+      processOverdueTasks(authorization),
+      processPendingApprovals(authorization),
     ]);
 
     const durationMs = Date.now() - startTime;
@@ -393,8 +459,11 @@ export async function runScheduledAutomation(
     if (organizationId) {
       await prisma.auditLog.create({
         data: {
-          actorId: 'system-scheduler',
-          actorName: 'System Scheduled Worker',
+          actorId: authorization.actor === 'cron' ? 'system-scheduler' : 'automation.scheduler',
+          actorName:
+            authorization.actor === 'cron'
+              ? 'System Scheduled Worker'
+              : 'Automation Scheduler (session)',
           action: 'automation.scheduled_run',
           entityType: 'Scheduler',
           entityId: `run-${timestamp.getTime()}`,

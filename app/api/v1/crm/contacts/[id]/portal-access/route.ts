@@ -1,43 +1,24 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { requireOrganization } from '@/lib/permissions';
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
 import {
+  getContactPortalAccess,
   inviteContactToPortal,
   revokeContactPortalAccess,
 } from '@/lib/services/portal/portal-auth-service';
 
+/**
+ * Client Portal administration for one CRM contact.
+ *
+ * Every handler delegates to `lib/services/portal/portal-auth-service`, which
+ * resolves the session, checks the required permission and scopes the lookup to
+ * the caller's organization. The route itself never touches Prisma, so there is
+ * no second, unguarded path to portal records.
+ */
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id: contactId } = await params;
-    const cookieStore = await cookies();
-    const result = await auth.api.getSession({
-      headers: { cookie: cookieStore.toString() },
-    });
+    const result = await getContactPortalAccess({ contactId });
 
-    if (!result?.session || !result.user) {
-      return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
-    }
-
-    const { organizationId } = await requireOrganization(result.user.id);
-
-    const portalAccess = await prisma.clientPortalAccess.findUnique({
-      where: {
-        organizationId_contactId: { organizationId, contactId },
-      },
-      select: {
-        id: true,
-        email: true,
-        status: true,
-        invitedAt: true,
-        activatedAt: true,
-        revokedAt: true,
-        lastLoginAt: true,
-      },
-    });
-
-    return NextResponse.json({ portalAccess });
+    return NextResponse.json(result);
   } catch (error) {
     const err = error as { statusCode?: number; message?: string };
     const status = err.statusCode || 500;

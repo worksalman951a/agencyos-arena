@@ -20,12 +20,13 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { prisma } from '@/lib/db';
-import { requireOrganization, type AuthorizedUser } from '@/lib/permissions';
+import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { emailTransport } from '@/lib/services/automation/email-service';
 import {
   clientPortalInviteSchema,
   clientPortalRevokeSchema,
+  clientPortalStatusSchema,
   clientPortalLoginRequestSchema,
   clientPortalVerifyTokenSchema,
 } from '@/lib/schemas/portal/portal-auth.schema';
@@ -83,6 +84,43 @@ export interface ClientPortalContext {
     brandColor?: string;
     logoUrl?: string | null;
   };
+}
+
+/**
+ * Read a contact's Client Portal access state for the administration widget.
+ *
+ * Runs here - not in the route - so the session, the `contact.read` permission
+ * and the organization scope are resolved in the same trusted place as every
+ * other portal operation. The lookup key is `(organizationId, contactId)`, so a
+ * contact id belonging to another tenant simply resolves to `null` instead of
+ * disclosing that tenant's portal record.
+ */
+export async function getContactPortalAccess(input: { contactId: string }) {
+  const parsed = clientPortalStatusSchema.safeParse(input);
+  if (!parsed.success) {
+    throw codedError(parsed.error.issues[0]?.message ?? 'Invalid input', 400);
+  }
+
+  const { userId, organizationId } = await getAuthorizedAgencyUser();
+
+  await requirePermission(userId, organizationId, 'contact.read');
+
+  const portalAccess = await prisma.clientPortalAccess.findUnique({
+    where: {
+      organizationId_contactId: { organizationId, contactId: parsed.data.contactId },
+    },
+    select: {
+      id: true,
+      email: true,
+      status: true,
+      invitedAt: true,
+      activatedAt: true,
+      revokedAt: true,
+      lastLoginAt: true,
+    },
+  });
+
+  return { portalAccess };
 }
 
 /**

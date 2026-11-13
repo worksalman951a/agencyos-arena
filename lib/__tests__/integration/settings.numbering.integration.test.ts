@@ -39,14 +39,14 @@ async function createAuthenticatedUserWithOrg(
 ): Promise<TestActor> {
   const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD, name }),
   });
   expect(signUpRes.status).toBe(200);
 
   const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
   expect(signInRes.status).toBe(200);
@@ -125,7 +125,9 @@ describeIfDb('Organization settings and document numbering (real PostgreSQL)', (
     await prisma.$connect();
 
     try {
-      await fetch(`${SERVER_URL}/api/auth/session`, { headers: { Accept: 'application/json' } });
+      await fetch(`${SERVER_URL}/api/auth/session`, {
+        headers: { Accept: 'application/json', Origin: SERVER_URL },
+      });
     } catch {
       throw new Error(`HTTP server unavailable at ${SERVER_URL}`);
     }
@@ -146,14 +148,14 @@ describeIfDb('Organization settings and document numbering (real PostgreSQL)', (
     const memberEmail = `settings-member-${stamp}${TEST_EMAIL_SUFFIX}`;
     const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ email: memberEmail, password: TEST_PASSWORD, name: 'Plain Member' }),
     });
     expect(signUpRes.status).toBe(200);
 
     const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ email: memberEmail, password: TEST_PASSWORD }),
     });
     expect(signInRes.status).toBe(200);
