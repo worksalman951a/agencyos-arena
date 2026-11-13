@@ -370,7 +370,7 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
     const first = await runScheduler();
     expect(first.status).toBe(500);
     const firstResult = await first.json();
-    expect(firstResult.status).toBe('completed');
+    expect(firstResult.status).toBe('completed_with_failures');
     expect(firstResult.failed).toBeGreaterThan(0);
     expect(firstResult).not.toHaveProperty('organizationId');
     expect(firstResult).not.toHaveProperty('ruleId');
@@ -473,6 +473,12 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
       where: { id: suspendedOwner.userId },
       data: { status: 'suspended' },
     });
+    const changedRule = await createRule(admin, 'Changed recovery rule', 'invoice.overdue');
+    const changedInvoice = await createInvoice(admin.organizationId, `WR-CHANGED-${randomUUID()}`);
+    await prisma.workflowRule.update({
+      where: { id: changedRule.id },
+      data: { actions: { list: [{ type: 'log', message: 'changed after claim' }] } },
+    });
 
     const staleAt = new Date(Date.now() - 20 * 60_000);
     const seed = (
@@ -525,10 +531,17 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
       `cross-tenant-${randomUUID()}`,
       admin.userId
     );
+    const changed = await seed(
+      admin.organizationId,
+      changedRule.id,
+      changedInvoice.id,
+      `changed-${randomUUID()}`,
+      admin.userId
+    );
 
     await recoverWorkflowExecutionsForScheduler(new Date());
     const recovered = await prisma.workflowExecution.findMany({
-      where: { id: { in: [disabled.id, unauthorized.id, crossTenant.id] } },
+      where: { id: { in: [disabled.id, unauthorized.id, crossTenant.id, changed.id] } },
       select: { id: true, status: true, errorCategory: true },
     });
     expect(recovered).toEqual(
@@ -547,6 +560,11 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
           id: crossTenant.id,
           status: 'quarantined',
           errorCategory: 'rule_disabled',
+        }),
+        expect.objectContaining({
+          id: changed.id,
+          status: 'quarantined',
+          errorCategory: 'rule_changed',
         }),
       ])
     );

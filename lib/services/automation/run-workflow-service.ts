@@ -776,6 +776,16 @@ async function runAction(action: WorkflowAction, context: ActionContext) {
   }
 }
 
+function workflowActionDefinitionsMatch(current: unknown, snapshot: unknown): boolean {
+  const currentActions = workflowActionsSchema.safeParse(current);
+  const snapshotActions = workflowActionsSchema.safeParse(snapshot);
+  return (
+    currentActions.success &&
+    snapshotActions.success &&
+    JSON.stringify(currentActions.data) === JSON.stringify(snapshotActions.data)
+  );
+}
+
 function eventMetadata(event: WorkflowEvent, actor: AuthorizedUser) {
   return {
     eventType: event.type,
@@ -1467,7 +1477,9 @@ export async function recoverWorkflowExecutionsForScheduler(now = new Date()) {
         where: { id: candidate.ruleId, organizationId: candidate.organizationId },
       });
       const ruleDefinitionChanged = Boolean(
-        rule && typeof previousLog.eventType === 'string' && rule.trigger !== previousLog.eventType
+        rule &&
+        ((typeof previousLog.eventType === 'string' && rule.trigger !== previousLog.eventType) ||
+          !workflowActionDefinitionsMatch(rule.actions, snapshot))
       );
       const ownerId = typeof previousLog.actorId === 'string' ? previousLog.actorId : '';
       const owner = ownerId
@@ -1604,9 +1616,7 @@ export async function recoverWorkflowExecutionsForScheduler(now = new Date()) {
         resultLog: { ...previousLog, actions: allOutcomes },
         failureCategory: category,
         quarantine: Boolean(
-          failure &&
-          allOutcomes.some((outcome) => outcome.status === 'ok') &&
-          !isWorkflowActionSnapshotRetrySafe(snapshot)
+          failure && category && shouldQuarantineWorkflowFailure(category, snapshot)
         ),
         auditAction: 'workflow.recovery_retry',
       });
@@ -1676,7 +1686,8 @@ export async function retryWorkflowExecution(executionId: string) {
   const parsedSavedActions = workflowActionsSchema.safeParse(savedActions);
   const definitionChanged = Boolean(
     !parsedSavedActions.success ||
-    (typeof retrySnapshot.eventType === 'string' && rule.trigger !== retrySnapshot.eventType)
+    (typeof retrySnapshot.eventType === 'string' && rule.trigger !== retrySnapshot.eventType) ||
+    !workflowActionDefinitionsMatch(rule.actions, savedActions)
   );
   if (definitionChanged || !isWorkflowActionSnapshotRetrySafe(savedActions)) {
     const category = !parsedSavedActions.success

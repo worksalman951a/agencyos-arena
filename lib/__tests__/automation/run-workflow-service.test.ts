@@ -842,7 +842,7 @@ describe('workflow retries', () => {
     expect(mockExecutionUpdateMany).not.toHaveBeenCalled();
   });
 
-  it('retries the original action snapshot even if the rule was edited later', async () => {
+  it('quarantines retry when rule actions changed after the original claim', async () => {
     mockRuleFindFirst.mockResolvedValueOnce({
       ...rule,
       enabled: true,
@@ -865,25 +865,19 @@ describe('workflow retries', () => {
         actions: [{ index: 0, type: 'log', status: 'failed' }],
       },
     });
-    mockExecutionFindFirst.mockResolvedValueOnce({
-      id: 'execution-1',
-      status: 'succeeded',
-      attempts: 2,
-      resultLog: { retried: true },
-    });
+    await expect(retryWorkflowExecution('execution-1')).rejects.toMatchObject({ statusCode: 409 });
 
-    await retryWorkflowExecution('execution-1');
-
-    expect(mockUserFindFirst).not.toHaveBeenCalled();
-    const finalization = mockExecutionUpdateMany.mock.calls[1]?.[0] as {
-      data: { resultLog: { actionDefinitions: unknown; actions: unknown } };
-    };
-    expect(finalization.data.resultLog.actionDefinitions).toEqual({
-      list: [{ type: 'log', message: 'original definition' }],
-    });
-    expect(finalization.data.resultLog.actions).toMatchObject([
-      { index: 0, type: 'log', status: 'ok' },
-    ]);
+    expect(mockExecutionUpdateMany).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        where: { id: 'execution-1', organizationId: 'org-1', status: 'failed' },
+        data: expect.objectContaining({
+          status: 'quarantined',
+          errorCategory: 'rule_changed',
+        }),
+      })
+    );
+    expect(mockLeadFindFirst).not.toHaveBeenCalled();
+    expect(mockAuditCreate).not.toHaveBeenCalled();
   });
 
   it('retries legacy status_changed executions that did not snapshot previousStatus', async () => {
@@ -926,7 +920,11 @@ describe('workflow retries', () => {
   });
 
   it('releases the retry claim when finalization or audit logging fails', async () => {
-    mockRuleFindFirst.mockResolvedValueOnce({ ...rule, enabled: true });
+    mockRuleFindFirst.mockResolvedValueOnce({
+      ...rule,
+      enabled: true,
+      actions: { list: [{ type: 'log', message: 'original action' }] },
+    });
     mockExecutionFindFirst.mockResolvedValueOnce({
       id: 'execution-1',
       organizationId: 'org-1',
