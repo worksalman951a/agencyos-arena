@@ -385,6 +385,150 @@ describeIfDb('project financial summary (real PostgreSQL and HTTP)', () => {
     ).toBe(beforeAuditCount);
   });
 
+  it('classifies expense and change-order sources from PostgreSQL links without releasing any source', async () => {
+    const project = await createProject(admin.organizationId, 'Source Billing States');
+    const cases = [
+      { key: 'available', invoiceStatus: null, deleted: false },
+      { key: 'reserved', invoiceStatus: 'draft', deleted: false },
+      { key: 'billed-sent', invoiceStatus: 'sent', deleted: false },
+      { key: 'billed-overdue', invoiceStatus: 'overdue', deleted: false },
+      { key: 'billed-paid', invoiceStatus: 'paid', deleted: false },
+      { key: 'locked-voided', invoiceStatus: 'voided', deleted: false },
+      { key: 'locked-cancelled', invoiceStatus: 'cancelled', deleted: false },
+      { key: 'locked-deleted', invoiceStatus: 'sent', deleted: true },
+    ] as const;
+
+    const expenses = await Promise.all(
+      cases.map(({ key }, index) =>
+        prisma.expenseItem.create({
+          data: {
+            organizationId: admin.organizationId,
+            projectId: project.id,
+            category: key,
+            amount: `${index + 1}.00`,
+            expenseDate: new Date(),
+            billable: true,
+          },
+        })
+      )
+    );
+    const changeOrders = await Promise.all(
+      cases.map(({ key }, index) =>
+        prisma.changeOrder.create({
+          data: {
+            organizationId: admin.organizationId,
+            projectId: project.id,
+            description: key,
+            amount: `${(index + 1) * 10}.00`,
+            status: 'approved',
+            approvedBy: admin.userId,
+          },
+        })
+      )
+    );
+
+    const linkedSourceItems: Array<{
+      invoiceId: string;
+      sourceExpenseId?: string;
+      sourceChangeOrderId?: string;
+    }> = [];
+    for (const [index, testCase] of cases.entries()) {
+      if (testCase.invoiceStatus === null) continue;
+      const invoice = await createInvoice(
+        admin.organizationId,
+        project.id,
+        `PS-SOURCE-${testCase.key}-${randomUUID()}`,
+        {
+          status: testCase.invoiceStatus,
+          deletedAt: testCase.deleted ? new Date() : null,
+        }
+      );
+      linkedSourceItems.push(
+        {
+          invoiceId: invoice.id,
+          sourceExpenseId: expenses[index].id,
+        },
+        {
+          invoiceId: invoice.id,
+          sourceChangeOrderId: changeOrders[index].id,
+        }
+      );
+    }
+    await prisma.invoiceItem.createMany({
+      data: linkedSourceItems.map((item, index) => ({
+        ...item,
+        description: `Source link ${index}`,
+        quantity: '1',
+        unitPrice: '1.00',
+        taxRate: '0',
+        amount: '1.00',
+      })),
+    });
+
+    const result = await financialSummary(admin, project.id);
+    expect(result.status, JSON.stringify(result.body)).toBe(200);
+
+    const expensesByCategory = Object.fromEntries(
+      (
+        result.body.expenses.details as Array<{
+          category: string;
+          billingStatus: string;
+        }>
+      ).map((expense) => [expense.category, expense.billingStatus])
+    );
+    const changeOrdersByDescription = Object.fromEntries(
+      (
+        result.body.changeOrders.details as Array<{
+          description: string;
+          billingStatus: string;
+        }>
+      ).map((changeOrder) => [changeOrder.description, changeOrder.billingStatus])
+    );
+    for (const { key } of cases) {
+      const expected = key.startsWith('available')
+        ? 'available'
+        : key.startsWith('reserved')
+          ? 'reserved'
+          : key.startsWith('billed')
+            ? 'billed'
+            : 'locked';
+      expect(expensesByCategory[key]).toBe(expected);
+      expect(changeOrdersByDescription[key]).toBe(expected);
+    }
+
+    expect(result.body.expenses).toMatchObject({
+      unbilledBillable: '1.00',
+      unbilledCount: 1,
+      billingStatusTotals: {
+        available: { amount: '1.00', count: 1 },
+        reserved: { amount: '2.00', count: 1 },
+        billed: { amount: '12.00', count: 3 },
+        locked: { amount: '21.00', count: 3 },
+      },
+    });
+    expect(result.body.changeOrders).toMatchObject({
+      unbilledApprovedAmount: '10.00',
+      unbilledApprovedCount: 1,
+      billingStatusTotals: {
+        available: { amount: '10.00', count: 1 },
+        reserved: { amount: '20.00', count: 1 },
+        billed: { amount: '120.00', count: 3 },
+        locked: { amount: '210.00', count: 3 },
+      },
+    });
+
+    const persistedLinks = await prisma.invoiceItem.findMany({
+      where: {
+        OR: [
+          { sourceExpenseId: { in: expenses.map(({ id }) => id) } },
+          { sourceChangeOrderId: { in: changeOrders.map(({ id }) => id) } },
+        ],
+      },
+      select: { sourceExpenseId: true, sourceChangeOrderId: true },
+    });
+    expect(persistedLinks).toHaveLength(14);
+  });
+
   it('reflects partial and completed payments after the existing payment workflow changes the invoice', async () => {
     const project = await createProject(admin.organizationId, 'Payment Updates', {
       budget: '100.00',

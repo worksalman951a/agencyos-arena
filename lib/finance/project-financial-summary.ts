@@ -3,6 +3,10 @@ import { DEFAULT_CURRENCY, normalizeCurrencyCode } from '@/lib/currencies';
 
 type DecimalLike = string | number | { toString(): string } | null | undefined;
 
+export type SourceBillingStatus = 'available' | 'reserved' | 'billed' | 'locked';
+
+type BillingStatusTotals = Record<SourceBillingStatus, { amount: string; count: number }>;
+
 export interface ProjectFinancialSummaryInput {
   project: {
     id: string;
@@ -91,9 +95,11 @@ export interface ProjectFinancialSummary {
     recordedDirectCosts: string;
     billable: string;
     nonBillable: string;
+    /** Available billable expenses only: no InvoiceItem source link exists. */
     unbilledBillable: string;
     unbilledCount: number;
     linkedToInvoicesCount: number;
+    billingStatusTotals: BillingStatusTotals;
     details: Array<{
       id: string;
       category: string;
@@ -101,13 +107,22 @@ export interface ProjectFinancialSummary {
       expenseDate: string;
       billable: boolean;
       billed: boolean;
+      billingStatus: SourceBillingStatus;
     }>;
   };
   changeOrders: {
     approvedAmount: string;
+    /** Available approved change orders only: no InvoiceItem source link exists. */
     unbilledApprovedAmount: string;
     unbilledApprovedCount: number;
-    details: Array<{ id: string; description: string; amount: string; createdAt: string }>;
+    billingStatusTotals: BillingStatusTotals;
+    details: Array<{
+      id: string;
+      description: string;
+      amount: string;
+      createdAt: string;
+      billingStatus: SourceBillingStatus;
+    }>;
   };
   billableTime: {
     estimatedValueByCurrency: Array<{ currency: string; amount: string; entryCount: number }>;
@@ -161,14 +176,41 @@ function normalizeCurrencyOrNull(value: string | null | undefined): string | nul
   return value ? normalizeCurrencyCode(value) : null;
 }
 
-function hasActiveBilledInvoice(
-  source: { invoice: { status: string; deletedAt: Date | null } } | null
-): boolean {
-  return Boolean(
-    source &&
-    source.invoice.deletedAt === null &&
-    ['sent', 'overdue', 'paid'].includes(source.invoice.status)
-  );
+type InvoiceSourceLink = { invoice: { status: string; deletedAt: Date | null } } | null;
+
+/**
+ * Source links are durable reservations because InvoiceItem source ids are unique.
+ * A draft reserves the source; issued invoices have billed it; voided, cancelled,
+ * deleted, or otherwise non-billable linked invoices leave it locked for reversal.
+ */
+function classifySourceBillingStatus(source: InvoiceSourceLink): SourceBillingStatus {
+  if (source === null) return 'available';
+  if (source.invoice.deletedAt !== null) return 'locked';
+  if (source.invoice.status === 'draft') return 'reserved';
+  if (['sent', 'overdue', 'paid'].includes(source.invoice.status)) return 'billed';
+  return 'locked';
+}
+
+const BILLING_STATUSES: SourceBillingStatus[] = ['available', 'reserved', 'billed', 'locked'];
+
+function emptyBillingStatusTotals() {
+  return {
+    available: { amount: BigInt(0), count: 0 },
+    reserved: { amount: BigInt(0), count: 0 },
+    billed: { amount: BigInt(0), count: 0 },
+    locked: { amount: BigInt(0), count: 0 },
+  } satisfies Record<SourceBillingStatus, { amount: bigint; count: number }>;
+}
+
+function formatBillingStatusTotals(
+  totals: Record<SourceBillingStatus, { amount: bigint; count: number }>
+): BillingStatusTotals {
+  return Object.fromEntries(
+    BILLING_STATUSES.map((status) => [
+      status,
+      { amount: formatMinorUnits(totals[status].amount), count: totals[status].count },
+    ])
+  ) as BillingStatusTotals;
 }
 
 interface MutableCurrencyTotals {
@@ -239,24 +281,33 @@ export function calculateProjectFinancialSummary(
     });
   }
 
-  const expenseDetails = input.expenses.map((expense) => ({
-    id: expense.id,
-    category: expense.category,
-    amount: formatMinorUnits(toMinorUnits(expense.amount)),
-    expenseDate: expense.expenseDate.toISOString(),
-    billable: expense.billable,
-    billed: hasActiveBilledInvoice(expense.billedInvoiceItem),
-  }));
+  const expenseDetails = input.expenses.map((expense) => {
+    const billingStatus = classifySourceBillingStatus(expense.billedInvoiceItem);
+    return {
+      id: expense.id,
+      category: expense.category,
+      amount: formatMinorUnits(toMinorUnits(expense.amount)),
+      expenseDate: expense.expenseDate.toISOString(),
+      billable: expense.billable,
+      billed: billingStatus === 'billed',
+      billingStatus,
+    };
+  });
   const expenses = input.expenses.reduce(
     (totals, expense) => {
       const amount = toMinorUnits(expense.amount);
+      const billingStatus = classifySourceBillingStatus(expense.billedInvoiceItem);
       totals.recorded += amount;
       if (expense.billable) totals.billable += amount;
       else totals.nonBillable += amount;
 
-      if (hasActiveBilledInvoice(expense.billedInvoiceItem)) {
-        totals.linkedCount += 1;
-      } else if (expense.billable) {
+      if (billingStatus !== 'available') totals.linkedCount += 1;
+      // Only billable and truly unlinked source expenses are available to bill.
+      if (expense.billable) {
+        totals.billingStatusTotals[billingStatus].amount += amount;
+        totals.billingStatusTotals[billingStatus].count += 1;
+      }
+      if (expense.billable && billingStatus === 'available') {
         totals.unbilled += amount;
         totals.unbilledCount += 1;
       }
@@ -269,27 +320,33 @@ export function calculateProjectFinancialSummary(
       unbilled: BigInt(0),
       unbilledCount: 0,
       linkedCount: 0,
+      billingStatusTotals: emptyBillingStatusTotals(),
     }
   );
 
   let approvedChangeOrderTotal = BigInt(0);
   let unbilledChangeOrderTotal = BigInt(0);
   let unbilledApprovedCount = 0;
-  const unbilledChangeOrderDetails: ProjectFinancialSummary['changeOrders']['details'] = [];
+  const changeOrderBillingStatusTotals = emptyBillingStatusTotals();
+  const approvedChangeOrderDetails: ProjectFinancialSummary['changeOrders']['details'] = [];
   for (const changeOrder of input.changeOrders) {
     if (changeOrder.status !== 'approved') continue;
     const amount = toMinorUnits(changeOrder.amount);
+    const billingStatus = classifySourceBillingStatus(changeOrder.billedInvoiceItem);
     approvedChangeOrderTotal += amount;
-    if (!hasActiveBilledInvoice(changeOrder.billedInvoiceItem)) {
+    changeOrderBillingStatusTotals[billingStatus].amount += amount;
+    changeOrderBillingStatusTotals[billingStatus].count += 1;
+    if (billingStatus === 'available') {
       unbilledChangeOrderTotal += amount;
       unbilledApprovedCount += 1;
-      unbilledChangeOrderDetails.push({
-        id: changeOrder.id,
-        description: changeOrder.description,
-        amount: formatMinorUnits(amount),
-        createdAt: changeOrder.createdAt.toISOString(),
-      });
     }
+    approvedChangeOrderDetails.push({
+      id: changeOrder.id,
+      description: changeOrder.description,
+      amount: formatMinorUnits(amount),
+      createdAt: changeOrder.createdAt.toISOString(),
+      billingStatus,
+    });
   }
 
   const billableTimeValues = new Map<string, { amount: bigint; entryCount: number }>();
@@ -366,13 +423,15 @@ export function calculateProjectFinancialSummary(
       unbilledBillable: formatMinorUnits(expenses.unbilled),
       unbilledCount: expenses.unbilledCount,
       linkedToInvoicesCount: expenses.linkedCount,
+      billingStatusTotals: formatBillingStatusTotals(expenses.billingStatusTotals),
       details: expenseDetails.sort((a, b) => b.expenseDate.localeCompare(a.expenseDate)),
     },
     changeOrders: {
       approvedAmount: formatMinorUnits(approvedChangeOrderTotal),
       unbilledApprovedAmount: formatMinorUnits(unbilledChangeOrderTotal),
       unbilledApprovedCount,
-      details: unbilledChangeOrderDetails,
+      billingStatusTotals: formatBillingStatusTotals(changeOrderBillingStatusTotals),
+      details: approvedChangeOrderDetails,
     },
     billableTime: {
       estimatedValueByCurrency: [...billableTimeValues.entries()]

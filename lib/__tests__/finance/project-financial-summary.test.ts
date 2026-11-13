@@ -209,7 +209,7 @@ describe('project financial calculations', () => {
     expect(summary.comparisonInProjectCurrency.revenueLessRecordedDirectCosts).toBe('-20.29');
   });
 
-  it('treats source links to voided or deleted invoices as unbilled', () => {
+  it('keeps source links to voided or deleted invoices locked and unavailable', () => {
     const summary = calculateProjectFinancialSummary(
       financialInput({
         expenses: [
@@ -235,11 +235,93 @@ describe('project financial calculations', () => {
       })
     );
 
-    expect(summary.expenses.unbilledBillable).toBe('12.00');
-    expect(summary.expenses.unbilledCount).toBe(1);
-    expect(summary.expenses.linkedToInvoicesCount).toBe(0);
+    expect(summary.expenses.unbilledBillable).toBe('0.00');
+    expect(summary.expenses.unbilledCount).toBe(0);
+    expect(summary.expenses.linkedToInvoicesCount).toBe(1);
     expect(summary.expenses.details[0].billed).toBe(false);
-    expect(summary.changeOrders.unbilledApprovedAmount).toBe('40.00');
+    expect(summary.expenses.details[0].billingStatus).toBe('locked');
+    expect(summary.expenses.billingStatusTotals.locked).toEqual({ amount: '12.00', count: 1 });
+    expect(summary.changeOrders.unbilledApprovedAmount).toBe('0.00');
+    expect(summary.changeOrders.unbilledApprovedCount).toBe(0);
+    expect(summary.changeOrders.details[0].billingStatus).toBe('locked');
+    expect(summary.changeOrders.billingStatusTotals.locked).toEqual({ amount: '40.00', count: 1 });
+  });
+
+  it('classifies available, reserved, billed and locked expense and change-order sources', () => {
+    const invoiceLink = (status: string, deletedAt: Date | null = null) => ({
+      invoice: { status, deletedAt },
+    });
+    const states = [
+      { key: 'available', link: null },
+      { key: 'reserved', link: invoiceLink('draft') },
+      { key: 'billed-sent', link: invoiceLink('sent') },
+      { key: 'billed-overdue', link: invoiceLink('overdue') },
+      { key: 'billed-paid', link: invoiceLink('paid') },
+      { key: 'locked-voided', link: invoiceLink('voided') },
+      { key: 'locked-cancelled', link: invoiceLink('cancelled') },
+      { key: 'locked-deleted', link: invoiceLink('sent', date) },
+      { key: 'locked-unknown', link: invoiceLink('rejected') },
+    ] as const;
+
+    const summary = calculateProjectFinancialSummary(
+      financialInput({
+        expenses: states.map(({ key, link }, index) => ({
+          id: `expense-${key}`,
+          category: key,
+          amount: `${index + 1}.00`,
+          expenseDate: date,
+          billable: true,
+          billedInvoiceItem: link,
+        })),
+        changeOrders: states.map(({ key, link }, index) => ({
+          id: `change-${key}`,
+          description: key,
+          status: 'approved',
+          amount: `${(index + 1) * 10}.00`,
+          createdAt: date,
+          billedInvoiceItem: link,
+        })),
+      })
+    );
+
+    expect(summary.expenses.details.map(({ billingStatus }) => billingStatus)).toEqual([
+      'available',
+      'reserved',
+      'billed',
+      'billed',
+      'billed',
+      'locked',
+      'locked',
+      'locked',
+      'locked',
+    ]);
+    expect(summary.expenses.billingStatusTotals).toEqual({
+      available: { amount: '1.00', count: 1 },
+      reserved: { amount: '2.00', count: 1 },
+      billed: { amount: '12.00', count: 3 },
+      locked: { amount: '30.00', count: 4 },
+    });
+    expect(summary.expenses.unbilledBillable).toBe('1.00');
+    expect(summary.expenses.unbilledCount).toBe(1);
+
+    expect(summary.changeOrders.details.map(({ billingStatus }) => billingStatus)).toEqual([
+      'available',
+      'reserved',
+      'billed',
+      'billed',
+      'billed',
+      'locked',
+      'locked',
+      'locked',
+      'locked',
+    ]);
+    expect(summary.changeOrders.billingStatusTotals).toEqual({
+      available: { amount: '10.00', count: 1 },
+      reserved: { amount: '20.00', count: 1 },
+      billed: { amount: '120.00', count: 3 },
+      locked: { amount: '300.00', count: 4 },
+    });
+    expect(summary.changeOrders.unbilledApprovedAmount).toBe('10.00');
     expect(summary.changeOrders.unbilledApprovedCount).toBe(1);
   });
 
