@@ -10,6 +10,15 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach } from 'vitest';
 import { cleanup } from '@testing-library/react';
 
+// Unit tests have no clamd daemon to scan uploaded bytes, exactly like the CI
+// integration server (which sets the same variable for the server it starts).
+// Opting in here keeps the file-upload paths clean-scannable without making the
+// fallback implicit in production code — see
+// lib/services/security/malware-scanner-service.ts. The default (fail closed) is
+// asserted in lib/__tests__/security/malware-scanning.test.ts, which overrides
+// this variable for that case.
+process.env.MALWARE_SCANNER_ALLOW_OFFLINE_CLEAN ??= 'true';
+
 afterEach(() => {
   cleanup();
 });
