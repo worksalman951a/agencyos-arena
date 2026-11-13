@@ -20,6 +20,16 @@ The event version is the UTC run day plus the record's due date. The existing un
 
 Disabled rules are excluded from enumeration and rechecked by the event dispatcher; deleted rules are absent. A rule disabled/deleted after a workflow execution has already claimed its event is considered in flight and may finish. The overdue scan only changes a sent invoice's status from `sent` to `overdue`; payment rows and invoice amounts, totals, currency, and due date are read-only.
 
+## HTTP outcomes and monitoring
+
+The scheduler endpoint is an operational signal as well as a worker:
+
+- **HTTP 200**, `status: "completed"`: the scan completed with `failed: 0`.
+- **HTTP 500**, `status: "completed_with_failures"`: the scan finished, but one or more rule/event operations failed. The response retains only safe run timestamps/day and aggregate counts (`eligibleRules`, `skippedRules`, `scannedRecords`, `matched`, `executed`, `skipped`, `failed`); it contains no tenant/rule/record identifiers, action details, or exception data.
+- **HTTP 500**, `status: "failed"`: the scheduler could not complete the scan. The response contains only a generic error; internal exception details and stack traces are not returned.
+
+Alert on every non-2xx response and use the response `status` to distinguish partial from fatal failure. An already-claimed failed execution remains reported as a failure if the same event is encountered again that UTC day, but its actions are not replayed. Do not configure immediate HTTP retries as a failed-execution recovery mechanism: the database claim prevents replay of the same rule/record/day event, and Phase 6A does not reclaim failed or stale-running executions. The normal next-day scheduled event has its own idempotency window.
+
 ## Deployment
 
 No paid service or production configuration is activated by this repository change. Deploy the additive Prisma migration using the usual migration release process, set `WORKFLOW_SCHEDULER_SECRET` in the application secret store, then configure the platform's scheduled-job facility (Kubernetes CronJob, Cloud Scheduler, ECS scheduled task, or equivalent) to call the route. Example:

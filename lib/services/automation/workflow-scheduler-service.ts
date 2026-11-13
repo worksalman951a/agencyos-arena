@@ -24,6 +24,19 @@ interface DueRecord {
   id: string;
 }
 
+export interface WorkflowSchedulerResult {
+  status: 'completed';
+  runAt: string;
+  day: string;
+  eligibleRules: number;
+  skippedRules: number;
+  scannedRecords: number;
+  matched: number;
+  executed: number;
+  skipped: number;
+  failed: number;
+}
+
 function overdueWhere(trigger: ScheduledOverdueTrigger, organizationId: string, dayStart: Date) {
   if (trigger === 'task.overdue') {
     return {
@@ -84,7 +97,7 @@ async function findDueRecords(
  * the existing WorkflowExecution unique key claims each rule/record/UTC-day
  * event before any action runs, so concurrent calls cannot duplicate actions.
  */
-export async function runWorkflowScheduler(now = new Date()) {
+export async function runWorkflowScheduler(now = new Date()): Promise<WorkflowSchedulerResult> {
   if (!Number.isFinite(now.getTime())) throw new Error('Invalid scheduler timestamp');
   const dayStart = utcSchedulerDayStart(now);
   const rules = (await prisma.workflowRule.findMany({

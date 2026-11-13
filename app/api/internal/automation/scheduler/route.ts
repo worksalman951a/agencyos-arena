@@ -1,7 +1,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 
-import { runWorkflowScheduler } from '@/lib/services/automation/workflow-scheduler-service';
+import {
+  runWorkflowScheduler,
+  type WorkflowSchedulerResult,
+} from '@/lib/services/automation/workflow-scheduler-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +14,21 @@ function authorized(request: Request, expected: string): boolean {
   const suppliedDigest = createHash('sha256').update(match[1]).digest();
   const expectedDigest = createHash('sha256').update(expected).digest();
   return timingSafeEqual(suppliedDigest, expectedDigest);
+}
+
+function publicResult(result: WorkflowSchedulerResult) {
+  return {
+    status: result.failed > 0 ? 'completed_with_failures' : 'completed',
+    runAt: result.runAt,
+    day: result.day,
+    eligibleRules: result.eligibleRules,
+    skippedRules: result.skippedRules,
+    scannedRecords: result.scannedRecords,
+    matched: result.matched,
+    executed: result.executed,
+    skipped: result.skipped,
+    failed: result.failed,
+  };
 }
 
 export async function POST(request: Request) {
@@ -30,10 +48,14 @@ export async function POST(request: Request) {
 
   try {
     const result = await runWorkflowScheduler();
-    return NextResponse.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    const partialFailure = result.failed > 0;
+    return NextResponse.json(publicResult(result), {
+      status: partialFailure ? 500 : 200,
+      headers: { 'Cache-Control': 'no-store' },
+    });
   } catch {
     return NextResponse.json(
-      { error: 'Workflow scheduler run failed' },
+      { status: 'failed', error: 'Workflow scheduler run failed' },
       { status: 500, headers: { 'Cache-Control': 'no-store' } }
     );
   }

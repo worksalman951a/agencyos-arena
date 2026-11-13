@@ -868,7 +868,21 @@ async function dispatchWorkflowEvent(
       });
     } catch (error) {
       if (isUniqueViolation(error)) {
-        result.skipped += 1;
+        if (event.source === 'scheduler') {
+          const claimedExecution = await prisma.workflowExecution.findFirst({
+            where: {
+              ruleId: rule.id,
+              recordType: event.recordType,
+              recordId: event.recordId,
+              dedupeKey,
+            },
+            select: { status: true },
+          });
+          if (claimedExecution?.status === 'failed') result.failed += 1;
+          else result.skipped += 1;
+        } else {
+          result.skipped += 1;
+        }
         continue;
       }
       const details = error as { code?: unknown } | null;
