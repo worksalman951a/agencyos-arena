@@ -610,6 +610,26 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
         },
       },
     });
+    const deferred = await prisma.workflowExecution.create({
+      data: {
+        organizationId: admin.organizationId,
+        ruleId: rule.id,
+        recordType: 'Invoice',
+        recordId: invoice.id,
+        status: 'failed',
+        dedupeKey: `deferred-retry-${randomUUID()}`,
+        attempts: 1,
+        lastAttemptAt: new Date(),
+        nextAttemptAt: new Date(Date.now() + 5 * 60_000),
+        resultLog: {
+          actorId: admin.userId,
+          source: 'scheduler',
+          eventType: 'invoice.overdue',
+          actionDefinitions: { list: [{ type: 'log', message: 'scheduled invoice.overdue' }] },
+          actions: [],
+        },
+      },
+    });
     const unsafe = await prisma.workflowExecution.create({
       data: {
         organizationId: admin.organizationId,
@@ -632,9 +652,10 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
     });
 
     await recoverWorkflowExecutionsForScheduler(new Date());
-    const [terminalAfter, unsafeAfter] = await Promise.all([
+    const [terminalAfter, unsafeAfter, deferredBeforeDue] = await Promise.all([
       prisma.workflowExecution.findUniqueOrThrow({ where: { id: terminal.id } }),
       prisma.workflowExecution.findUniqueOrThrow({ where: { id: unsafe.id } }),
+      prisma.workflowExecution.findUniqueOrThrow({ where: { id: deferred.id } }),
     ]);
     expect(terminalAfter).toMatchObject({
       status: 'terminal_failed',
@@ -645,6 +666,18 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
       status: 'quarantined',
       errorCategory: 'unsafe_action',
       claimToken: null,
+    });
+    expect(deferredBeforeDue).toMatchObject({ status: 'failed', attempts: 1 });
+    await prisma.workflowExecution.update({
+      where: { id: deferred.id },
+      data: { nextAttemptAt: new Date(Date.now() - 60_000) },
+    });
+    await recoverWorkflowExecutionsForScheduler(new Date());
+    expect(
+      await prisma.workflowExecution.findUniqueOrThrow({ where: { id: deferred.id } })
+    ).toMatchObject({
+      status: 'succeeded',
+      attempts: 2,
     });
     expect(
       await prisma.invoice.findUniqueOrThrow({
