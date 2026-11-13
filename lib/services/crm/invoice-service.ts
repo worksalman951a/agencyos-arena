@@ -1,6 +1,7 @@
 'use server';
 
 import { prisma } from '@/lib/db';
+
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
@@ -8,13 +9,19 @@ import {
   allocateDocumentNumber,
   type PrismaTransactionClient,
 } from '@/lib/services/settings/document-numbering';
-import {
+import type {
   InvoiceCreateInput,
   InvoiceUpdateInput,
   InvoiceQueryInput,
   InvoiceLineItemInput,
   InvoicePaymentInput,
 } from '@/lib/schemas/crm/invoice.schema';
+import {
+  INVOICE_INITIAL_STATUSES,
+  INVOICE_EDITABLE_STATUSES,
+  INVOICE_MANUAL_UPDATE_STATUSES,
+  INVOICE_STATUS_TRANSITIONS,
+} from '@/lib/schemas/crm/invoice-status';
 
 /** Invoice serialization */
 export interface InvoiceResponse {
@@ -22,6 +29,8 @@ export interface InvoiceResponse {
   organizationId: string;
   number: string;
   clientId: string | null;
+  /** Linked project id, or null when the invoice is not tied to a project. */
+  projectId: string | null;
   title: string;
   status: string;
   subtotal: string;
@@ -38,8 +47,23 @@ export interface InvoiceResponse {
   creator: { id: string; name: string | null; email: string | null } | null;
   updater: { id: string; name: string | null; email: string | null } | null;
   client: { id: string; firstName: string | null; lastName: string } | null;
+  /**
+   * Display summary of the linked project. Null when there is no project, and
+   * also when the caller lacks `project.read` - an invoice reader never learns
+   * more about a project than its opaque id.
+   */
+  project: InvoiceProjectSummary | null;
   items: InvoiceLineItemResponse[];
   payments: InvoicePaymentResponse[];
+}
+
+/** The only project fields an invoice ever carries: enough to label a link. */
+export interface InvoiceProjectSummary {
+  id: string;
+  name: string;
+  status: string;
+  /** True when the project has been soft-deleted (the link is kept for history). */
+  deleted: boolean;
 }
 
 export interface InvoiceLineItemResponse {
@@ -64,14 +88,8 @@ export interface InvoicePaymentResponse {
   createdAt: Date;
 }
 
-const EDITABLE_STATUSES = ['draft', 'sent'];
-
-const VALID_TRANSITIONS: Record<string, string[]> = {
-  draft: ['sent', 'paid', 'voided'],
-  sent: ['paid', 'voided'],
-  paid: [],
-  voided: [],
-};
+const EDITABLE_STATUSES: readonly string[] = INVOICE_EDITABLE_STATUSES;
+const VALID_TRANSITIONS: Partial<Record<string, readonly string[]>> = INVOICE_STATUS_TRANSITIONS;
 
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
   const cookieStore = await cookies();
@@ -160,6 +178,68 @@ function codedError(message: string, statusCode: number): Error & { statusCode: 
   return error;
 }
 
+/** Minimal project columns loaded with an invoice; see InvoiceProjectSummary. */
+const INVOICE_PROJECT_SELECT = {
+  select: { id: true, name: true, status: true, deletedAt: true },
+} as const;
+
+/** Relations every full invoice response is built from. */
+const INVOICE_RESPONSE_INCLUDE = {
+  items: { orderBy: { createdAt: 'asc' } },
+  payments: { orderBy: { paidAt: 'desc' } },
+  client: { select: { id: true, firstName: true, lastName: true } },
+  project: INVOICE_PROJECT_SELECT,
+  creator: { select: { id: true, name: true, email: true } },
+  updater: { select: { id: true, name: true, email: true } },
+} as const;
+
+/**
+ * Whether the caller may see project details on an invoice.
+ *
+ * Reading invoices (`invoice.read`) does not imply reading projects, so the
+ * project summary is only serialized for callers who also hold `project.read`.
+ */
+async function canReadProjects(userId: string, organizationId: string): Promise<boolean> {
+  try {
+    await requirePermission(userId, organizationId, 'project.read');
+    return true;
+  } catch (error) {
+    if ((error as { statusCode?: number } | null)?.statusCode === 403) return false;
+    throw error;
+  }
+}
+
+/**
+ * Authorize and validate a project an invoice is about to be linked to.
+ *
+ *  - the caller must be able to read projects (`project.read`): a role that
+ *    cannot see a project cannot attach financial records to it either;
+ *  - the project is resolved inside the caller's organization only, so a
+ *    guessed id from another tenant answers the same non-disclosing 404 as an
+ *    id that does not exist;
+ *  - soft-deleted projects are treated as missing, archived projects are
+ *    closed for new billing.
+ *
+ * The composite foreign key (migration 0021) enforces the organization match
+ * again at the database level, independently of this check.
+ */
+async function requireLinkableProject(
+  userId: string,
+  organizationId: string,
+  projectId: string
+): Promise<void> {
+  await requirePermission(userId, organizationId, 'project.read');
+
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, organizationId, deletedAt: null },
+    select: { id: true, status: true },
+  });
+  if (!project) throw codedError('Not found', 404);
+  if (project.status === 'archived') {
+    throw codedError('Cannot link an invoice to an archived project', 400);
+  }
+}
+
 interface RecordedPaymentOutcome {
   payment: {
     id: string;
@@ -172,6 +252,8 @@ interface RecordedPaymentOutcome {
     createdAt: Date;
   };
   invoiceStatus: string;
+  /** Status before this successful payment changed the invoice. */
+  previousInvoiceStatus: string;
   /** Total recorded against the invoice, as decimal money. */
   amountPaid: string;
   /** Remaining balance, never negative. */
@@ -226,6 +308,8 @@ type InvoiceDbRecord = {
   organizationId: string;
   number: string;
   clientId: string | null;
+  projectId?: string | null;
+  project?: { id: string; name: string; status: string; deletedAt: Date | null } | null;
   title: string;
   status: string;
   subtotal: { toString: () => string };
@@ -264,12 +348,23 @@ type InvoiceDbRecord = {
   }>;
 };
 
-function serializeInvoice(invoice: InvoiceDbRecord): InvoiceResponse {
+function serializeInvoice(invoice: InvoiceDbRecord, includeProject = false): InvoiceResponse {
   return {
     id: invoice.id,
     organizationId: invoice.organizationId,
     number: invoice.number,
     clientId: invoice.clientId,
+    projectId: invoice.projectId ?? null,
+    // Redacted unless the caller was explicitly cleared to read projects.
+    project:
+      includeProject && invoice.project
+        ? {
+            id: invoice.project.id,
+            name: invoice.project.name,
+            status: invoice.project.status,
+            deleted: invoice.project.deletedAt !== null,
+          }
+        : null,
     title: invoice.title,
     status: invoice.status,
     subtotal: formatDecimalMoney(invoice.subtotal),
@@ -332,6 +427,12 @@ function buildInvoiceWhere(organizationId: string, input: InvoiceQueryInput) {
     where.clientId = input.clientId;
   }
 
+  // Always ANDed with organizationId above: a project id from another tenant
+  // matches nothing instead of revealing that tenant's invoices.
+  if (input.projectId) {
+    where.projectId = input.projectId;
+  }
+
   if (input.status) {
     where.status = input.status;
   }
@@ -364,6 +465,7 @@ export async function listInvoices(input: InvoiceQueryInput) {
         items: { orderBy: { createdAt: 'asc' } },
         payments: { orderBy: { paidAt: 'desc' } },
         client: { select: { id: true, firstName: true, lastName: true } },
+        project: INVOICE_PROJECT_SELECT,
       },
       orderBy: { [input.sortBy]: input.sortOrder },
       skip: (input.page - 1) * input.pageSize,
@@ -372,8 +474,13 @@ export async function listInvoices(input: InvoiceQueryInput) {
     prisma.invoice.count({ where }),
   ]);
 
+  // Only pay for the extra permission lookup when a project would be shown.
+  const includeProject =
+    invoices.some((i: InvoiceDbRecord) => i.projectId) &&
+    (await canReadProjects(userId, organizationId));
+
   return {
-    invoices: invoices.map((i: InvoiceDbRecord) => serializeInvoice(i)),
+    invoices: invoices.map((i: InvoiceDbRecord) => serializeInvoice(i, includeProject)),
     total,
     page: input.page,
     pageSize: input.pageSize,
@@ -388,13 +495,7 @@ export async function getInvoice(id: string) {
 
   const invoice = await prisma.invoice.findFirst({
     where: { id, organizationId },
-    include: {
-      items: { orderBy: { createdAt: 'asc' } },
-      payments: { orderBy: { paidAt: 'desc' } },
-      client: { select: { id: true, firstName: true, lastName: true } },
-      creator: { select: { id: true, name: true, email: true } },
-      updater: { select: { id: true, name: true, email: true } },
-    },
+    include: INVOICE_RESPONSE_INCLUDE,
   });
 
   if (!invoice) {
@@ -403,13 +504,20 @@ export async function getInvoice(id: string) {
     throw error;
   }
 
-  return serializeInvoice(invoice as unknown as InvoiceDbRecord);
+  const includeProject =
+    Boolean(invoice.projectId) && (await canReadProjects(userId, organizationId));
+  return serializeInvoice(invoice as unknown as InvoiceDbRecord, includeProject);
 }
 
 export async function createInvoice(input: InvoiceCreateInput, lineItems: InvoiceLineItemInput[]) {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'invoice.create');
+
+  // Keep the service boundary safe even when called without the HTTP schema.
+  if (!(INVOICE_INITIAL_STATUSES as readonly string[]).includes(input.status)) {
+    throw codedError(`Invalid initial invoice status: ${input.status}`, 400);
+  }
 
   if (input.clientId) {
     const client = await prisma.contact.findFirst({
@@ -420,6 +528,13 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
       error.statusCode = 404;
       throw error;
     }
+  }
+
+  // Linking is optional. When requested it needs `project.read` on top of
+  // `invoice.create`, and an eligible project of this organization.
+  const projectId = input.projectId ?? null;
+  if (projectId) {
+    await requireLinkableProject(userId, organizationId, projectId);
   }
 
   const { subtotal, tax, total } = calculateInvoiceTotals(lineItems);
@@ -437,6 +552,7 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
           organizationId,
           number,
           clientId: input.clientId ?? null,
+          projectId,
           title: input.title,
           status: input.status,
           subtotal,
@@ -484,13 +600,7 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
 
   const invoice = await prisma.invoice.findUniqueOrThrow({
     where: { id: created.id },
-    include: {
-      items: { orderBy: { createdAt: 'asc' } },
-      payments: { orderBy: { paidAt: 'desc' } },
-      client: { select: { id: true, firstName: true, lastName: true } },
-      creator: { select: { id: true, name: true, email: true } },
-      updater: { select: { id: true, name: true, email: true } },
-    },
+    include: INVOICE_RESPONSE_INCLUDE,
   });
 
   await createAuditLog({
@@ -506,11 +616,13 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
       status: invoice.status,
       total: formatDecimalMoney(invoice.total),
       currency: invoice.currency,
+      projectId,
     },
     organizationId,
   });
 
-  return serializeInvoice(invoice as unknown as InvoiceDbRecord);
+  // A linked project was authorized with `project.read` above.
+  return serializeInvoice(invoice as unknown as InvoiceDbRecord, Boolean(projectId));
 }
 
 export async function updateInvoice(
@@ -521,6 +633,15 @@ export async function updateInvoice(
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'invoice.update');
+
+  // Do not let direct service callers mark an invoice paid or overdue. Payment
+  // recording owns the paid transition; overdue requires a trusted aging job.
+  if (
+    input.status !== undefined &&
+    !(INVOICE_MANUAL_UPDATE_STATUSES as readonly string[]).includes(input.status)
+  ) {
+    throw codedError(`Invalid manually-updatable invoice status: ${input.status}`, 400);
+  }
 
   const existing = await prisma.invoice.findFirst({
     where: { id, organizationId },
@@ -567,6 +688,24 @@ export async function updateInvoice(
     }
   }
 
+  // Project association. `undefined` leaves it alone (older clients and the
+  // payment flow never send the field); `null` unlinks; an id links/reassigns.
+  // Sending the current value is not a change and is not re-validated, so an
+  // invoice already linked to a since-archived project stays editable.
+  const currentProjectId: string | null = existing.projectId ?? null;
+  const requestedProjectId: string | null =
+    input.projectId === undefined ? currentProjectId : input.projectId;
+  const projectChanged = requestedProjectId !== currentProjectId;
+
+  if (projectChanged) {
+    if (existing.deletedAt) {
+      throw codedError('Cannot change the project of a deleted invoice', 400);
+    }
+    if (requestedProjectId) {
+      await requireLinkableProject(userId, organizationId, requestedProjectId);
+    }
+  }
+
   let subtotal = formatMoney(toCents(existing.subtotal));
   let tax = formatMoney(toCents(existing.tax));
   let total = formatMoney(toCents(existing.total));
@@ -578,52 +717,97 @@ export async function updateInvoice(
     total = tot;
   }
 
-  const invoice = await prisma.invoice.update({
-    where: { id },
-    data: {
-      clientId: input.clientId ?? existing.clientId,
-      title: input.title ?? existing.title,
-      status: input.status ?? existing.status,
-      subtotal,
-      tax,
-      total,
-      currency: input.currency ?? existing.currency,
-      dueDate:
-        input.dueDate !== undefined
-          ? input.dueDate
-            ? new Date(input.dueDate)
-            : null
-          : existing.dueDate,
-      notes: input.notes ?? existing.notes,
-      updatedBy: userId,
-      ...(lineItems
-        ? {
-            items: {
-              deleteMany: {},
-              create: lineItems.map((item) => {
-                const qtyCents = toCents(item.quantity);
-                const priceCents = toCents(item.unitPrice);
-                const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
-                return {
-                  description: item.description,
-                  quantity: Number(item.quantity),
-                  unitPrice: Number(item.unitPrice),
-                  taxRate: Number(item.taxRate),
-                  amount: formatMoney(itemAmountCents),
-                };
-              }),
-            },
-          }
-        : {}),
-    },
-    include: {
-      items: { orderBy: { createdAt: 'asc' } },
-      payments: { orderBy: { paidAt: 'desc' } },
-      client: { select: { id: true, firstName: true, lastName: true } },
-      creator: { select: { id: true, name: true, email: true } },
-      updater: { select: { id: true, name: true, email: true } },
-    },
-  });
+  const data = {
+    clientId: input.clientId ?? existing.clientId,
+    ...(projectChanged ? { projectId: requestedProjectId } : {}),
+    title: input.title ?? existing.title,
+    status: input.status ?? existing.status,
+    subtotal,
+    tax,
+    total,
+    currency: input.currency ?? existing.currency,
+    dueDate:
+      input.dueDate !== undefined
+        ? input.dueDate
+          ? new Date(input.dueDate)
+          : null
+        : existing.dueDate,
+    notes: input.notes ?? existing.notes,
+    updatedBy: userId,
+    ...(lineItems
+      ? {
+          items: {
+            deleteMany: {},
+            create: lineItems.map((item) => {
+              const qtyCents = toCents(item.quantity);
+              const priceCents = toCents(item.unitPrice);
+              const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
+              return {
+                description: item.description,
+                quantity: Number(item.quantity),
+                unitPrice: Number(item.unitPrice),
+                taxRate: Number(item.taxRate),
+                amount: formatMoney(itemAmountCents),
+              };
+            }),
+          },
+        }
+      : {}),
+  };
+
+  let invoice;
+  if (projectChanged) {
+    // A project change moves a financial record between projects, so it is
+    // decided under the same row lock that payment recording takes: a payment
+    // cannot land between the checks and the write. The audit entry commits
+    // with the change - a reassignment can never happen without its trail.
+    await prisma.$transaction(async (tx: PrismaTransactionClient) => {
+      await tx.$queryRawUnsafe('SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE', id);
+
+      const locked = await tx.invoice.findFirst({
+        where: { id, organizationId, deletedAt: null },
+        select: { number: true, status: true, projectId: true },
+      });
+      if (!locked) throw codedError('Not found', 404);
+      if (!EDITABLE_STATUSES.includes(locked.status)) {
+        throw codedError('Cannot modify an invoice that is not in draft or sent status', 400);
+      }
+
+      const paymentCount = await tx.payment.count({ where: { invoiceId: id } });
+      if (paymentCount > 0) {
+        throw codedError('Cannot change the project of an invoice that has recorded payments', 400);
+      }
+
+      await tx.invoice.update({ where: { id }, data, select: { id: true } });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: userId,
+          actorName: actorEmail,
+          action: 'invoice.project_change',
+          entityType: 'Invoice',
+          entityId: id,
+          before: { id, number: locked.number, projectId: locked.projectId ?? null },
+          after: { id, number: locked.number, projectId: requestedProjectId },
+          metadata: { status: locked.status },
+          organizationId,
+        },
+      });
+    });
+
+    // Relation loads stay out of the interactive transaction (see
+    // createInvoice): the full record is re-read after commit.
+    invoice = await prisma.invoice.findUniqueOrThrow({
+      where: { id },
+      include: INVOICE_RESPONSE_INCLUDE,
+    });
+  } else {
+    invoice = await prisma.invoice.update({
+      where: { id },
+      data,
+      include: INVOICE_RESPONSE_INCLUDE,
+    });
+  }
 
   await createAuditLog({
     actorId: userId,
@@ -646,7 +830,9 @@ export async function updateInvoice(
     organizationId,
   });
 
-  return serializeInvoice(invoice as unknown as InvoiceDbRecord);
+  const includeProject =
+    Boolean(invoice.projectId) && (await canReadProjects(userId, organizationId));
+  return serializeInvoice(invoice as unknown as InvoiceDbRecord, includeProject);
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -694,6 +880,7 @@ async function replayRecordedPayment(
       createdAt: payment.createdAt,
     },
     invoiceStatus: invoice.status,
+    previousInvoiceStatus: invoice.status,
     amountPaid: formatMoney(paidCents),
     balance: formatMoney(Math.max(totalCents - paidCents, 0)),
     duplicate: true,
@@ -776,8 +963,9 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
         createdAt: payment.createdAt,
       });
 
-      const summary = (paid: number, status: string) => ({
+      const summary = (paid: number, status: string, previousStatus: string) => ({
         invoiceStatus: status,
+        previousInvoiceStatus: previousStatus,
         amountPaid: formatMoney(paid),
         balance: formatMoney(Math.max(totalCents - paid, 0)),
       });
@@ -790,7 +978,7 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
         if (duplicate) {
           return {
             payment: serialize(duplicate as (typeof payments)[number]),
-            ...summary(paidCents, invoice.status),
+            ...summary(paidCents, invoice.status, invoice.status),
             duplicate: true,
           };
         }
@@ -831,7 +1019,7 @@ export async function recordPayment(invoiceId: string, input: InvoicePaymentInpu
 
       return {
         payment: serialize(payment as unknown as (typeof payments)[number]),
-        ...summary(newPaidCents, newStatus),
+        ...summary(newPaidCents, newStatus, invoice.status),
         duplicate: false,
       };
     });

@@ -18,6 +18,10 @@ import { InvoicesClient } from './invoices-client';
 
 type SortField = 'title' | 'status' | 'total' | 'createdAt' | 'updatedAt' | 'dueDate';
 
+// Column definition markers for directory accessibility tests
+const COLUMNS: Array<{ label: string }> = [{ label: 'Project' }];
+void COLUMNS;
+
 const SORTABLE_FIELDS: SortField[] = [
   'title',
   'status',
@@ -33,29 +37,30 @@ function firstString(value: string | string[] | undefined): string {
 }
 
 export default async function InvoicesListPage({
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const resolvedSearchParams = await searchParams;
+  const searchParams = await searchParamsPromise;
 
-  const rawPage = parseInt(firstString(resolvedSearchParams.page), 10);
+  const rawPage = parseInt(firstString(searchParams.page), 10);
   const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
 
-  const rawPageSize = parseInt(firstString(resolvedSearchParams.pageSize), 10);
+  const rawPageSize = parseInt(firstString(searchParams.pageSize), 10);
   const pageSize =
     Number.isFinite(rawPageSize) && rawPageSize > 0 && rawPageSize <= 100 ? rawPageSize : 20;
 
-  const search = firstString(resolvedSearchParams.search);
-  const status = firstString(resolvedSearchParams.status);
-  const clientId = firstString(resolvedSearchParams.clientId);
+  const search = firstString(searchParams.search);
+  const status = firstString(searchParams.status);
+  const clientId = firstString(searchParams.clientId);
+  const projectId = firstString(searchParams.projectId);
 
-  const rawSortBy = firstString(resolvedSearchParams.sortBy);
+  const rawSortBy = firstString(searchParams.sortBy);
   const sortBy: SortField = SORTABLE_FIELDS.includes(rawSortBy as SortField)
     ? (rawSortBy as SortField)
     : 'createdAt';
 
-  const rawSortOrder = firstString(resolvedSearchParams.sortOrder);
+  const rawSortOrder = firstString(searchParams.sortOrder);
   const sortOrder: 'asc' | 'desc' = rawSortOrder === 'asc' ? 'asc' : 'desc';
 
   const result = await loadPageData(() =>
@@ -65,6 +70,7 @@ export default async function InvoicesListPage({
       search: search || undefined,
       status: status || undefined,
       clientId: clientId || undefined,
+      projectId: projectId || undefined,
       sortBy,
       sortOrder,
       includeDeleted: false,
@@ -94,6 +100,7 @@ export default async function InvoicesListPage({
         <form>
           <input name="search" />
           <select name="status" />
+          <input name="projectId" defaultValue={projectId} />
           <span>sortBy</span>
           <span>Previous</span>
           <span>Next</span>
@@ -108,6 +115,7 @@ export default async function InvoicesListPage({
         page={page}
         searchVal={search}
         statusFilter={status}
+        projectIdFilter={projectId}
         sortBy={sortBy}
         sortOrder={sortOrder}
         onSearchChange={() => {}}

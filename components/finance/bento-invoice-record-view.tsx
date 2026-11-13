@@ -426,6 +426,30 @@ export function BentoInvoiceRecordView({
                 }
               />
               <KeyValueRow
+                label="Project"
+                value={
+                  invoice.project ? (
+                    <span className="font-medium">
+                      <Link
+                        href={`/projects/${invoice.project.id}`}
+                        className="text-accent hover:underline"
+                      >
+                        {invoice.project.name}
+                      </Link>
+                      {invoice.project.deleted || invoice.project.status === 'archived' ? (
+                        <span className="ml-1.5 inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          {invoice.project.deleted ? 'deleted' : 'archived'}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : invoice.projectId ? (
+                    <span className="text-muted-foreground">Restricted project</span>
+                  ) : (
+                    'Not linked'
+                  )
+                }
+              />
+              <KeyValueRow
                 label="Due Date"
                 value={
                   invoice.dueDate ? (

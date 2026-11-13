@@ -30,6 +30,11 @@ interface ContactOption {
   label: string;
 }
 
+interface ProjectOption {
+  id: string;
+  label: string;
+}
+
 interface LineItem {
   description: string;
   quantity: string;
@@ -46,19 +51,32 @@ const emptyLineItem = (taxRate = 0): LineItem => ({
 
 export function NewInvoiceForm({
   contacts,
+  projects = [],
+  defaultProjectId = '',
+  defaultClientId = '',
   defaultCurrency = 'USD',
   defaultTaxRate = 0,
 }: {
   contacts: ContactOption[];
+  /** Projects the invoice may be linked to, resolved (and authorized) server-side. */
+  projects?: ProjectOption[];
+  /** Preselected project when the form is opened from a project workspace. */
+  defaultProjectId?: string;
+  /** Preselected client (the project's client on a project handoff). */
+  defaultClientId?: string;
   /** Organization default currency (settings) — still editable per invoice. */
   defaultCurrency?: string;
   /** Organization default tax rate (%) applied to new line items. */
   defaultTaxRate?: number;
 }) {
-  const isBento = useBentoShell();
   const router = useRouter();
   const { toast } = useToast();
-  const [clientId, setClientId] = useState('');
+  const [clientId, setClientId] = useState(defaultClientId);
+  // Only a project the server offered can be preselected; the API validates the
+  // id again on submit, so this is a convenience and never an authorization.
+  const [projectId, setProjectId] = useState(
+    projects.some((project) => project.id === defaultProjectId) ? defaultProjectId : ''
+  );
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('draft');
   const [currency, setCurrency] = useState(defaultCurrency);
@@ -67,6 +85,7 @@ export function NewInvoiceForm({
   const [lineItems, setLineItems] = useState<LineItem[]>([emptyLineItem(defaultTaxRate)]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isBento = useBentoShell();
 
   const addLineItem = () => setLineItems([...lineItems, emptyLineItem(defaultTaxRate)]);
 
@@ -89,6 +108,7 @@ export function NewInvoiceForm({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clientId: clientId || undefined,
+          projectId: projectId || undefined,
           title,
           status,
           currency,
@@ -161,7 +181,6 @@ export function NewInvoiceForm({
     );
   }
 
-  // Legacy fallback view
   return (
     <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -203,6 +222,49 @@ export function NewInvoiceForm({
             required
           />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="projectId" className="text-sm font-medium">
+          Project
+        </label>
+        <select
+          id="projectId"
+          value={projectId}
+          onChange={(e) => setProjectId(e.target.value)}
+          className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
+        >
+          <option value="">No project</option>
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.label}
+            </option>
+          ))}
+        </select>
+        {(() => {
+          const selectedProj = projects.find(
+            (p) => (p as { id: string; clientId?: string | null }).id === projectId
+          ) as { id: string; label: string; clientId?: string | null } | undefined;
+          const hasMismatch =
+            selectedProj?.clientId && clientId && selectedProj.clientId !== clientId;
+          if (hasMismatch) {
+            return (
+              <p
+                className="text-xs text-amber-600 dark:text-amber-400 font-medium"
+                data-testid="project-client-mismatch-warning"
+              >
+                Note: The selected project belongs to a different client than the one selected
+                above.
+              </p>
+            );
+          }
+          return null;
+        })()}
+        <p className="text-xs text-muted-foreground">
+          {projects.length === 0
+            ? 'No projects are available to link (none are open, or your role cannot read projects). The invoice can be created without one.'
+            : 'Optional. Linked invoices appear in the project workspace.'}
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

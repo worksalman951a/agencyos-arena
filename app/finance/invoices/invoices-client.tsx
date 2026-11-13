@@ -13,6 +13,7 @@ interface InvoicesClientProps {
   page: number;
   searchVal: string;
   statusFilter: string;
+  projectIdFilter?: string;
   sortBy: string;
   sortOrder: string;
   onSearchChange: (search: string) => void;

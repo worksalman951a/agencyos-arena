@@ -26,6 +26,8 @@ export async function generateClientPortalInvoicePdf(invoiceId: string) {
     id: invoice.id,
     organizationId: session.organizationId,
     clientId: session.contactId,
+    projectId: null,
+    project: null,
     number: invoice.number,
     title: invoice.title,
     status: invoice.status,

@@ -63,6 +63,30 @@ export function InvoiceDetailClient({ invoice, canUpdate, isEditable }: InvoiceD
               </Link>
             )}
           </div>
+          <div className="rounded-md border bg-background p-4 mt-6" data-testid="invoice-project">
+            <h2 className="text-lg font-semibold mb-2">Project</h2>
+            {invoice.project ? (
+              <p className="text-sm">
+                <Link
+                  href={`/projects/${invoice.project.id}`}
+                  className="text-accent hover:underline font-medium"
+                >
+                  {invoice.project.name}
+                </Link>
+                {invoice.project.deleted || invoice.project.status === 'archived' ? (
+                  <span className="ml-2 inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                    {invoice.project.deleted ? 'deleted' : 'archived'}
+                  </span>
+                ) : null}
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {invoice.projectId
+                  ? 'Linked to a project you do not have access to.'
+                  : 'Not linked to a project.'}
+              </p>
+            )}
+          </div>
         </div>
         <div className="col-span-1 md:col-span-1">
           <div className="rounded-md border bg-background p-4">

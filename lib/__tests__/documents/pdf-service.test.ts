@@ -9,6 +9,8 @@ describe('Phase 11A: Server-Side PDF Generation Service', () => {
     organizationId: 'org-test-1',
     number: 'INV-2026-001',
     clientId: 'client-1',
+    projectId: null,
+    project: null,
     title: 'Q4 Product Design & Marketing Engagement',
     status: 'sent',
     subtotal: '12500.00',

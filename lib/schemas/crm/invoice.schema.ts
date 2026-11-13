@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
+import {
+  INVOICE_INITIAL_STATUSES,
+  INVOICE_MANUAL_UPDATE_STATUSES,
+} from '@/lib/schemas/crm/invoice-status';
 
 /**
  * Zod validation schemas for Invoice CRUD operations.
@@ -10,21 +14,38 @@ import { includeDeletedQueryParam } from '@/lib/schemas/query-params';
 
 const baseInvoiceSchema = z.object({
   clientId: z.string().cuid().optional().nullable(),
+  /**
+   * Optional project this invoice belongs to (Phase 5A). Only an id is accepted;
+   * the service resolves it inside the caller's organization, and the composite
+   * foreign key rejects a project of any other organization.
+   *  - create: omitted / null -> no project
+   *  - update: omitted -> unchanged, null -> unlink, id -> link / reassign
+   */
+  projectId: z.string().cuid().optional().nullable(),
   title: z.string().min(1, 'Title is required').max(200),
-  status: z.string().min(1).max(50).default('draft'),
   currency: z.string().min(1).max(10).default('USD'),
   dueDate: z.string().optional().nullable(),
   notes: z.string().max(5000).optional().nullable(),
 });
 
-export const invoiceCreateSchema = baseInvoiceSchema.strict();
+export const invoiceCreateSchema = baseInvoiceSchema
+  .extend({ status: z.enum(INVOICE_INITIAL_STATUSES).default('draft') })
+  .strict();
 
 export const invoiceUpdateSchema = baseInvoiceSchema
+  .extend({
+    status: z.enum(INVOICE_MANUAL_UPDATE_STATUSES).optional(),
+    // No default on update. Inheriting the create-time `.default('USD')` made
+    // every update that omitted `currency` (for example a project-only change)
+    // rewrite the invoice to USD, and let an empty body pass the check below.
+    currency: z.string().min(1).max(10),
+  })
   .partial()
   .strict()
   .refine(
     (data) =>
       data.clientId !== undefined ||
+      data.projectId !== undefined ||
       data.title !== undefined ||
       data.status !== undefined ||
       data.currency !== undefined ||
@@ -38,6 +59,8 @@ export const invoiceQuerySchema = z.object({
   pageSize: z.coerce.number().min(1).max(100).default(20),
   search: z.string().optional(),
   clientId: z.string().cuid().optional(),
+  /** Restrict the list to one project. Always combined with the caller's organization. */
+  projectId: z.string().cuid().optional(),
   status: z.string().optional(),
   sortBy: z
     .enum(['title', 'status', 'total', 'createdAt', 'updatedAt', 'dueDate'])

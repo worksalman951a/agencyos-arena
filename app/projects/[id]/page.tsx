@@ -12,6 +12,8 @@ import {
   listProjectMembers,
 } from '@/lib/services/crm/project-service';
 import { listContracts } from '@/lib/services/documents/contract-service';
+import { listInvoices, type InvoiceResponse } from '@/lib/services/crm/invoice-service';
+import { getCurrentPermissions } from '@/lib/current-user';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import {
@@ -38,11 +40,31 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
 
   const project = projectResult.data;
 
-  const [workspaceResult, membersResult, contractsResult] = await Promise.all([
-    loadPageData(() => getProjectWorkspaceDetails(id)),
-    loadPageData(() => listProjectMembers()),
-    loadPageData(() => listContracts()),
-  ]);
+  const [workspaceResult, membersResult, contractsResult, invoicesResult, permissions] =
+    await Promise.all([
+      loadPageData(() => getProjectWorkspaceDetails(id)),
+      loadPageData(() => listProjectMembers()),
+      loadPageData(() => listContracts()),
+      // Related invoices come from the invoice service, so they carry its own
+      // authorization (`invoice.read`) and organization scoping. A project
+      // reader without invoice access gets no invoice section at all.
+      loadPageData(() =>
+        listInvoices({
+          page: 1,
+          pageSize: 50,
+          projectId: id,
+          sortBy: 'createdAt',
+          sortOrder: 'desc',
+          includeDeleted: false,
+        })
+      ),
+      getCurrentPermissions(),
+    ]);
+
+  // Never offer an action the invoice service would reject: new invoices need
+  // `invoice.create` and a project that is neither deleted nor archived.
+  const canCreateInvoice =
+    permissions.has('invoice.create') && !project.deletedAt && project.status !== 'archived';
 
   const projectContracts = contractsResult.ok
     ? (
@@ -136,6 +158,58 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         }
         submoduleLinksNode={submoduleLinksNode}
       />
+
+      {invoicesResult.ok && (
+        <div
+          className="rounded-md border bg-background p-4 space-y-3"
+          data-testid="project-invoices"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">Invoices ({invoicesResult.data.total})</h2>
+            <div className="flex items-center gap-2">
+              {invoicesResult.data.total > 0 && (
+                <Link
+                  href={`/finance/invoices?projectId=${encodeURIComponent(project.id)}`}
+                  className="text-xs text-accent hover:underline"
+                >
+                  View all
+                </Link>
+              )}
+              {canCreateInvoice && (
+                <Link
+                  href={`/finance/invoices/new?projectId=${encodeURIComponent(project.id)}`}
+                  className="px-3 py-1.5 rounded-md border border-input bg-background text-xs font-medium hover:bg-muted"
+                >
+                  + New Invoice
+                </Link>
+              )}
+            </div>
+          </div>
+          {invoicesResult.data.invoices.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No invoices linked to this project yet.</p>
+          ) : (
+            <div className="divide-y divide-border text-sm">
+              {invoicesResult.data.invoices.map((invoice: InvoiceResponse) => (
+                <div key={invoice.id} className="py-2 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/finance/invoices/${invoice.id}`}
+                      className="font-medium text-accent hover:underline"
+                    >
+                      {invoice.number}
+                    </Link>
+                    <span className="ml-2 text-muted-foreground">{invoice.title}</span>
+                  </div>
+                  <span className="text-xs whitespace-nowrap text-muted-foreground">
+                    <span className="capitalize">{invoice.status}</span>
+                    {` · ${invoice.currency} ${invoice.total}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

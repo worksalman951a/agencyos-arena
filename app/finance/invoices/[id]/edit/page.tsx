@@ -16,16 +16,12 @@ import Link from 'next/link';
 
 import { getInvoice } from '@/lib/services/crm/invoice-service';
 import { listContacts } from '@/lib/services/crm/contact-service';
+import { listProjectOptions } from '@/lib/services/crm/project-service';
 import { getCurrentPermissions } from '@/lib/current-user';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
+import { INVOICE_STATUS_TRANSITIONS } from '@/lib/schemas/crm/invoice-status';
 import { EditInvoiceForm, type EditableInvoice } from './EditInvoiceForm';
-
-/** Mirrors VALID_TRANSITIONS in the invoice service. */
-const STATUS_TRANSITIONS: Record<string, string[]> = {
-  draft: ['sent', 'paid', 'voided'],
-  sent: ['paid', 'voided'],
-};
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -84,7 +80,8 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
     );
   }
 
-  const allowedTransitions = STATUS_TRANSITIONS[invoice.status];
+  const allowedTransitions =
+    INVOICE_STATUS_TRANSITIONS[invoice.status as keyof typeof INVOICE_STATUS_TRANSITIONS];
   if (!allowedTransitions) {
     return (
       <EditBlocked
@@ -94,15 +91,18 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
     );
   }
 
-  const contactsResult = await loadPageData(() =>
-    listContacts({
-      page: 1,
-      pageSize: 100,
-      sortBy: 'firstName',
-      sortOrder: 'asc',
-      includeDeleted: false,
-    })
-  );
+  const [contactsResult, projectsResult] = await Promise.all([
+    loadPageData(() =>
+      listContacts({
+        page: 1,
+        pageSize: 100,
+        sortBy: 'firstName',
+        sortOrder: 'asc',
+        includeDeleted: false,
+      })
+    ),
+    loadPageData(() => listProjectOptions()),
+  ]);
 
   // Contacts are only needed for the client selector; if the caller cannot read
   // them the invoice can still be edited (a client change is optional).
@@ -115,6 +115,23 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
           contact.id,
       }))
     : [];
+
+  // Projects the invoice may be moved to. The current project is always listed
+  // so the selector can show it, even when it is no longer linkable (archived,
+  // deleted) or when the caller cannot read projects - in that case only a
+  // neutral label is shown, never the project's name.
+  const projects = (projectsResult.ok ? projectsResult.data : []).map((project) => ({
+    id: project.id,
+    label: project.name,
+  }));
+  if (invoice.projectId && !projects.some((project) => project.id === invoice.projectId)) {
+    projects.unshift({
+      id: invoice.projectId,
+      label: invoice.project
+        ? `${invoice.project.name} (${invoice.project.deleted ? 'deleted' : invoice.project.status})`
+        : 'Current project',
+    });
+  }
 
   const statusOptions = [invoice.status, ...allowedTransitions].map((value) => ({
     value,
@@ -130,6 +147,7 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
     dueDate: invoice.dueDate ? new Date(invoice.dueDate).toISOString() : null,
     notes: invoice.notes,
     clientId: invoice.clientId,
+    projectId: invoice.projectId,
     items: invoice.items.map((item) => ({
       description: item.description,
       quantity: item.quantity,
@@ -150,7 +168,13 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
         </Link>
       </div>
 
-      <EditInvoiceForm invoice={editable} contacts={contacts} statusOptions={statusOptions} />
+      <EditInvoiceForm
+        invoice={editable}
+        contacts={contacts}
+        projects={projects}
+        canChangeProject={invoice.payments.length === 0}
+        statusOptions={statusOptions}
+      />
     </div>
   );
 }

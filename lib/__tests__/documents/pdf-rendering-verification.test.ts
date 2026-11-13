@@ -30,6 +30,8 @@ describe('Phase 11A: PDF Rendering Correctness & Structural Verification', () =>
     organizationId: 'org-test-1',
     number: 'INV-2026-900',
     clientId: 'client-1',
+    projectId: null,
+    project: null,
     title: 'Enterprise Architecture & Cloud Modernization',
     status: 'sent',
     subtotal: '10000.00',
