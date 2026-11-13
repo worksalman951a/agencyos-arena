@@ -161,6 +161,15 @@ export function EditInvoiceForm({
         clientId={clientId}
         setClientId={setClientId}
         contacts={contacts}
+        projects={projects}
+        projectId={projectId}
+        setProjectId={setProjectId}
+        projectSelectorDisabled={!canChangeProject}
+        projectHint={
+          canChangeProject
+            ? 'Changing the project is recorded in the audit log.'
+            : 'The project cannot be changed once payments have been recorded on this invoice.'
+        }
         title={title}
         setTitle={setTitle}
         status={status}
