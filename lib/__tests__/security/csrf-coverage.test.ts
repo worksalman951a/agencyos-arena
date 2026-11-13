@@ -30,6 +30,8 @@ const PROTECTED_EXACT = ['auth/bootstrap-organization/route.ts'];
 const JUSTIFIED: Record<string, string> = {
   'auth/[...slug]/route.ts':
     "Better Auth's own originCheckMiddleware + formCsrfMiddleware validate Origin and Fetch Metadata on every unsafe request (node_modules/better-auth/dist/api/middlewares/origin-check.mjs).",
+  'internal/automation/scheduler/route.ts':
+    'The one-shot internal scheduler requires a non-cookie high-entropy Authorization bearer secret; browser-originated forms cannot supply this credential, and no session cookies authorize the operation.',
 };
 
 function walk(dir: string, out: string[] = []): string[] {

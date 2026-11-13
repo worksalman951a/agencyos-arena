@@ -53,6 +53,9 @@ const UNGUARDED_SERVICES = new Set([
   'lib/services/auth/password-reset-service.ts',
   // Public ownership verification: only a hash-only mail token can redeem, and active status is rechecked.
   'lib/services/auth/email-verification-service.ts',
+  // Internal scheduled worker: the route authenticates a high-entropy bearer secret, while this service
+  // rechecks each rule creator's current internal membership and permissions before dispatch.
+  'lib/services/automation/workflow-scheduler-service.ts',
 ]);
 
 /**

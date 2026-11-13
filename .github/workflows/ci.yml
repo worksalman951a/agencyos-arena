@@ -139,6 +139,7 @@ jobs:
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET || 'ci_auth_secret_arena_2026' }}
           BETTER_AUTH_URL: 'http://localhost:3001'
           TEST_SERVER_URL: 'http://localhost:3001'
+          WORKFLOW_SCHEDULER_SECRET: 'phase6a_ci_scheduler_secret_2026_for_test_only'
           NODE_ENV: 'test'
           PORT: '3001'
           # The integration runner drives hundreds of requests from 127.0.0.1.
@@ -282,6 +283,7 @@ jobs:
           BETTER_AUTH_URL: 'http://localhost:3001'
           APP_URL: 'http://localhost:3001'
           TEST_SERVER_URL: 'http://localhost:3001'
+          WORKFLOW_SCHEDULER_SECRET: 'phase6a_ci_scheduler_secret_2026_for_test_only'
           PLAYWRIGHT_SKIP_WEBSERVER: '1'
           PLAYWRIGHT_JSON_OUTPUT_FILE: 'playwright-results.json'
           CI: 'true'

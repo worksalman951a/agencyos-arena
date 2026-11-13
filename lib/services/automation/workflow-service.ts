@@ -28,6 +28,7 @@ import {
   type WorkflowConditions,
   type WorkflowActions,
 } from '@/lib/automation/rules';
+import { isScheduledOverdueTrigger } from '@/lib/automation/workflow-scheduler';
 
 export interface WorkflowRuleResponse {
   id: string;
@@ -52,6 +53,23 @@ export interface WorkflowExecutionResponse {
   attempts: number;
   lastAttemptAt: Date | null;
   createdAt: Date;
+}
+
+async function requireScheduledTriggerPermissions(
+  userId: string,
+  organizationId: string,
+  trigger: string
+) {
+  if (!isScheduledOverdueTrigger(trigger)) return;
+  await requirePermission(userId, organizationId, 'workflow.execute');
+  await requirePermission(
+    userId,
+    organizationId,
+    trigger === 'invoice.overdue' ? 'invoice.read' : 'project.read'
+  );
+  if (trigger === 'invoice.overdue') {
+    await requirePermission(userId, organizationId, 'invoice.update');
+  }
 }
 
 function codedError(message: string, statusCode: number, issues?: unknown[]) {
@@ -204,6 +222,7 @@ export async function createWorkflowRule(input: unknown) {
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
 
   await requirePermission(userId, organizationId, 'workflow.create');
+  await requireScheduledTriggerPermissions(userId, organizationId, parsed.data.trigger);
 
   // Duplicate rule names inside one organization make the execution log
   // impossible to read; reject them rather than silently allow.
@@ -231,6 +250,7 @@ export async function createWorkflowRule(input: unknown) {
   const rule = await prisma.workflowRule.create({
     data: {
       organizationId,
+      createdBy: userId,
       name: parsed.data.name,
       trigger: parsed.data.trigger,
       conditions: parsed.data.conditions,
@@ -264,6 +284,11 @@ export async function updateWorkflowRule(id: string, input: unknown) {
 
   const existing = await prisma.workflowRule.findFirst({ where: { id, organizationId } });
   if (!existing) throw codedError('Not found', 404);
+  await requireScheduledTriggerPermissions(
+    userId,
+    organizationId,
+    parsed.data.trigger ?? existing.trigger
+  );
 
   if (parsed.data.name && parsed.data.name !== existing.name) {
     const duplicate = await prisma.workflowRule.findFirst({
@@ -276,6 +301,10 @@ export async function updateWorkflowRule(id: string, input: unknown) {
   const rule = await prisma.workflowRule.update({
     where: { id },
     data: {
+      ...(existing.createdBy == null &&
+      isScheduledOverdueTrigger(parsed.data.trigger ?? existing.trigger)
+        ? { createdBy: userId }
+        : {}),
       ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
       ...(parsed.data.trigger !== undefined ? { trigger: parsed.data.trigger } : {}),
       ...(parsed.data.conditions !== undefined ? { conditions: parsed.data.conditions } : {}),
