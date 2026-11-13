@@ -28,7 +28,6 @@ function overdueWhere(trigger: ScheduledOverdueTrigger, organizationId: string, 
   if (trigger === 'task.overdue') {
     return {
       organizationId,
-      deletedAt: null,
       dueDate: { lt: dayStart },
       status: { not: 'done' },
       project: { is: { organizationId, status: 'active', deletedAt: null } },
