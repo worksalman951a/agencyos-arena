@@ -14,6 +14,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 
 import { NewInvoiceForm } from '@/app/finance/invoices/new/NewInvoiceForm';
 import { EditInvoiceForm } from '@/app/finance/invoices/[id]/edit/EditInvoiceForm';
+import { BentoShellProvider } from '@/components/providers/bento-theme-provider';
 
 const mockPush = vi.fn();
 vi.mock('next/navigation', () => ({
@@ -122,6 +123,53 @@ describe('NewInvoiceForm project selection', () => {
 
   it('still works when no project can be offered', () => {
     render(<NewInvoiceForm contacts={contacts} />);
+
+    expect(screen.getByLabelText('Project')).toHaveValue('');
+    expect(screen.getByText(/No projects are available to link/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * Regression: the Bento shell is on by default in production, so it is the view
+ * real users get. It used to render no project selector at all, which silently
+ * dropped the project handoff from a project workspace (the field is only sent
+ * when the form state has a project). These render through `BentoShellProvider`
+ * because `useBentoShell` defaults to `false` in tests.
+ */
+describe('NewInvoiceForm project selection in the Bento shell', () => {
+  const bento = (ui: React.ReactElement) =>
+    render(<BentoShellProvider isBento>{ui}</BentoShellProvider>);
+
+  it('preselects the handed-over project in the Bento form view', async () => {
+    bento(<NewInvoiceForm contacts={contacts} projects={projects} defaultProjectId="project_1" />);
+
+    expect(screen.getByLabelText('Project')).toHaveValue('project_1');
+    expect(screen.getByRole('option', { name: 'Apollo Launch' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Invoice Title/), {
+      target: { value: 'Bento handoff' },
+    });
+    fireEvent.change(screen.getByLabelText('Line 1 description'), { target: { value: 'Work' } });
+
+    // The Bento submit control sits in the page header, outside the <form>.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Create Invoice' }));
+    });
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body) as Record<string, unknown>;
+
+    expect(body).toHaveProperty('projectId', 'project_1');
+  });
+
+  it('does not preselect a project the server did not offer', () => {
+    bento(<NewInvoiceForm contacts={contacts} projects={projects} defaultProjectId="foreign" />);
+
+    expect(screen.getByLabelText('Project')).toHaveValue('');
+    expect(screen.queryByRole('option', { name: 'foreign' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the project selector on the Bento form when no project is offered', () => {
+    bento(<NewInvoiceForm contacts={contacts} />);
 
     expect(screen.getByLabelText('Project')).toHaveValue('');
     expect(screen.getByText(/No projects are available to link/)).toBeInTheDocument();

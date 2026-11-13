@@ -19,6 +19,13 @@ export const clientPortalRevokeSchema = z
   })
   .strict();
 
+/** Reading a contact's portal access state (administration widget). */
+export const clientPortalStatusSchema = z
+  .object({
+    contactId: z.string().min(1, 'Valid contact ID is required'),
+  })
+  .strict();
+
 export const clientPortalLoginRequestSchema = z
   .object({
     email: z.string().trim().toLowerCase().email('A valid email address is required').max(200),
@@ -33,5 +40,6 @@ export const clientPortalVerifyTokenSchema = z
 
 export type ClientPortalInviteInput = z.infer<typeof clientPortalInviteSchema>;
 export type ClientPortalRevokeInput = z.infer<typeof clientPortalRevokeSchema>;
+export type ClientPortalStatusInput = z.infer<typeof clientPortalStatusSchema>;
 export type ClientPortalLoginRequestInput = z.infer<typeof clientPortalLoginRequestSchema>;
 export type ClientPortalVerifyTokenInput = z.infer<typeof clientPortalVerifyTokenSchema>;

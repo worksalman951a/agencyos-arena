@@ -28,14 +28,14 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD ?? 'test_arena_password_2026';
 async function createAuthenticatedUserWithOrg(email: string, name: string, orgName: string) {
   const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD, name }),
   });
   expect(signUpRes.status).toBe(200);
 
   const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
   expect(signInRes.status).toBe(200);
@@ -95,7 +95,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
     try {
       await fetch(`${SERVER_URL}/api/auth/session`, {
         method: 'GET',
-        headers: { Accept: 'application/json' },
+        headers: { Accept: 'application/json', Origin: SERVER_URL },
       });
     } catch {
       throw new Error(`HTTP server unavailable at ${SERVER_URL}`);
@@ -401,7 +401,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
       const foreignEmail = `foreign-workflow-${Date.now()}${TEST_EMAIL_SUFFIX}`;
       const foreignOrgRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
         body: JSON.stringify({
           email: foreignEmail,
           password: TEST_PASSWORD,
@@ -412,7 +412,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
 
       const foreignSignIn = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
         body: JSON.stringify({ email: foreignEmail, password: TEST_PASSWORD }),
       });
       expect(foreignSignIn.status).toBe(200);
@@ -507,6 +507,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ title: 'Unauthenticated Deal' }),
@@ -532,6 +533,7 @@ describeIfDb('CRM Cross-Module Workflow integration (real PostgreSQL)', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Origin: SERVER_URL,
           Accept: 'application/json',
         },
         body: JSON.stringify({ title: 'Isolated Deal' }),

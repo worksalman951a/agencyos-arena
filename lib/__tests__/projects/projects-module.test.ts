@@ -98,7 +98,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-import { NAV_SECTIONS } from '@/lib/navigation';
+import { filterNavigation, NAV_SECTIONS } from '@/lib/navigation';
 import {
   projectCreateSchema,
   projectUpdateSchema,
@@ -204,10 +204,53 @@ describe('Migration 0013 Projects permission parity', () => {
     }
   });
 
+  /**
+   * The Templates link is a *sub-item* of the Projects entry inside the "Work
+   * Management" section - not a top-level navigation item, and not in a section
+   * called "Projects". This assertion used to look for it among top-level
+   * `items`, where it can never appear, so it had been failing on `undefined`
+   * ever since the navigation was restructured rather than catching a missing
+   * permission. Resolving the item by href keeps the check honest whatever the
+   * sections are called.
+   */
   it('uses project.template.read on the Templates sidebar navigation item', () => {
-    const projectsSection = NAV_SECTIONS.find((s) => s.label === 'Projects');
-    const templatesItem = projectsSection?.items.find((i) => i.href === '/projects/templates');
-    expect(templatesItem?.permission).toBe('project.template.read');
+    const templatesEntries = NAV_SECTIONS.flatMap((section) =>
+      section.items.flatMap((item) => item.subItems ?? [])
+    ).filter((sub) => sub.href === '/projects/templates');
+
+    expect(templatesEntries, 'Templates must be declared exactly once').toHaveLength(1);
+    expect(templatesEntries[0].permission).toBe('project.template.read');
+  });
+
+  /**
+   * The permission code has to be *enforced*, not merely declared: a member
+   * without `project.template.read` must not be handed the Templates link, and a
+   * member holding it must. `filterNavigation` is what the shells render, so this
+   * is the check that actually keeps the route out of the wrong sidebar.
+   */
+  it('hides the Templates link unless the actor holds project.template.read', () => {
+    const projectsItemIn = (sections: ReturnType<typeof filterNavigation>) =>
+      sections.flatMap((section) => section.items).find((item) => item.href === '/projects');
+
+    const withoutTemplatePermission = filterNavigation(NAV_SECTIONS, new Set(['project.read']));
+    const projectsWithout = projectsItemIn(withoutTemplatePermission);
+
+    expect(projectsWithout, 'Projects itself is still visible with project.read').toBeDefined();
+    expect(
+      projectsWithout?.subItems?.find((i) => i.href === '/projects/templates'),
+      'Templates must not be listed without project.template.read'
+    ).toBeUndefined();
+
+    const withTemplatePermission = filterNavigation(
+      NAV_SECTIONS,
+      new Set(['project.read', 'project.template.read'])
+    );
+    const projectsWith = projectsItemIn(withTemplatePermission);
+
+    expect(
+      projectsWith?.subItems?.find((i) => i.href === '/projects/templates'),
+      'Templates must be listed once the permission is held'
+    ).toBeDefined();
   });
 });
 

@@ -31,11 +31,20 @@ const PUBLIC_ROUTES: Record<string, string> = {
 /**
  * Service modules that intentionally do not authenticate: they run inside a
  * transaction opened by a guarded caller, or they are pure helpers.
+ *
+ * - `document-numbering.ts` advances a counter inside the caller's transaction.
+ * - `scheduler-service.ts` is a trusted batch worker that holds no session of its
+ *   own. Every caller must authorize first and hand over the authorized tenant
+ *   through `SchedulerAuthorization`; the only consumer,
+ *   `app/api/v1/automation/scheduler/run/route.ts`, accepts solely a
+ *   `CRON_SECRET` bearer token or a session holding `workflow.update`. `GUARD_PATTERN`
+ *   is widened with that explicit authorization contract, so the module is
+ *   audited on the guard being present rather than being hidden in this list.
  */
 const UNGUARDED_SERVICES = new Set(['lib/services/settings/document-numbering.ts']);
 
 const GUARD_PATTERN =
-  /requirePermission|requireOrganization|getAuthorizedUser|auth\.api\.getSession|getSessionUser|assertAuthenticated|getClientPortalSession/;
+  /requirePermission|requireOrganization|getAuthorizedUser|auth\.api\.getSession|getSessionUser|assertAuthenticated|getClientPortalSession|SchedulerAuthorization/;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

@@ -32,14 +32,14 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD ?? 'test_arena_password_2026';
 async function createAuthenticatedUser(email: string, name: string) {
   const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD, name }),
   });
   expect(signUpRes.status).toBe(200);
 
   const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
     body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
   expect(signInRes.status).toBe(200);
@@ -98,7 +98,7 @@ describeIfDb('Authentication session integration (real PostgreSQL)', () => {
   it('GET /api/auth/get-session has no valid session without authentication', async () => {
     const res = await fetch(`${SERVER_URL}/api/auth/get-session`, {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', Origin: SERVER_URL },
     });
     const body = await res.json();
     // Better Auth may return JSON null, 200 with null session, or 401
@@ -150,13 +150,13 @@ describeIfHttp('Authentication session HTTP (real Next.js server)', () => {
 
     await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ email, password: TEST_PASSWORD, name: 'HTTP Session Test' }),
     });
 
     const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ email, password: TEST_PASSWORD }),
     });
     expect(signInRes.status).toBe(200);
@@ -192,13 +192,13 @@ describeIfHttp('Authentication session HTTP (real Next.js server)', () => {
 
     await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ email, password: TEST_PASSWORD, name: 'Dashboard Test' }),
     });
 
     const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: SERVER_URL },
       body: JSON.stringify({ email, password: TEST_PASSWORD }),
     });
     expect(signInRes.status).toBe(200);

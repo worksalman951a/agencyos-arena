@@ -10,16 +10,15 @@ vi.mock('@/lib/services/crm/estimate-service', () => ({
   getEstimate: vi.fn(),
 }));
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
-    organizationSetting: {
-      findFirst: vi.fn().mockResolvedValue({
-        brandName: 'Test Org Agency',
-        brandColor: '#2563eb',
-        logoUrl: null,
-      }),
-    },
-  },
+// Branding is resolved through the authorized branding service (it reads the
+// organization the caller was already allowed to see), not by the route reaching
+// into the database.
+vi.mock('@/lib/services/settings/branding-service', () => ({
+  getBrandingForOrganization: vi.fn().mockResolvedValue({
+    brandName: 'Test Org Agency',
+    brandColor: '#2563eb',
+    logoUrl: null,
+  }),
 }));
 
 import { getInvoice } from '@/lib/services/crm/invoice-service';

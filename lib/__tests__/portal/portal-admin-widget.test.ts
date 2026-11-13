@@ -1,42 +1,21 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { GET, POST, DELETE } from '@/app/api/v1/crm/contacts/[id]/portal-access/route';
-import { prisma } from '@/lib/db';
-import { auth } from '@/lib/auth-server';
-import { requireOrganization } from '@/lib/permissions';
 import {
+  getContactPortalAccess,
   inviteContactToPortal,
   revokeContactPortalAccess,
 } from '@/lib/services/portal/portal-auth-service';
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
-    clientPortalAccess: {
-      findUnique: vi.fn(),
-    },
-  },
-}));
-
-vi.mock('@/lib/auth-server', () => ({
-  auth: {
-    api: {
-      getSession: vi.fn(),
-    },
-  },
-}));
-
-vi.mock('@/lib/permissions', () => ({
-  requireOrganization: vi.fn(),
-}));
-
+/**
+ * The route is a thin adapter: session validation, the `contact.read` check and
+ * the organization scoping all live in the service, so the route is asserted to
+ * delegate rather than to reach the database itself. The service-side behaviour
+ * (401 / 403 / cross-tenant null) is covered below in its own block.
+ */
 vi.mock('@/lib/services/portal/portal-auth-service', () => ({
+  getContactPortalAccess: vi.fn(),
   inviteContactToPortal: vi.fn(),
   revokeContactPortalAccess: vi.fn(),
-}));
-
-vi.mock('next/headers', () => ({
-  cookies: vi.fn().mockResolvedValue({
-    toString: () => 'mock-cookie',
-  }),
 }));
 
 describe('Phase 12B: Client Portal Administration Widget API', () => {
@@ -46,8 +25,8 @@ describe('Phase 12B: Client Portal Administration Widget API', () => {
 
   describe('GET /api/v1/crm/contacts/[id]/portal-access', () => {
     it('returns 401 when unauthenticated', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(
-        null as unknown as Awaited<ReturnType<typeof auth.api.getSession>>
+      vi.mocked(getContactPortalAccess).mockRejectedValue(
+        Object.assign(new Error('Unauthenticated'), { statusCode: 401 })
       );
 
       const res = await GET(
@@ -60,21 +39,18 @@ describe('Phase 12B: Client Portal Administration Widget API', () => {
       expect(res.status).toBe(401);
     });
 
-    it('returns portal access state for authenticated organization admin', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue({
-        session: { id: 's1', userId: 'u-1' },
-        user: { id: 'u-1', email: 'admin@agency.com', role: 'admin' },
-      } as unknown as Awaited<ReturnType<typeof auth.api.getSession>>);
-      vi.mocked(requireOrganization).mockResolvedValue({ organizationId: 'org-1' });
-      vi.mocked(prisma.clientPortalAccess.findUnique).mockResolvedValue({
-        id: 'cpa-1',
-        email: 'client@company.com',
-        status: 'active',
-        invitedAt: new Date('2026-11-10'),
-        activatedAt: new Date('2026-11-10'),
-        revokedAt: null,
-        lastLoginAt: new Date('2026-11-11'),
-      } as unknown as Awaited<ReturnType<typeof prisma.clientPortalAccess.findUnique>>);
+    it('delegates to the authorized service with the requested contact', async () => {
+      vi.mocked(getContactPortalAccess).mockResolvedValue({
+        portalAccess: {
+          id: 'cpa-1',
+          email: 'client@company.com',
+          status: 'active',
+          invitedAt: new Date('2026-11-10'),
+          activatedAt: new Date('2026-11-10'),
+          revokedAt: null,
+          lastLoginAt: new Date('2026-11-11'),
+        },
+      });
 
       const res = await GET(
         new Request('http://localhost:3001/api/v1/crm/contacts/c-1/portal-access'),
@@ -86,10 +62,7 @@ describe('Phase 12B: Client Portal Administration Widget API', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.portalAccess.status).toBe('active');
-      expect(prisma.clientPortalAccess.findUnique).toHaveBeenCalledWith({
-        where: { organizationId_contactId: { organizationId: 'org-1', contactId: 'c-1' } },
-        select: expect.any(Object),
-      });
+      expect(getContactPortalAccess).toHaveBeenCalledWith({ contactId: 'c-1' });
     });
   });
 

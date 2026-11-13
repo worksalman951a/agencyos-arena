@@ -6,35 +6,30 @@
 
 import { NextResponse } from 'next/server';
 import { getEstimate } from '@/lib/services/crm/estimate-service';
+import { getBrandingForOrganization } from '@/lib/services/settings/branding-service';
 import { generateEstimatePdf } from '@/lib/services/documents/pdf-service';
 import { apiErrorFrom } from '@/lib/api/route-error';
-import { prisma } from '@/lib/db';
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const estimate = await getEstimate(id);
 
-    // Fetch branding info if available
-    let branding: {
+    // Branding for the document header. The organization id comes from the
+    // record the caller was already authorized to read (getEstimate enforces the
+    // session, the permission check and organization scoping), and
+    // getBrandingForOrganization takes exactly that id, so a document can never
+    // be rendered with another tenant's branding.
+    const brand = await getBrandingForOrganization(estimate.organizationId);
+    const branding: {
       brandName?: string | null;
       brandColor?: string | null;
       logoUrl?: string | null;
-    } = {};
-    try {
-      const orgSettings = await prisma.organizationSetting.findFirst({
-        where: { organizationId: estimate.organizationId },
-      });
-      if (orgSettings) {
-        branding = {
-          brandName: orgSettings.brandName,
-          brandColor: orgSettings.brandColor,
-          logoUrl: orgSettings.logoUrl,
-        };
-      }
-    } catch {
-      // Graceful fallback to default branding
-    }
+    } = {
+      brandName: brand.brandName,
+      brandColor: brand.brandColor,
+      logoUrl: brand.logoUrl,
+    };
 
     const pdfBytes = generateEstimatePdf(estimate, branding);
     const safeDocNumber = estimate.number ? estimate.number.replace(/[^a-zA-Z0-9_-]/g, '_') : id;

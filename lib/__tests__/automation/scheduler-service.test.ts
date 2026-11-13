@@ -73,7 +73,7 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
         id: 'notif-1',
       } as unknown as Awaited<ReturnType<typeof prisma.notification.create>>);
 
-      const result = await processOverdueInvoices('org-1');
+      const result = await processOverdueInvoices({ actor: 'session', organizationId: 'org-1' });
 
       expect(result.evaluated).toBe(1);
       expect(result.remindersCreated).toBe(1);
@@ -110,7 +110,7 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
         id: 'notif-existing',
       } as unknown as Awaited<ReturnType<typeof prisma.notification.findFirst>>);
 
-      const result = await processOverdueInvoices('org-1');
+      const result = await processOverdueInvoices({ actor: 'session', organizationId: 'org-1' });
 
       expect(result.evaluated).toBe(1);
       expect(result.remindersCreated).toBe(0);
@@ -137,7 +137,7 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
 
       vi.mocked(isNotificationAllowed).mockResolvedValue(false);
 
-      const result = await processOverdueInvoices('org-1');
+      const result = await processOverdueInvoices({ actor: 'session', organizationId: 'org-1' });
 
       expect(result.evaluated).toBe(1);
       expect(result.remindersCreated).toBe(0);
@@ -166,7 +166,7 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
         id: 'notif-2',
       } as unknown as Awaited<ReturnType<typeof prisma.notification.create>>);
 
-      const result = await processOverdueTasks('org-1');
+      const result = await processOverdueTasks({ actor: 'session', organizationId: 'org-1' });
 
       expect(result.evaluated).toBe(1);
       expect(result.remindersCreated).toBe(1);
@@ -202,7 +202,7 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
         id: 'notif-3',
       } as unknown as Awaited<ReturnType<typeof prisma.notification.create>>);
 
-      const result = await processPendingApprovals('org-1');
+      const result = await processPendingApprovals({ actor: 'session', organizationId: 'org-1' });
 
       expect(result.evaluated).toBe(1);
       expect(result.remindersCreated).toBe(1);
@@ -223,7 +223,7 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
       vi.mocked(prisma.task.findMany).mockResolvedValue([]);
       vi.mocked(prisma.projectApproval.findMany).mockResolvedValue([]);
 
-      const summary = await runScheduledAutomation('org-1');
+      const summary = await runScheduledAutomation({ actor: 'session', organizationId: 'org-1' });
 
       expect(summary.workflows.length).toBe(3);
       expect(prisma.auditLog.create).toHaveBeenCalledWith(
@@ -247,10 +247,12 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
         slowPromise as unknown as ReturnType<typeof prisma.invoice.findMany>
       );
 
-      const firstRunPromise = runScheduledAutomation('org-1');
+      const firstRunPromise = runScheduledAutomation({ actor: 'session', organizationId: 'org-1' });
 
       // Attempt second run while first is in progress
-      await expect(runScheduledAutomation('org-1')).rejects.toThrow(
+      await expect(
+        runScheduledAutomation({ actor: 'session', organizationId: 'org-1' })
+      ).rejects.toThrow(
         'Scheduler run already in progress. Concurrent worker invocation prevented.'
       );
 
@@ -260,6 +262,69 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
       vi.mocked(prisma.projectApproval.findMany).mockResolvedValue([]);
 
       await firstRunPromise;
+    });
+  });
+
+  /**
+   * The scheduler is a trusted batch worker with no session of its own, so the
+   * authorization decision has to arrive with the call. These tests pin that
+   * contract: an unauthenticated or unscoped invocation is refused before any
+   * query runs, and a cron sweep with no organization is allowed to run
+   * system-wide.
+   */
+  describe('Authorization contract', () => {
+    it('refuses to run without an authorization decision', async () => {
+      await expect(
+        runScheduledAutomation(undefined as unknown as Parameters<typeof runScheduledAutomation>[0])
+      ).rejects.toThrow('Scheduler run requires an authorized caller');
+
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      expect(prisma.task.findMany).not.toHaveBeenCalled();
+      expect(prisma.projectApproval.findMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a session-triggered run that names no organization', async () => {
+      await expect(runScheduledAutomation({ actor: 'session' })).rejects.toThrow(
+        'A session-triggered scheduler run requires an organization'
+      );
+
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+    });
+
+    it('allows a system-wide cron sweep across every organization', async () => {
+      vi.mocked(prisma.invoice.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.task.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.projectApproval.findMany).mockResolvedValue([]);
+
+      const summary = await runScheduledAutomation({ actor: 'cron' });
+
+      expect(summary.workflows).toHaveLength(3);
+      // System-wide: no organization predicate is applied to the sweeps.
+      expect(vi.mocked(prisma.invoice.findMany).mock.calls[0][0]).not.toHaveProperty(
+        'where.organizationId'
+      );
+      // …and no tenant-scoped audit row is written, because there is no tenant.
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('scopes every sweep and the audit row to the authorized organization', async () => {
+      vi.mocked(prisma.invoice.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.task.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.projectApproval.findMany).mockResolvedValue([]);
+
+      await runScheduledAutomation({ actor: 'session', organizationId: 'org-42' });
+
+      expect(vi.mocked(prisma.invoice.findMany).mock.calls[0][0]).toEqual(
+        expect.objectContaining({ where: expect.objectContaining({ organizationId: 'org-42' }) })
+      );
+      expect(vi.mocked(prisma.task.findMany).mock.calls[0][0]).toEqual(
+        expect.objectContaining({ where: expect.objectContaining({ organizationId: 'org-42' }) })
+      );
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ organizationId: 'org-42' }),
+        })
+      );
     });
   });
 });
