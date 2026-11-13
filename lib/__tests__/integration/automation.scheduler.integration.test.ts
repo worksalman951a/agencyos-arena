@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { prisma } from '@/lib/db';
+import { recoverWorkflowExecutionsForScheduler } from '@/lib/services/automation/run-workflow-service';
 import {
   authHeaders,
   cleanupOrganizations,
@@ -369,17 +370,17 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
     const first = await runScheduler();
     expect(first.status).toBe(500);
     const firstResult = await first.json();
-    expect(firstResult.status).toBe('completed_with_failures');
+    expect(firstResult.status).toBe('completed');
     expect(firstResult.failed).toBeGreaterThan(0);
     expect(firstResult).not.toHaveProperty('organizationId');
     expect(firstResult).not.toHaveProperty('ruleId');
     expect(firstResult).not.toHaveProperty('stack');
 
     const second = await runScheduler();
-    expect(second.status).toBe(500);
+    expect(second.status).toBe(200);
     const secondResult = await second.json();
-    expect(secondResult.status).toBe('completed_with_failures');
-    expect(secondResult.failed).toBeGreaterThan(0);
+    expect(secondResult.status).toBe('completed');
+    expect(secondResult.failed).toBe(0);
 
     expect(
       await prisma.workflowExecution.count({
@@ -388,7 +389,7 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
           ruleId: rule.id,
           recordType: 'Project',
           recordId: project.id,
-          status: 'failed',
+          status: 'quarantined',
         },
       })
     ).toBe(1);
@@ -408,5 +409,230 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
         select: { status: true },
       })
     ).toEqual({ status: 'active' });
+  });
+
+  it('recovers a stale execution exactly once under concurrent PostgreSQL claims', async () => {
+    const rule = await createRule(admin, 'Stale recovery', 'invoice.overdue');
+    const invoice = await createInvoice(admin.organizationId, `WR-${randomUUID()}`);
+    const staleAt = new Date(Date.now() - 20 * 60_000);
+    const execution = await prisma.workflowExecution.create({
+      data: {
+        organizationId: admin.organizationId,
+        ruleId: rule.id,
+        recordType: 'Invoice',
+        recordId: invoice.id,
+        status: 'running',
+        dedupeKey: `recovery-${randomUUID()}`,
+        attempts: 1,
+        lastAttemptAt: staleAt,
+        claimToken: 'expired-worker-token',
+        resultLog: {
+          actorId: admin.userId,
+          source: 'scheduler',
+          eventType: 'invoice.overdue',
+          eventVersion: 'integration-stale-event',
+          actionDefinitions: { list: [{ type: 'log', message: 'safe recovery' }] },
+          actions: [],
+        },
+      },
+    });
+
+    await Promise.all([
+      recoverWorkflowExecutionsForScheduler(new Date()),
+      recoverWorkflowExecutionsForScheduler(new Date()),
+    ]);
+    const recovered = await prisma.workflowExecution.findUniqueOrThrow({
+      where: { id: execution.id },
+    });
+    expect(recovered.status).toBe('succeeded');
+    expect(recovered.attempts).toBe(2);
+    expect(recovered.claimToken).toBeNull();
+    expect(recovered.resultLog).toMatchObject({ source: 'scheduler', actions: [{ status: 'ok' }] });
+  });
+
+  it('quarantines disabled, unauthorized, and cross-tenant rule claims without executing actions', async () => {
+    const disabledRule = await createRule(admin, 'Disabled recovery rule', 'invoice.overdue');
+    const disabledInvoice = await createInvoice(
+      admin.organizationId,
+      `WR-DISABLED-${randomUUID()}`
+    );
+    await prisma.workflowRule.update({ where: { id: disabledRule.id }, data: { enabled: false } });
+
+    const suspendedOwner = await createBootstrappedAccount('workflow-recovery-suspended-owner');
+    createdOrganizations.push(suspendedOwner.organizationId);
+    const suspendedRule = await createRule(
+      suspendedOwner,
+      'Suspended creator rule',
+      'invoice.overdue'
+    );
+    const suspendedInvoice = await createInvoice(
+      suspendedOwner.organizationId,
+      `WR-SUSPENDED-${randomUUID()}`
+    );
+    await prisma.user.update({
+      where: { id: suspendedOwner.userId },
+      data: { status: 'suspended' },
+    });
+
+    const staleAt = new Date(Date.now() - 20 * 60_000);
+    const seed = (
+      organizationId: string,
+      ruleId: string,
+      recordId: string,
+      dedupeKey: string,
+      actorId: string
+    ) =>
+      prisma.workflowExecution.create({
+        data: {
+          organizationId,
+          ruleId,
+          recordType: 'Invoice',
+          recordId,
+          status: 'running',
+          dedupeKey,
+          attempts: 1,
+          lastAttemptAt: staleAt,
+          claimToken: `expired-${dedupeKey}`,
+          resultLog: {
+            actorId,
+            source: 'scheduler',
+            eventType: 'invoice.overdue',
+            actionDefinitions: { list: [{ type: 'log', message: 'must not run' }] },
+            actions: [],
+          },
+        },
+      });
+    const disabled = await seed(
+      admin.organizationId,
+      disabledRule.id,
+      disabledInvoice.id,
+      `disabled-${randomUUID()}`,
+      admin.userId
+    );
+    const unauthorized = await seed(
+      suspendedOwner.organizationId,
+      suspendedRule.id,
+      suspendedInvoice.id,
+      `suspended-${randomUUID()}`,
+      suspendedOwner.userId
+    );
+    // WorkflowExecution has separate rule/tenant foreign keys; deliberately
+    // mismatch them to prove recovery never loads an execution's rule cross-tenant.
+    const crossTenant = await seed(
+      suspendedOwner.organizationId,
+      disabledRule.id,
+      suspendedInvoice.id,
+      `cross-tenant-${randomUUID()}`,
+      admin.userId
+    );
+
+    await recoverWorkflowExecutionsForScheduler(new Date());
+    const recovered = await prisma.workflowExecution.findMany({
+      where: { id: { in: [disabled.id, unauthorized.id, crossTenant.id] } },
+      select: { id: true, status: true, errorCategory: true },
+    });
+    expect(recovered).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: disabled.id,
+          status: 'quarantined',
+          errorCategory: 'rule_disabled',
+        }),
+        expect.objectContaining({
+          id: unauthorized.id,
+          status: 'quarantined',
+          errorCategory: 'authorization',
+        }),
+        expect.objectContaining({
+          id: crossTenant.id,
+          status: 'quarantined',
+          errorCategory: 'rule_disabled',
+        }),
+      ])
+    );
+    expect(
+      await prisma.invoice.findUniqueOrThrow({
+        where: { id: disabledInvoice.id },
+        select: { status: true },
+      })
+    ).toEqual({ status: 'sent' });
+    expect(
+      await prisma.invoice.findUniqueOrThrow({
+        where: { id: suspendedInvoice.id },
+        select: { status: true },
+      })
+    ).toEqual({ status: 'sent' });
+  });
+
+  it('terminalizes exhausted retries and quarantines invalid snapshots without changing financial data', async () => {
+    const rule = await createRule(admin, 'Recovery safety states', 'invoice.overdue');
+    const invoice = await createInvoice(admin.organizationId, `WR-SAFE-${randomUUID()}`);
+    const financialBefore = await prisma.invoice.findUniqueOrThrow({
+      where: { id: invoice.id },
+      select: { status: true, subtotal: true, tax: true, total: true, dueDate: true },
+    });
+    const staleAt = new Date(Date.now() - 20 * 60_000);
+    const terminal = await prisma.workflowExecution.create({
+      data: {
+        organizationId: admin.organizationId,
+        ruleId: rule.id,
+        recordType: 'Invoice',
+        recordId: invoice.id,
+        status: 'failed',
+        dedupeKey: `attempt-limit-${randomUUID()}`,
+        attempts: 5,
+        lastAttemptAt: staleAt,
+        nextAttemptAt: new Date(Date.now() - 60_000),
+        resultLog: {
+          actorId: admin.userId,
+          source: 'scheduler',
+          eventType: 'invoice.overdue',
+          actionDefinitions: { list: [{ type: 'log', message: 'safe snapshot' }] },
+          actions: [],
+        },
+      },
+    });
+    const unsafe = await prisma.workflowExecution.create({
+      data: {
+        organizationId: admin.organizationId,
+        ruleId: rule.id,
+        recordType: 'Invoice',
+        recordId: invoice.id,
+        status: 'running',
+        dedupeKey: `unsafe-snapshot-${randomUUID()}`,
+        attempts: 2,
+        lastAttemptAt: staleAt,
+        claimToken: 'expired-unsafe-worker',
+        resultLog: {
+          actorId: admin.userId,
+          source: 'scheduler',
+          eventType: 'invoice.overdue',
+          actionDefinitions: { list: [{ type: 'future_external_action' }] },
+          actions: [],
+        },
+      },
+    });
+
+    await recoverWorkflowExecutionsForScheduler(new Date());
+    const [terminalAfter, unsafeAfter] = await Promise.all([
+      prisma.workflowExecution.findUniqueOrThrow({ where: { id: terminal.id } }),
+      prisma.workflowExecution.findUniqueOrThrow({ where: { id: unsafe.id } }),
+    ]);
+    expect(terminalAfter).toMatchObject({
+      status: 'terminal_failed',
+      attempts: 5,
+      errorCategory: 'attempt_limit',
+    });
+    expect(unsafeAfter).toMatchObject({
+      status: 'quarantined',
+      errorCategory: 'unsafe_action',
+      claimToken: null,
+    });
+    expect(
+      await prisma.invoice.findUniqueOrThrow({
+        where: { id: invoice.id },
+        select: { status: true, subtotal: true, tax: true, total: true, dueDate: true },
+      })
+    ).toEqual(financialBefore);
   });
 });

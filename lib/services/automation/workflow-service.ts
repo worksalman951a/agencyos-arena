@@ -195,7 +195,7 @@ export async function listWorkflowRules() {
   await requirePermission(userId, organizationId, 'workflow.read');
 
   const rules = await prisma.workflowRule.findMany({
-    where: { organizationId },
+    where: { organizationId, deletedAt: null },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -207,7 +207,9 @@ export async function getWorkflowRule(id: string) {
 
   await requirePermission(userId, organizationId, 'workflow.read');
 
-  const rule = await prisma.workflowRule.findFirst({ where: { id, organizationId } });
+  const rule = await prisma.workflowRule.findFirst({
+    where: { id, organizationId, deletedAt: null },
+  });
   if (!rule) throw codedError('Not found', 404);
 
   return serializeRule(rule as WorkflowRuleRecord);
@@ -227,7 +229,7 @@ export async function createWorkflowRule(input: unknown) {
   // Duplicate rule names inside one organization make the execution log
   // impossible to read; reject them rather than silently allow.
   const duplicate = await prisma.workflowRule.findFirst({
-    where: { organizationId, name: parsed.data.name },
+    where: { organizationId, name: parsed.data.name, deletedAt: null },
     select: { id: true },
   });
   if (duplicate) throw codedError('A workflow rule with this name already exists', 400);
@@ -282,7 +284,9 @@ export async function updateWorkflowRule(id: string, input: unknown) {
 
   await requirePermission(userId, organizationId, 'workflow.update');
 
-  const existing = await prisma.workflowRule.findFirst({ where: { id, organizationId } });
+  const existing = await prisma.workflowRule.findFirst({
+    where: { id, organizationId, deletedAt: null },
+  });
   if (!existing) throw codedError('Not found', 404);
   await requireScheduledTriggerPermissions(
     userId,
@@ -292,7 +296,7 @@ export async function updateWorkflowRule(id: string, input: unknown) {
 
   if (parsed.data.name && parsed.data.name !== existing.name) {
     const duplicate = await prisma.workflowRule.findFirst({
-      where: { organizationId, name: parsed.data.name, NOT: { id } },
+      where: { organizationId, name: parsed.data.name, deletedAt: null, NOT: { id } },
       select: { id: true },
     });
     if (duplicate) throw codedError('A workflow rule with this name already exists', 400);
@@ -337,15 +341,17 @@ export async function deleteWorkflowRule(id: string) {
 
   await requirePermission(userId, organizationId, 'workflow.delete');
 
-  const existing = await prisma.workflowRule.findFirst({ where: { id, organizationId } });
+  const existing = await prisma.workflowRule.findFirst({
+    where: { id, organizationId, deletedAt: null },
+  });
   if (!existing) throw codedError('Not found', 404);
 
-  // Executions are the rule's history; they go with it instead of being
-  // orphaned (the FK is ON DELETE CASCADE so this is explicit, not implicit).
-  await prisma.$transaction([
-    prisma.workflowExecution.deleteMany({ where: { ruleId: id, organizationId } }),
-    prisma.workflowRule.delete({ where: { id } }),
-  ]);
+  // Retain rule and execution rows as durable audit history. Deleted rules are
+  // hidden from normal listing and can never be used by scheduler recovery.
+  await prisma.workflowRule.update({
+    where: { id },
+    data: { enabled: false, deletedAt: new Date() },
+  });
 
   await createAuditLog({
     actorId: userId,
@@ -374,7 +380,7 @@ export async function listWorkflowExecutions(ruleId?: string) {
 
   if (ruleId) {
     const rule = await prisma.workflowRule.findFirst({
-      where: { id: ruleId, organizationId },
+      where: { id: ruleId, organizationId, deletedAt: null },
       select: { id: true },
     });
     if (!rule) throw codedError('Not found', 404);

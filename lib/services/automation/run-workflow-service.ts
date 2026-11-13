@@ -24,10 +24,11 @@ import 'server-only';
  * lose an event; durable redelivery remains an operational limitation.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/db';
 import {
   getUserPermissions,
+  isInternalUserActive,
   requirePermission,
   requireOrganization,
   type AuthorizedUser,
@@ -60,6 +61,16 @@ import { ESTIMATE_MUTABLE_STATUSES } from '@/lib/schemas/crm/estimate.schema';
 import { PROPOSAL_STATUSES } from '@/lib/schemas/crm/proposal.schema';
 import { QUOTATION_STATUSES } from '@/lib/schemas/crm/quotation.schema';
 import { isNotificationAllowed } from '@/lib/services/automation/notification-service';
+import {
+  categorizeWorkflowError,
+  isWorkflowActionSnapshotRetrySafe,
+  MAX_WORKFLOW_ATTEMPTS,
+  nextWorkflowAttemptAt,
+  shouldQuarantineWorkflowFailure,
+  STALE_WORKFLOW_LEASE_MS,
+  WORKFLOW_RECOVERY_BATCH_SIZE,
+  type WorkflowErrorCategory,
+} from '@/lib/automation/workflow-recovery';
 
 interface WorkflowRecordDescriptor {
   delegate: string;
@@ -364,6 +375,7 @@ interface ActionContext {
   event: WorkflowEvent;
   ruleId: string;
   executionId: string;
+  claimToken: string;
   actionIndex: number;
 }
 
@@ -774,37 +786,161 @@ function eventMetadata(event: WorkflowEvent, actor: AuthorizedUser) {
   };
 }
 
-async function persistExecutionResult({
+async function persistExecutionCheckpoint({
   executionId,
-  status,
+  organizationId,
+  claimToken,
   resultLog,
 }: {
   executionId: string;
-  status: 'succeeded' | 'failed';
+  organizationId: string;
+  claimToken: string;
   resultLog: Record<string, unknown>;
-}) {
+}): Promise<boolean> {
+  const updated = await prisma.workflowExecution.updateMany({
+    where: { id: executionId, organizationId, status: 'running', claimToken },
+    data: { resultLog, lastAttemptAt: new Date() },
+  });
+  return updated.count === 1;
+}
+
+async function finalizeExecutionAttempt({
+  executionId,
+  organizationId,
+  claimToken,
+  attempts,
+  resultLog,
+  failureCategory,
+  quarantine,
+  auditAction,
+}: {
+  executionId: string;
+  organizationId: string;
+  claimToken: string;
+  attempts: number;
+  resultLog: Record<string, unknown>;
+  failureCategory: WorkflowErrorCategory | null;
+  quarantine: boolean;
+  auditAction?: 'workflow.scheduled_execution' | 'workflow.recovery_retry' | 'workflow.retry';
+}): Promise<Record<string, unknown> | null> {
+  const now = new Date();
+  const status = !failureCategory
+    ? 'succeeded'
+    : quarantine
+      ? 'quarantined'
+      : attempts >= MAX_WORKFLOW_ATTEMPTS
+        ? 'terminal_failed'
+        : 'failed';
+  const terminal = status === 'terminal_failed' || status === 'quarantined';
+  const nextAttemptAt = status === 'failed' ? nextWorkflowAttemptAt(attempts, now) : null;
+  const persistedLog: Record<string, unknown> = {
+    ...resultLog,
+    ...(failureCategory ? { errorCategory: failureCategory } : {}),
+    ...(failureCategory ? { error: `Workflow attempt stopped (${failureCategory})` } : {}),
+    ...(status === 'terminal_failed' ? { terminalReason: 'attempt_limit' } : {}),
+    ...(status === 'quarantined' ? { terminalReason: failureCategory } : {}),
+  };
+
   try {
-    return await prisma.workflowExecution.update({
-      where: { id: executionId },
-      data: { status, resultLog },
-    });
-  } catch (error) {
-    // If the action run completed but the first history write hit a transient
-    // database error, make one best-effort failed claim containing the action
-    // outcomes so an operator can retry idempotently instead of leaving the row
-    // permanently `running`.
-    try {
-      return await prisma.workflowExecution.update({
-        where: { id: executionId },
+    return await prisma.$transaction(async (tx: unknown) => {
+      const executionDelegate = getDelegate(tx, 'workflowExecution');
+      const changed = await executionDelegate.updateMany!({
+        where: { id: executionId, organizationId, status: 'running', claimToken },
         data: {
-          status: 'failed',
-          resultLog: { ...resultLog, error: 'Could not persist the initial workflow outcome' },
+          status,
+          resultLog: persistedLog,
+          errorCategory: failureCategory,
+          nextAttemptAt,
+          terminalAt: terminal ? now : null,
+          claimToken: null,
         },
       });
-    } catch {
-      throw error;
-    }
+      if (changed.count !== 1) return null;
+
+      const updated = await executionDelegate.findFirst({
+        where: { id: executionId, organizationId },
+      });
+      if (!updated) return null;
+
+      if (auditAction) {
+        await getDelegate(tx, 'auditLog').create!({
+          data: {
+            actorId: null,
+            actorName: null,
+            action: auditAction,
+            entityType: 'WorkflowExecution',
+            entityId: executionId,
+            after: { status, attempts, errorCategory: failureCategory },
+            metadata: {
+              source: persistedLog.source ?? 'workflow_recovery',
+              eventType: persistedLog.eventType ?? null,
+            },
+            organizationId,
+          },
+        });
+      }
+      return updated;
+    });
+  } catch (error) {
+    const details = error as { code?: unknown } | null;
+    console.error('[automation] execution finalizer failed', {
+      errorCode: typeof details?.code === 'string' ? details.code.slice(0, 32) : undefined,
+    });
+    throw error;
   }
+}
+
+async function finalizeUnclaimedRecoveryState({
+  candidate,
+  priorStatus,
+  staleBefore,
+  now,
+  status,
+  category,
+  resultLog,
+}: {
+  candidate: { id: string; organizationId: string };
+  priorStatus: string;
+  staleBefore: Date;
+  now: Date;
+  status: 'terminal_failed' | 'quarantined';
+  category: WorkflowErrorCategory;
+  resultLog: Record<string, unknown>;
+}): Promise<boolean> {
+  return prisma.$transaction(async (tx: unknown) => {
+    const changed = await getDelegate(tx, 'workflowExecution').updateMany!({
+      where: {
+        id: candidate.id,
+        organizationId: candidate.organizationId,
+        status: priorStatus,
+        ...(priorStatus === 'running'
+          ? { lastAttemptAt: { lte: staleBefore } }
+          : { nextAttemptAt: { lte: now } }),
+      },
+      data: {
+        status,
+        terminalAt: now,
+        nextAttemptAt: null,
+        claimToken: null,
+        errorCategory: category,
+        resultLog: { ...resultLog, errorCategory: category, terminalReason: status },
+      },
+    });
+    if (changed.count !== 1) return false;
+    await getDelegate(tx, 'auditLog').create!({
+      data: {
+        actorId: null,
+        actorName: null,
+        action: 'workflow.recovery_retry',
+        entityType: 'WorkflowExecution',
+        entityId: candidate.id,
+        after: { status, errorCategory: category },
+        metadata: { source: 'workflow_recovery' },
+        organizationId: candidate.organizationId,
+      },
+    });
+    return true;
+  });
 }
 
 async function dispatchWorkflowEvent(
@@ -816,6 +952,7 @@ async function dispatchWorkflowEvent(
     where: {
       organizationId: actor.organizationId,
       enabled: true,
+      deletedAt: null,
       trigger: event.type,
       ...(onlyRuleId ? { id: onlyRuleId } : {}),
     },
@@ -849,6 +986,7 @@ async function dispatchWorkflowEvent(
     result.matched += 1;
 
     let execution: Record<string, unknown>;
+    const claimToken = randomUUID();
     try {
       execution = await prisma.workflowExecution.create({
         data: {
@@ -860,9 +998,11 @@ async function dispatchWorkflowEvent(
           dedupeKey,
           attempts: 1,
           lastAttemptAt: new Date(),
+          claimToken,
           resultLog: {
             ...eventMetadata(event, actor),
             actionDefinitions: parsedActions.success ? parsedActions.data : rule.actions,
+            actions: [],
           },
         },
       });
@@ -899,21 +1039,21 @@ async function dispatchWorkflowEvent(
 
     const executionId = String(execution.id);
     let outcomes: ActionOutcome[] = [];
-    let failure: string | null = null;
+    let failure: unknown = null;
     if (conditionsInvalid || actionsInvalid) {
-      failure = conditionsInvalid
-        ? 'Stored workflow conditions failed schema validation'
-        : 'Stored workflow actions failed schema validation';
-      outcomes = [{ index: -1, type: 'validation', status: 'failed', detail: failure }];
+      failure = codedError('Stored workflow definition failed schema validation', 400);
+      outcomes = [
+        { index: -1, type: 'validation', status: 'failed', detail: 'invalid workflow definition' },
+      ];
     } else {
-      const actions = parsedActions.data.list;
-      for (const [index, action] of actions.entries()) {
+      for (const [index, action] of parsedActions.data.list.entries()) {
         try {
           const outcome = await runAction(action, {
             actor,
             event,
             ruleId: rule.id,
             executionId,
+            claimToken,
             actionIndex: index,
           });
           outcomes.push({
@@ -922,26 +1062,53 @@ async function dispatchWorkflowEvent(
             status: outcome.status,
             detail: outcome.detail,
           });
+          if (
+            !(await persistExecutionCheckpoint({
+              executionId,
+              organizationId: actor.organizationId,
+              claimToken,
+              resultLog: {
+                ...eventMetadata(event, actor),
+                actionDefinitions: parsedActions.data,
+                actions: outcomes,
+              },
+            }))
+          )
+            break;
         } catch (error) {
-          failure = `${action.type}: ${(error as Error).message}`;
-          outcomes.push({ index, type: action.type, status: 'failed', detail: failure });
+          failure = error;
+          outcomes.push({ index, type: action.type, status: 'failed', detail: 'action failed' });
           break;
         }
       }
     }
 
-    const status = failure ? 'failed' : 'succeeded';
+    const failureCategory = failure ? categorizeWorkflowError(failure) : null;
+    const quarantine = Boolean(
+      failureCategory &&
+      shouldQuarantineWorkflowFailure(
+        failureCategory,
+        parsedActions.success ? parsedActions.data : rule.actions
+      )
+    );
     const finalResultLog = {
       ...eventMetadata(event, actor),
       actionDefinitions: parsedActions.success ? parsedActions.data : rule.actions,
       actions: outcomes,
-      ...(failure ? { error: failure } : {}),
     };
-    const updated = await persistExecutionResult({
+    const updated = await finalizeExecutionAttempt({
       executionId,
-      status,
+      organizationId: actor.organizationId,
+      claimToken,
+      attempts: 1,
       resultLog: finalResultLog,
+      failureCategory,
+      quarantine,
     });
+    if (!updated) {
+      result.skipped += 1;
+      continue;
+    }
 
     if (event.source === 'scheduler') {
       try {
@@ -975,7 +1142,7 @@ async function dispatchWorkflowEvent(
       }
     }
 
-    if (updated.status === 'failed') result.failed += 1;
+    if (updated.status !== 'succeeded') result.failed += 1;
     else result.executed += 1;
     result.executions.push({
       id: String(updated.id),
@@ -1223,6 +1390,253 @@ export async function emitWorkflowEvent(input: unknown): Promise<WorkflowEventRe
 }
 
 /**
+ * Recover a bounded batch of due failures and expired leases. Every claim is
+ * fenced by a fresh token; all lookups and writes are tenant-scoped.
+ */
+export async function recoverWorkflowExecutionsForScheduler(now = new Date()) {
+  const staleBefore = new Date(now.getTime() - STALE_WORKFLOW_LEASE_MS);
+  const candidates = await prisma.workflowExecution.findMany({
+    where: {
+      resultLog: { path: ['source'], equals: 'scheduler' },
+      OR: [
+        { status: 'failed', nextAttemptAt: { lte: now } },
+        { status: 'running', lastAttemptAt: { lte: staleBefore } },
+      ],
+    },
+    orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+    take: WORKFLOW_RECOVERY_BATCH_SIZE,
+  });
+  const totals = { scanned: candidates.length, retried: 0, quarantined: 0, terminal: 0, failed: 0 };
+
+  for (const candidate of candidates) {
+    const previousLog = (
+      candidate.resultLog &&
+      typeof candidate.resultLog === 'object' &&
+      !Array.isArray(candidate.resultLog)
+        ? candidate.resultLog
+        : {}
+    ) as Record<string, unknown>;
+    const snapshot = previousLog.actionDefinitions;
+    const parsedActions = workflowActionsSchema.safeParse(snapshot);
+    const previousActions = Array.isArray(previousLog.actions)
+      ? (previousLog.actions as ActionOutcome[])
+      : [];
+    const safe = parsedActions.success && isWorkflowActionSnapshotRetrySafe(snapshot);
+    const token = randomUUID();
+    const priorStatus = candidate.status;
+    if (Number(candidate.attempts) >= MAX_WORKFLOW_ATTEMPTS || !safe) {
+      const terminalStatus = !safe ? 'quarantined' : 'terminal_failed';
+      const category: WorkflowErrorCategory = safe ? 'attempt_limit' : 'unsafe_action';
+      const changed = await finalizeUnclaimedRecoveryState({
+        candidate: { id: candidate.id, organizationId: candidate.organizationId },
+        priorStatus,
+        staleBefore,
+        now,
+        status: terminalStatus,
+        category,
+        resultLog: previousLog,
+      });
+      if (changed) {
+        if (terminalStatus === 'quarantined') totals.quarantined += 1;
+        else totals.terminal += 1;
+      }
+      continue;
+    }
+
+    const claim = await prisma.workflowExecution.updateMany({
+      where: {
+        id: candidate.id,
+        organizationId: candidate.organizationId,
+        status: priorStatus,
+        ...(priorStatus === 'running'
+          ? { lastAttemptAt: { lte: staleBefore } }
+          : { nextAttemptAt: { lte: now } }),
+      },
+      data: {
+        status: 'running',
+        attempts: { increment: 1 },
+        lastAttemptAt: now,
+        nextAttemptAt: null,
+        claimToken: token,
+      },
+    });
+    if (!claim.count) continue;
+    const attempts = Number(candidate.attempts) + 1;
+    try {
+      const rule = await prisma.workflowRule.findFirst({
+        where: { id: candidate.ruleId, organizationId: candidate.organizationId },
+      });
+      const ruleDefinitionChanged = Boolean(
+        rule && typeof previousLog.eventType === 'string' && rule.trigger !== previousLog.eventType
+      );
+      const ownerId = typeof previousLog.actorId === 'string' ? previousLog.actorId : '';
+      const owner = ownerId
+        ? await prisma.user.findFirst({
+            where: {
+              id: ownerId,
+              organizationId: candidate.organizationId,
+              status: 'active',
+              userType: 'internal',
+            },
+          })
+        : null;
+      if (
+        !rule ||
+        !rule.enabled ||
+        rule.deletedAt ||
+        ruleDefinitionChanged ||
+        !owner ||
+        rule.createdBy !== ownerId ||
+        !isInternalUserActive(owner)
+      ) {
+        const category: WorkflowErrorCategory =
+          !rule || !rule.enabled || rule.deletedAt
+            ? 'rule_disabled'
+            : ruleDefinitionChanged || rule.createdBy !== ownerId
+              ? 'rule_changed'
+              : 'authorization';
+        await finalizeExecutionAttempt({
+          executionId: candidate.id,
+          organizationId: candidate.organizationId,
+          claimToken: token,
+          attempts,
+          resultLog: { ...previousLog, actions: previousActions },
+          failureCategory: category,
+          quarantine: true,
+          auditAction: 'workflow.recovery_retry',
+        });
+        totals.quarantined += 1;
+        continue;
+      }
+      const actor: AuthorizedUser = {
+        userId: owner.id,
+        organizationId: candidate.organizationId,
+        email: typeof owner.email === 'string' ? owner.email : '',
+        role: '',
+      };
+      const recordType = WORKFLOW_RECORD_TYPES.find((type) => type === candidate.recordType);
+      if (!recordType) throw codedError('Unsupported workflow record type', 400);
+      await requirePermission(actor.userId, actor.organizationId, 'workflow.execute');
+      await requirePermission(
+        actor.userId,
+        actor.organizationId,
+        EVENT_RECORDS[recordType].readPermission
+      );
+      const eventType =
+        typeof previousLog.eventType === 'string'
+          ? (previousLog.eventType as WorkflowTrigger)
+          : (rule.trigger as WorkflowTrigger);
+      const parsedEvent = workflowProducerEventSchema.safeParse({
+        type: eventType,
+        recordType,
+        recordId: candidate.recordId,
+        ...(eventType === 'record.status_changed'
+          ? { previousStatus: previousLog.previousStatus ?? null }
+          : {}),
+      });
+      if (!parsedEvent.success) throw codedError('Stored workflow event is invalid', 400);
+      const record = await loadWorkflowRecord(
+        recordType,
+        candidate.recordId,
+        candidate.organizationId
+      );
+      if (!record) throw codedError('Workflow record is unavailable', 404);
+      const event: WorkflowEvent = {
+        ...parsedEvent.data,
+        record,
+        ...(typeof previousLog.eventVersion === 'string'
+          ? { eventVersion: previousLog.eventVersion }
+          : { eventVersion: recordVersion(recordType, record, eventType) }),
+        source: 'scheduler',
+      };
+      const completed = new Set(
+        previousActions
+          .filter((outcome) => outcome?.status === 'ok')
+          .map((outcome) => outcome.index)
+      );
+      const outcomes: ActionOutcome[] = [];
+      let failure: unknown = null;
+      for (const [index, action] of parsedActions.data.list.entries()) {
+        if (completed.has(index)) {
+          outcomes.push({ index, type: action.type, status: 'ok', detail: 'already completed' });
+          continue;
+        }
+        try {
+          const outcome = await runAction(action, {
+            actor,
+            event,
+            ruleId: rule.id,
+            executionId: candidate.id,
+            claimToken: token,
+            actionIndex: index,
+          });
+          outcomes.push({
+            index,
+            type: action.type,
+            status: outcome.status,
+            detail: outcome.detail,
+          });
+          if (
+            !(await persistExecutionCheckpoint({
+              executionId: candidate.id,
+              organizationId: candidate.organizationId,
+              claimToken: token,
+              resultLog: { ...previousLog, actions: [...previousActions, ...outcomes] },
+            }))
+          )
+            break;
+        } catch (error) {
+          failure = error;
+          outcomes.push({ index, type: action.type, status: 'failed', detail: 'action failed' });
+          break;
+        }
+      }
+      const allOutcomes = [
+        ...previousActions.filter((prior) => !outcomes.some((next) => next.index === prior.index)),
+        ...outcomes,
+      ];
+      const category = failure ? categorizeWorkflowError(failure) : null;
+      const finalized = await finalizeExecutionAttempt({
+        executionId: candidate.id,
+        organizationId: candidate.organizationId,
+        claimToken: token,
+        attempts,
+        resultLog: { ...previousLog, actions: allOutcomes },
+        failureCategory: category,
+        quarantine: Boolean(
+          failure &&
+          allOutcomes.some((outcome) => outcome.status === 'ok') &&
+          !isWorkflowActionSnapshotRetrySafe(snapshot)
+        ),
+        auditAction: 'workflow.recovery_retry',
+      });
+      if (!finalized) continue;
+      if (finalized.status === 'succeeded') totals.retried += 1;
+      else if (finalized.status === 'quarantined') totals.quarantined += 1;
+      else if (finalized.status === 'terminal_failed') totals.terminal += 1;
+      else totals.failed += 1;
+    } catch (error) {
+      const category = categorizeWorkflowError(error);
+      const quarantine = shouldQuarantineWorkflowFailure(category, snapshot);
+      const updated = await finalizeExecutionAttempt({
+        executionId: candidate.id,
+        organizationId: candidate.organizationId,
+        claimToken: token,
+        attempts,
+        resultLog: { ...previousLog, actions: previousActions },
+        failureCategory: category,
+        quarantine,
+        auditAction: 'workflow.recovery_retry',
+      });
+      if (updated?.status === 'quarantined') totals.quarantined += 1;
+      else if (updated?.status === 'terminal_failed') totals.terminal += 1;
+      else if (updated) totals.failed += 1;
+    }
+  }
+  return totals;
+}
+
+/**
  * Retry a failed execution with an atomic compare-and-set claim. The current
  * record is reloaded tenant-scoped so `$` action paths work; the event trigger
  * version remains the original one for notification idempotency.
@@ -1246,15 +1660,55 @@ export async function retryWorkflowExecution(executionId: string) {
   );
 
   const rule = await prisma.workflowRule.findFirst({
-    where: { id: execution.ruleId, organizationId: actor.organizationId },
+    where: { id: execution.ruleId, organizationId: actor.organizationId, deletedAt: null },
   });
   if (!rule) throw codedError('Rule no longer exists', 400);
   if (!rule.enabled)
     throw codedError('Disabled workflows cannot be retried; activate the rule first', 409);
 
+  const retrySnapshot =
+    execution.resultLog &&
+    typeof execution.resultLog === 'object' &&
+    !Array.isArray(execution.resultLog)
+      ? (execution.resultLog as Record<string, unknown>)
+      : {};
+  const savedActions = retrySnapshot.actionDefinitions;
+  const parsedSavedActions = workflowActionsSchema.safeParse(savedActions);
+  const definitionChanged = Boolean(
+    !parsedSavedActions.success ||
+    (typeof retrySnapshot.eventType === 'string' && rule.trigger !== retrySnapshot.eventType)
+  );
+  if (definitionChanged || !isWorkflowActionSnapshotRetrySafe(savedActions)) {
+    const category = !parsedSavedActions.success
+      ? 'invalid_action'
+      : definitionChanged
+        ? 'rule_changed'
+        : 'unsafe_action';
+    await prisma.workflowExecution.updateMany({
+      where: { id: execution.id, organizationId: actor.organizationId, status: 'failed' },
+      data: {
+        status: 'quarantined',
+        terminalAt: new Date(),
+        nextAttemptAt: null,
+        errorCategory: category,
+        resultLog: { ...retrySnapshot, errorCategory: category, terminalReason: 'quarantined' },
+      },
+    });
+    throw codedError('Execution requires manual reconciliation before retry', 409);
+  }
+
+  if (Number(execution.attempts) >= MAX_WORKFLOW_ATTEMPTS)
+    throw codedError('Workflow execution reached its automatic attempt limit', 409);
+  const retryClaimToken = randomUUID();
   const claim = await prisma.workflowExecution.updateMany({
     where: { id: execution.id, organizationId: actor.organizationId, status: 'failed' },
-    data: { status: 'running', attempts: { increment: 1 }, lastAttemptAt: new Date() },
+    data: {
+      status: 'running',
+      attempts: { increment: 1 },
+      lastAttemptAt: new Date(),
+      nextAttemptAt: null,
+      claimToken: retryClaimToken,
+    },
   });
   if (claim.count !== 1)
     throw codedError('Execution is already being processed or is no longer retryable', 409);
@@ -1275,7 +1729,7 @@ export async function retryWorkflowExecution(executionId: string) {
     ? previousLog.actionDefinitions
     : (rule.actions ?? {});
   let outcomes: ActionOutcome[] = [];
-  let failure: string | null = null;
+  let failure: unknown = null;
 
   try {
     const eventType = previousLog.eventType ?? rule.trigger;
@@ -1335,21 +1789,33 @@ export async function retryWorkflowExecution(executionId: string) {
           event,
           ruleId: rule.id,
           executionId: execution.id,
+          claimToken: retryClaimToken,
           actionIndex: index,
         });
         outcomes.push({ index, type: action.type, status: outcome.status, detail: outcome.detail });
       } catch (error) {
-        failure = `${action.type}: ${(error as Error).message}`;
-        outcomes.push({ index, type: action.type, status: 'failed', detail: failure });
+        failure = error;
+        outcomes.push({ index, type: action.type, status: 'failed', detail: 'action failed' });
         break;
       }
     }
   } catch (error) {
-    failure = (error as Error).message;
-    outcomes = [{ index: -1, type: 'retry', status: 'failed', detail: failure }];
+    failure = error;
+    outcomes = [{ index: -1, type: 'retry', status: 'failed', detail: 'retry processing failed' }];
   }
 
-  const status = failure ? 'failed' : 'succeeded';
+  const failureCategory = failure ? categorizeWorkflowError(failure) : null;
+  const quarantine = Boolean(
+    failureCategory && shouldQuarantineWorkflowFailure(failureCategory, actionDefinitions)
+  );
+  const status = !failure
+    ? 'succeeded'
+    : quarantine
+      ? 'quarantined'
+      : Number(execution.attempts) + 1 >= MAX_WORKFLOW_ATTEMPTS
+        ? 'terminal_failed'
+        : 'failed';
+  const finalizedAt = new Date();
   const resultLog: Record<string, unknown> = {
     ...previousLog,
     eventType: previousLog.eventType ?? rule.trigger,
@@ -1358,8 +1824,11 @@ export async function retryWorkflowExecution(executionId: string) {
     retried: true,
     actions: outcomes,
   };
-  if (failure) resultLog.error = failure;
-  else delete resultLog.error;
+  if (failure) {
+    resultLog.errorCategory = failureCategory;
+    resultLog.error = `Workflow attempt stopped (${failureCategory})`;
+    if (status === 'terminal_failed' || status === 'quarantined') resultLog.terminalReason = status;
+  } else delete resultLog.error;
 
   // Finalize status and audit history together. A failed audit insert must not
   // leave a completed retry without its corresponding audit record.
@@ -1368,8 +1837,23 @@ export async function retryWorkflowExecution(executionId: string) {
     updated = await prisma.$transaction(async (tx: unknown) => {
       const executionDelegate = getDelegate(tx, 'workflowExecution');
       const updatedCount = await executionDelegate.updateMany!({
-        where: { id: execution.id, organizationId: actor.organizationId, status: 'running' },
-        data: { status, resultLog },
+        where: {
+          id: execution.id,
+          organizationId: actor.organizationId,
+          status: 'running',
+          claimToken: retryClaimToken,
+        },
+        data: {
+          status,
+          resultLog,
+          errorCategory: failureCategory,
+          nextAttemptAt:
+            status === 'failed'
+              ? nextWorkflowAttemptAt(Number(execution.attempts) + 1, finalizedAt)
+              : null,
+          terminalAt: status === 'terminal_failed' || status === 'quarantined' ? finalizedAt : null,
+          claimToken: null,
+        },
       });
       if (updatedCount.count !== 1) {
         throw codedError('Execution history changed while retrying', 409);
@@ -1401,12 +1885,21 @@ export async function retryWorkflowExecution(executionId: string) {
     // `running`; never report success without its audit record.
     try {
       await prisma.workflowExecution.updateMany({
-        where: { id: execution.id, organizationId: actor.organizationId, status: 'running' },
+        where: {
+          id: execution.id,
+          organizationId: actor.organizationId,
+          status: 'running',
+          claimToken: retryClaimToken,
+        },
         data: {
           status: 'failed',
+          claimToken: null,
+          errorCategory: 'database',
+          nextAttemptAt: nextWorkflowAttemptAt(Number(execution.attempts) + 1, new Date()),
           resultLog: {
             ...resultLog,
-            error: 'Retry finalization or audit logging failed; retry may be attempted again',
+            errorCategory: 'database',
+            error: 'Retry finalization failed',
           },
         },
       });

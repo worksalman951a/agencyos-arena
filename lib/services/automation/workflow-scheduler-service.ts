@@ -9,7 +9,10 @@ import {
   utcSchedulerDayStart,
   type ScheduledOverdueTrigger,
 } from '@/lib/automation/workflow-scheduler';
-import { emitScheduledWorkflowEvent } from '@/lib/services/automation/run-workflow-service';
+import {
+  emitScheduledWorkflowEvent,
+  recoverWorkflowExecutionsForScheduler,
+} from '@/lib/services/automation/run-workflow-service';
 
 const PAGE_SIZE = 200;
 
@@ -35,6 +38,14 @@ export interface WorkflowSchedulerResult {
   executed: number;
   skipped: number;
   failed: number;
+  recovery: {
+    scanned: number;
+    retried: number;
+    quarantined: number;
+    terminal: number;
+    failed: number;
+  };
+  monitoring: { pending: number; running: number; failed: number; terminal: number };
 }
 
 function overdueWhere(trigger: ScheduledOverdueTrigger, organizationId: string, dayStart: Date) {
@@ -101,7 +112,7 @@ export async function runWorkflowScheduler(now = new Date()): Promise<WorkflowSc
   if (!Number.isFinite(now.getTime())) throw new Error('Invalid scheduler timestamp');
   const dayStart = utcSchedulerDayStart(now);
   const rules = (await prisma.workflowRule.findMany({
-    where: { trigger: { in: [...SCHEDULED_OVERDUE_TRIGGERS] }, enabled: true },
+    where: { trigger: { in: [...SCHEDULED_OVERDUE_TRIGGERS] }, enabled: true, deletedAt: null },
     select: { id: true, organizationId: true, trigger: true, createdBy: true },
     orderBy: [{ organizationId: 'asc' }, { createdAt: 'asc' }],
   })) as ScheduledRule[];
@@ -117,7 +128,15 @@ export async function runWorkflowScheduler(now = new Date()): Promise<WorkflowSc
     executed: 0,
     skipped: 0,
     failed: 0,
+    recovery: { scanned: 0, retried: 0, quarantined: 0, terminal: 0, failed: 0 },
+    monitoring: { pending: 0, running: 0, failed: 0, terminal: 0 },
   };
+
+  // Recovery runs behind the same protected scheduler invocation and enforces
+  // the original rule creator's current active status and permissions per row.
+  const recovery = await recoverWorkflowExecutionsForScheduler(now);
+  totals.recovery = recovery;
+  totals.failed += recovery.failed + recovery.terminal + recovery.quarantined;
 
   for (const rule of rules) {
     if (!rule.createdBy || !isScheduledOverdueTrigger(rule.trigger)) {
@@ -188,5 +207,15 @@ export async function runWorkflowScheduler(now = new Date()): Promise<WorkflowSc
     }
   }
 
+  const statuses = ['pending', 'running', 'failed', 'terminal_failed', 'quarantined'];
+  const counts = await Promise.all(
+    statuses.map((status) => prisma.workflowExecution.count({ where: { status } }))
+  );
+  totals.monitoring = {
+    pending: counts[0],
+    running: counts[1],
+    failed: counts[2],
+    terminal: counts[3] + counts[4],
+  };
   return totals;
 }

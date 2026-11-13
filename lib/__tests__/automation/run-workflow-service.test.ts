@@ -119,6 +119,11 @@ const rule = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockExecutionFindFirst.mockReset();
+  mockExecutionUpdateMany.mockReset();
+  mockExecutionUpdate.mockReset();
+  mockRuleFindFirst.mockReset();
+  mockAuditCreate.mockReset();
   mockGetSession.mockResolvedValue({
     session: { id: 'session-1' },
     user: { id: 'user-1', email: 'user@example.test', role: 'employee' },
@@ -185,9 +190,35 @@ beforeEach(() => {
   mockNotificationCreate.mockResolvedValue({ id: 'notification-1' });
   mockAuditCreate.mockResolvedValue({ id: 'audit-1' });
   mockNotificationAllowed.mockResolvedValue(true);
-  mockTransaction.mockImplementation(async (callback: (tx: typeof prisma) => unknown) =>
-    callback(prisma)
-  );
+  mockTransaction.mockImplementation(async (transaction: unknown) => {
+    if (Array.isArray(transaction)) return Promise.all(transaction);
+    const callback = transaction as (tx: unknown) => Promise<unknown>;
+    return callback({
+      ...(prisma as unknown as Record<string, unknown>),
+      workflowExecution: {
+        updateMany: mockExecutionUpdateMany,
+        findFirst: async () => {
+          const latest = mockExecutionUpdateMany.mock.calls.at(-1)?.[0] as
+            { data?: Record<string, unknown> } | undefined;
+          return {
+            id: 'execution-1',
+            organizationId: 'org-1',
+            ruleId: 'rule-1',
+            recordType: 'Lead',
+            recordId: 'lead-1',
+            attempts:
+              latest?.data?.resultLog && (latest.data.resultLog as { retried?: boolean }).retried
+                ? 2
+                : 1,
+            lastAttemptAt: new Date('2026-11-11T10:01:00.000Z'),
+            createdAt: new Date('2026-11-11T10:00:00.000Z'),
+            ...(latest?.data ?? {}),
+          };
+        },
+      },
+      auditLog: { create: mockAuditCreate },
+    });
+  });
 });
 
 describe('trusted workflow event production', () => {
@@ -221,7 +252,7 @@ describe('trusted workflow event production', () => {
     });
     expect(mockGetPermissions).toHaveBeenCalledExactlyOnceWith('user-1', 'org-1');
     expect(mockRuleFindMany).toHaveBeenCalledExactlyOnceWith({
-      where: { organizationId: 'org-1', enabled: true, trigger: 'record.created' },
+      where: { organizationId: 'org-1', enabled: true, deletedAt: null, trigger: 'record.created' },
       orderBy: { createdAt: 'asc' },
     });
     expect(mockRequirePermission).not.toHaveBeenCalledWith('user-1', 'org-1', 'workflow.update');
@@ -449,11 +480,18 @@ describe('workflow execution authorization, isolation and history', () => {
         attempts: 1,
       }),
     });
-    expect(mockExecutionUpdate).toHaveBeenCalledWith({
-      where: { id: 'execution-1' },
+    expect(mockExecutionUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mockExecutionUpdateMany).toHaveBeenLastCalledWith({
+      where: expect.objectContaining({
+        id: 'execution-1',
+        organizationId: 'org-1',
+        status: 'running',
+        claimToken: expect.any(String),
+      }),
       data: expect.objectContaining({
         status: 'succeeded',
         resultLog: expect.objectContaining({ source: 'business-service', actorId: 'user-1' }),
+        claimToken: null,
       }),
     });
     expect(mockRequirePermission).not.toHaveBeenCalledWith('user-1', 'org-1', 'workflow.update');
@@ -477,7 +515,7 @@ describe('workflow execution authorization, isolation and history', () => {
 
   it('makes a transient execution-history persistence failure retryable', async () => {
     mockRuleFindMany.mockResolvedValueOnce([rule]);
-    mockExecutionUpdate.mockRejectedValueOnce(new Error('transient database error'));
+    mockExecutionUpdateMany.mockRejectedValueOnce(new Error('transient database error'));
 
     const result = await emitWorkflowEvent({
       type: 'record.created',
@@ -486,21 +524,30 @@ describe('workflow execution authorization, isolation and history', () => {
     });
 
     expect(result).toMatchObject({ failed: 1, executed: 0 });
-    expect(mockExecutionUpdate).toHaveBeenCalledTimes(2);
-    expect(mockExecutionUpdate).toHaveBeenNthCalledWith(2, {
-      where: { id: 'execution-1' },
+    expect(mockExecutionUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mockExecutionUpdateMany).toHaveBeenLastCalledWith({
+      where: expect.objectContaining({
+        id: 'execution-1',
+        organizationId: 'org-1',
+        status: 'running',
+        claimToken: expect.any(String),
+      }),
       data: expect.objectContaining({
         status: 'failed',
+        errorCategory: 'unknown',
+        nextAttemptAt: expect.any(Date),
         resultLog: expect.objectContaining({
-          error: 'Could not persist the initial workflow outcome',
+          error: 'Workflow attempt stopped (unknown)',
           actionDefinitions: expect.any(Object),
-          actions: [{ index: 0, type: 'log', status: 'ok', detail: 'created' }],
+          actions: expect.arrayContaining([
+            { index: 0, type: 'log', status: 'failed', detail: 'action failed' },
+          ]),
         }),
       }),
     });
   });
 
-  it('requires the affected record permission and persists denied mutations as failures', async () => {
+  it('requires the affected record permission and quarantines denied mutations', async () => {
     mockRuleFindMany.mockResolvedValueOnce([
       {
         ...rule,
@@ -520,9 +567,18 @@ describe('workflow execution authorization, isolation and history', () => {
     expect(result.failed).toBe(1);
     expect(mockRequirePermission).toHaveBeenCalledWith('user-1', 'org-1', 'lead.update');
     expect(mockLeadUpdateMany).not.toHaveBeenCalled();
-    expect(mockExecutionUpdate).toHaveBeenCalledWith({
-      where: { id: 'execution-1' },
-      data: expect.objectContaining({ status: 'failed' }),
+    expect(mockExecutionUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: 'execution-1',
+        organizationId: 'org-1',
+        status: 'running',
+        claimToken: expect.any(String),
+      }),
+      data: expect.objectContaining({
+        status: 'quarantined',
+        errorCategory: 'authorization',
+        terminalAt: expect.any(Date),
+      }),
     });
   });
 
@@ -711,6 +767,7 @@ describe('workflow retries', () => {
       resultLog: {
         eventType: 'record.created',
         eventVersion: 'original-event-version',
+        actionDefinitions: { list: [{ type: 'log', message: 'created' }] },
         actions: [{ index: 0, type: 'log', status: 'failed' }],
       },
     });
@@ -729,10 +786,18 @@ describe('workflow retries', () => {
       where: { id: 'execution-1', organizationId: 'org-1', status: 'failed' },
       data: expect.objectContaining({ status: 'running', attempts: { increment: 1 } }),
     });
-    expect(mockExecutionUpdateMany).toHaveBeenNthCalledWith(2, {
-      where: { id: 'execution-1', organizationId: 'org-1', status: 'running' },
-      data: expect.objectContaining({ status: 'succeeded' }),
-    });
+    expect(mockExecutionUpdateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'execution-1',
+          organizationId: 'org-1',
+          status: 'running',
+          claimToken: expect.any(String),
+        }),
+        data: expect.objectContaining({ status: 'succeeded', claimToken: null }),
+      })
+    );
   });
 
   it('does not reveal an execution from another organization during retry', async () => {
@@ -836,6 +901,7 @@ describe('workflow retries', () => {
       status: 'failed',
       attempts: 1,
       resultLog: {
+        actionDefinitions: { list: [{ type: 'log', message: 'created' }] },
         actions: [{ index: 0, type: 'log', status: 'failed' }],
       },
     });
@@ -892,11 +958,18 @@ describe('workflow retries', () => {
     expect(mockExecutionUpdateMany).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({
-        where: { id: 'execution-1', organizationId: 'org-1', status: 'running' },
+        where: expect.objectContaining({
+          id: 'execution-1',
+          organizationId: 'org-1',
+          status: 'running',
+          claimToken: expect.any(String),
+        }),
         data: expect.objectContaining({
           status: 'failed',
+          claimToken: null,
+          errorCategory: 'database',
           resultLog: expect.objectContaining({
-            error: 'Retry finalization or audit logging failed; retry may be attempted again',
+            error: 'Retry finalization failed',
             actions: [{ index: 0, type: 'log', status: 'ok', detail: 'original action' }],
           }),
         }),
@@ -914,7 +987,11 @@ describe('workflow retries', () => {
       recordId: 'lead-1',
       status: 'failed',
       attempts: 1,
-      resultLog: { eventType: 'record.created', actions: [] },
+      resultLog: {
+        eventType: 'record.created',
+        actionDefinitions: { list: [{ type: 'log', message: 'created' }] },
+        actions: [],
+      },
     });
     mockExecutionUpdateMany.mockResolvedValueOnce({ count: 0 });
 
@@ -941,6 +1018,9 @@ describe('workflow retries', () => {
       resultLog: {
         eventType: 'record.created',
         eventVersion: 'original-event-version',
+        actionDefinitions: {
+          list: [{ type: 'notify_user', userId: '$.ownerId', title: 'Retry target' }],
+        },
         actions: [{ index: 0, type: 'notify_user', status: 'failed', detail: 'temporary failure' }],
       },
     });

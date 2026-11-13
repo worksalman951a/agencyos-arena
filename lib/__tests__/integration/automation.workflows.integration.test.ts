@@ -354,7 +354,7 @@ describeIfDb('automation workflows (integration)', () => {
     ]);
   });
 
-  it('records authorization failures and retries atomically with current record permission', async () => {
+  it('quarantines authorization failures and prevents unsafe manual replay', async () => {
     const createRule = await jsonFetch('/api/v1/automation/workflows', {
       method: 'POST',
       headers: authHeaders(account.token),
@@ -390,54 +390,22 @@ describeIfDb('automation workflows (integration)', () => {
       {
         recordType: 'Lead',
         recordId: leadId,
-        status: 'failed',
+        status: 'quarantined',
         attempts: 1,
         resultLog: { actions: [{ type: 'set_status', status: 'failed' }] },
       },
     ]);
     const executionId = (failedHistory.body as Array<{ id: string }>)[0]!.id;
 
-    const retryUnauthorized = await createMemberWithPermissions(
-      account.organizationId,
-      'workflow-retry-no-execute',
-      ['lead.update']
-    );
-    const deniedRetry = await jsonFetch(`/api/v1/automation/executions/${executionId}/retry`, {
-      method: 'POST',
-      headers: authHeaders(retryUnauthorized.token),
-    });
-    expect(deniedRetry.status).toBe(403);
-
-    const retryWithoutRecordRead = await createMemberWithPermissions(
-      account.organizationId,
-      'workflow-retry-no-source-read',
-      ['workflow.execute']
-    );
-    const deniedRecordRead = await jsonFetch(`/api/v1/automation/executions/${executionId}/retry`, {
-      method: 'POST',
-      headers: authHeaders(retryWithoutRecordRead.token),
-    });
-    expect(deniedRecordRead.status).toBe(403);
-
     const retry = await jsonFetch(`/api/v1/automation/executions/${executionId}/retry`, {
       method: 'POST',
       headers: authHeaders(account.token),
     });
-    expect(retry.status, JSON.stringify(retry.body)).toBe(200);
-    expect(retry.body).toMatchObject({ status: 'succeeded', attempts: 2 });
-
-    const updatedLead = await prisma.lead.findFirst({
-      where: { id: leadId, organizationId: account.organizationId },
-    });
-    expect(updatedLead?.status).toBe('qualified');
-    const retryAudit = await prisma.auditLog.findFirst({
-      where: {
-        organizationId: account.organizationId,
-        action: 'workflow.retry',
-        entityId: executionId,
-      },
-    });
-    expect(retryAudit?.actorId).toBe(account.userId);
+    expect(retry.status).toBe(400);
+    expect(retry.body).toMatchObject({ error: 'Only failed executions can be retried' });
+    expect(
+      await prisma.lead.findFirst({ where: { id: leadId, organizationId: account.organizationId } })
+    ).toMatchObject({ status: 'new' });
   });
 
   it('rejects unsupported actions and unknown triggers with 400', async () => {
@@ -535,7 +503,7 @@ describeIfDb('automation workflows (integration)', () => {
     expect(history.body).toEqual([]);
   });
 
-  it('deletes a rule together with its execution history', async () => {
+  it('soft-deletes a rule while preserving its execution history', async () => {
     const create = await jsonFetch('/api/v1/automation/workflows', {
       method: 'POST',
       headers: authHeaders(account.token),
@@ -565,7 +533,11 @@ describeIfDb('automation workflows (integration)', () => {
       headers: authHeaders(account.token),
     });
     expect(remove.status).toBe(200);
-    expect(await prisma.workflowExecution.count({ where: { ruleId } })).toBe(0);
+    expect(await prisma.workflowExecution.count({ where: { ruleId } })).toBe(1);
+    expect(await prisma.workflowRule.findUniqueOrThrow({ where: { id: ruleId } })).toMatchObject({
+      enabled: false,
+      deletedAt: expect.any(Date),
+    });
   });
 
   it('enforces permissions: a member without workflow permissions gets 403', async () => {
