@@ -2,7 +2,7 @@
  * AgencyOS Admin Invitations API
  *
  * GET  /api/v1/admin/invitations - List organization invitations
- * POST /api/v1/admin/invitations - Invite an e-mail address (returns the token once)
+ * POST /api/v1/admin/invitations - Invite an e-mail address (email-only token delivery)
  *
  * POST is rate-limited per administrator (`invitation-create`): the endpoint
  * mints a bearer credential and is the entry point an attacker would use to

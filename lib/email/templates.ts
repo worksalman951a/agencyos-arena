@@ -146,6 +146,32 @@ export function clientInvitationEmail(input: ClientInvitationEmailInput): EmailC
   });
 }
 
+export interface TeamInvitationEmailInput {
+  organizationName: string;
+  acceptUrl: string;
+  expiresAt: Date;
+}
+
+/** Invitation to join an organization's internal AgencyOS workspace. */
+export function teamInvitationEmail(input: TeamInvitationEmailInput): EmailContent {
+  const organization = singleLine(input.organizationName, 120);
+  const workspace = organization ? `${organization} AgencyOS workspace` : 'an AgencyOS workspace';
+  return renderActionEmail({
+    subject: `Invitation to ${workspace}`,
+    heading: `You have been invited to ${workspace}`,
+    paragraphs: [
+      'Hello,',
+      `You have been invited to join ${workspace} as a team member.`,
+      'To accept, sign in or create an account using the e-mail address this message was sent to. Verify ownership of the address if prompted before accepting.',
+    ],
+    action: { label: 'Accept team invitation', url: input.acceptUrl },
+    notes: [
+      `This invitation expires on ${formatExpiry(input.expiresAt)} and can be used once.`,
+      'If you were not expecting this invitation, you can ignore this e-mail.',
+    ],
+  });
+}
+
 export interface EmailOwnershipVerificationEmailInput {
   /** Absolute verification page URL; the bearer token is in its fragment. */
   verificationUrl: string;

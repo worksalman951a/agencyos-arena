@@ -25,10 +25,12 @@ import {
 } from '@/lib/schemas/automation/notification.schema';
 
 describe('member update schema', () => {
-  it('accepts a known status with or without a role', () => {
+  it('accepts supported profile, status, and role changes but rejects an empty update', () => {
     expect(adminUserUpdateSchema.safeParse({ status: 'active' }).success).toBe(true);
     expect(adminUserUpdateSchema.safeParse({ roleId: 'role_1' }).success).toBe(true);
-    expect(adminUserUpdateSchema.safeParse({}).success).toBe(true);
+    expect(adminUserUpdateSchema.safeParse({ displayName: 'Teammate' }).success).toBe(true);
+    expect(adminUserUpdateSchema.safeParse({ avatarUrl: null }).success).toBe(true);
+    expect(adminUserUpdateSchema.safeParse({}).success).toBe(false);
   });
 
   it('rejects an unknown status', () => {

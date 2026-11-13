@@ -8,6 +8,8 @@
  * Requires DATABASE_URL and a running server; skips otherwise.
  */
 
+import { createHash, randomBytes } from 'node:crypto';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { prisma } from '@/lib/db';
@@ -35,6 +37,21 @@ async function jsonFetch(path: string, init: RequestInit = {}) {
     body = text;
   }
   return { status: res.status, body };
+}
+
+async function seedInvitation(organizationId: string, email: string, roleId: string) {
+  const token = randomBytes(32).toString('base64url');
+  const invitation = await prisma.invitation.create({
+    data: {
+      organizationId,
+      email,
+      roleId,
+      tokenHash: createHash('sha256').update(token).digest('hex'),
+      status: 'pending',
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+  });
+  return { invitation, token };
 }
 
 describeIfDb('administration and RBAC (integration)', () => {
@@ -122,35 +139,219 @@ describeIfDb('administration and RBAC (integration)', () => {
     });
 
     it('keeps at least one active administrator', async () => {
-      // Promote a second admin so we can try to remove the last one.
-      const second = await createMemberWithPermissions(admin.organizationId, 'second-admin', []);
-      createdOrganizations.push(second.organizationId);
+      // Use a fresh tenant: other tests promote members in their own fixtures,
+      // which must not change the number of administrators this invariant tests.
+      const testAdmin = await createOrganizationWithAdmin('last-admin-protection');
+      createdOrganizations.push(testAdmin.organizationId);
+      const second = await createMemberWithPermissions(
+        testAdmin.organizationId,
+        'second-admin',
+        []
+      );
       const adminRole = await prisma.role.findFirstOrThrow({
-        where: { organizationId: admin.organizationId, name: 'Administrator' },
+        where: { organizationId: testAdmin.organizationId, isSystem: true, name: 'Administrator' },
       });
       await prisma.userRole.updateMany({
-        where: { userId: second.userId, organizationId: admin.organizationId },
+        where: { userId: second.userId, organizationId: testAdmin.organizationId },
         data: { roleId: adminRole.id },
       });
 
-      // Demote the second admin: allowed (admin stays active).
+      // Demote the second admin: allowed (the fixture admin stays active).
       const employeeRole = await prisma.role.create({
-        data: { organizationId: admin.organizationId, name: `Employee2 ${Date.now()}` },
+        data: { organizationId: testAdmin.organizationId, name: `Employee2 ${Date.now()}` },
       });
       const demote = await jsonFetch(`/api/v1/admin/users/${second.userId}`, {
         method: 'PATCH',
-        headers: authHeaders(admin.token),
+        headers: authHeaders(testAdmin.token),
         body: JSON.stringify({ roleId: employeeRole.id }),
       });
       expect(demote.status).toBe(200);
 
-      // Marking the only remaining administrator as suspended is refused.
-      const suspendSelf = await jsonFetch(`/api/v1/admin/users/${admin.userId}`, {
+      // Suspending the only remaining administrator is refused.
+      const suspend = await jsonFetch(`/api/v1/admin/users/${testAdmin.userId}`, {
+        method: 'PATCH',
+        headers: authHeaders(testAdmin.token),
+        body: JSON.stringify({ status: 'suspended' }),
+      });
+      expect(suspend.status).toBe(400);
+    });
+
+    it('updates supported member profile fields and audits the change', async () => {
+      const member = await createMemberWithPermissions(admin.organizationId, 'profile-edit', [
+        'project.read',
+      ]);
+      createdOrganizations.push(member.organizationId);
+      const response = await jsonFetch(`/api/v1/admin/users/${member.userId}`, {
+        method: 'PATCH',
+        headers: authHeaders(admin.token),
+        body: JSON.stringify({
+          displayName: 'Updated teammate',
+          avatarUrl: 'https://example.test/avatar.png',
+        }),
+      });
+      expect(response.status, JSON.stringify(response.body)).toBe(200);
+      expect(response.body).toMatchObject({
+        name: 'Updated teammate',
+        image: 'https://example.test/avatar.png',
+      });
+      expect(
+        await prisma.auditLog.findFirst({
+          where: {
+            organizationId: admin.organizationId,
+            action: 'user.profile_changed',
+            entityId: member.userId,
+          },
+        })
+      ).toBeTruthy();
+    });
+
+    it('suspends through the admin workflow, revokes sessions, and reactivation requires fresh sign-in', async () => {
+      const member = await createMemberWithPermissions(
+        admin.organizationId,
+        'suspend-through-admin',
+        ['project.read']
+      );
+      createdOrganizations.push(member.organizationId);
+      expect(await prisma.session.count({ where: { userId: member.userId } })).toBeGreaterThan(0);
+
+      const suspended = await jsonFetch(`/api/v1/admin/users/${member.userId}`, {
         method: 'PATCH',
         headers: authHeaders(admin.token),
         body: JSON.stringify({ status: 'suspended' }),
       });
-      expect(suspendSelf.status).toBe(400);
+      expect(suspended.status).toBe(200);
+      expect(await prisma.session.count({ where: { userId: member.userId } })).toBe(0);
+      expect(
+        (await jsonFetch('/api/v1/admin/users', { headers: authHeaders(member.token) })).status
+      ).not.toBe(200);
+
+      const reactivated = await jsonFetch(`/api/v1/admin/users/${member.userId}`, {
+        method: 'PATCH',
+        headers: authHeaders(admin.token),
+        body: JSON.stringify({ status: 'active' }),
+      });
+      expect(reactivated.status).toBe(200);
+      expect(await prisma.session.count({ where: { userId: member.userId } })).toBe(0);
+    });
+
+    it('blocks a custom user manager from assigning a more privileged role', async () => {
+      const manager = await createMemberWithPermissions(
+        admin.organizationId,
+        'limited-user-manager',
+        ['user.update']
+      );
+      const target = await createMemberWithPermissions(admin.organizationId, 'role-target', [
+        'project.read',
+      ]);
+      createdOrganizations.push(manager.organizationId, target.organizationId);
+      const adminRole = await prisma.role.findFirstOrThrow({
+        where: { organizationId: admin.organizationId, isSystem: true, name: 'Administrator' },
+      });
+
+      const response = await jsonFetch(`/api/v1/admin/users/${target.userId}`, {
+        method: 'PATCH',
+        headers: authHeaders(manager.token),
+        body: JSON.stringify({ roleId: adminRole.id }),
+      });
+      expect(response.status).toBe(403);
+      expect(
+        await prisma.userRole.count({
+          where: {
+            userId: target.userId,
+            organizationId: admin.organizationId,
+            roleId: adminRole.id,
+          },
+        })
+      ).toBe(0);
+    });
+
+    it('does not suspend the last active administrator even when an authorized manager targets them', async () => {
+      const testAdmin = await createOrganizationWithAdmin('last-admin-suspend');
+      createdOrganizations.push(testAdmin.organizationId);
+      const manager = await createMemberWithPermissions(
+        testAdmin.organizationId,
+        'status-manager',
+        ['user.update']
+      );
+
+      const response = await jsonFetch(`/api/v1/admin/users/${testAdmin.userId}`, {
+        method: 'PATCH',
+        headers: authHeaders(manager.token),
+        body: JSON.stringify({ status: 'suspended' }),
+      });
+      expect(response.status).toBe(400);
+      expect(
+        (await prisma.user.findUniqueOrThrow({ where: { id: testAdmin.userId } })).status
+      ).toBe('active');
+    });
+
+    it('protects the last administrator from member removal as well as suspension', async () => {
+      const testAdmin = await createOrganizationWithAdmin('last-admin-remove');
+      createdOrganizations.push(testAdmin.organizationId);
+      const manager = await createMemberWithPermissions(
+        testAdmin.organizationId,
+        'remove-manager',
+        ['user.delete']
+      );
+      const response = await jsonFetch(`/api/v1/admin/users/${testAdmin.userId}`, {
+        method: 'DELETE',
+        headers: authHeaders(manager.token),
+      });
+      expect(response.status).toBe(400);
+      expect(
+        (await prisma.user.findUniqueOrThrow({ where: { id: testAdmin.userId } })).organizationId
+      ).toBe(testAdmin.organizationId);
+    });
+
+    it('serializes concurrent administrator suspensions so one active administrator remains', async () => {
+      // The authorizing manager is not one of the two target admins, so a
+      // successful suspension cannot revoke the credentials for the competing
+      // request. Serializing on the organization row must let exactly one win.
+      const testAdmin = await createOrganizationWithAdmin('concurrent-admin-suspension');
+      createdOrganizations.push(testAdmin.organizationId);
+      const manager = await createMemberWithPermissions(
+        testAdmin.organizationId,
+        'suspension-manager',
+        ['user.update']
+      );
+      const second = await createMemberWithPermissions(
+        testAdmin.organizationId,
+        'target-admin',
+        []
+      );
+      const adminRole = await prisma.role.findFirstOrThrow({
+        where: {
+          organizationId: testAdmin.organizationId,
+          isSystem: true,
+          name: 'Administrator',
+        },
+      });
+      await prisma.userRole.updateMany({
+        where: { userId: second.userId, organizationId: testAdmin.organizationId },
+        data: { roleId: adminRole.id },
+      });
+
+      const responses = await Promise.all([
+        jsonFetch(`/api/v1/admin/users/${testAdmin.userId}`, {
+          method: 'PATCH',
+          headers: authHeaders(manager.token),
+          body: JSON.stringify({ status: 'suspended' }),
+        }),
+        jsonFetch(`/api/v1/admin/users/${second.userId}`, {
+          method: 'PATCH',
+          headers: authHeaders(manager.token),
+          body: JSON.stringify({ status: 'suspended' }),
+        }),
+      ]);
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
+      const remaining = await prisma.userRole.count({
+        where: {
+          organizationId: testAdmin.organizationId,
+          role: { isSystem: true, name: 'Administrator' },
+          user: { status: 'active' },
+        },
+      });
+      expect(remaining).toBe(1);
     });
 
     it('validates the update payload', async () => {
@@ -276,7 +477,7 @@ describeIfDb('administration and RBAC (integration)', () => {
   });
 
   describe('invitations', () => {
-    it('creates an invitation, stores only a hash, and accepts it once', async () => {
+    it('creates an email-only invitation and accepts a verified invitee once', async () => {
       const invitedEmail = `invitee-${Date.now()}@integration.invalid`;
       const role = await prisma.role.findFirstOrThrow({
         where: { organizationId: admin.organizationId, isSystem: true, name: 'Administrator' },
@@ -288,28 +489,34 @@ describeIfDb('administration and RBAC (integration)', () => {
         body: JSON.stringify({ email: invitedEmail, roleId: role.id }),
       });
       expect(created.status, JSON.stringify(created.body)).toBe(201);
-      const { token, acceptPath, id } = created.body as {
-        token: string;
-        acceptPath: string;
-        id: string;
-      };
-      expect(token.length).toBeGreaterThan(20);
-      expect(acceptPath).toContain(token);
+      const response = created.body as { id: string; emailDelivery: { status: string } };
+      expect(response.emailDelivery.status).toBe('disabled');
+      expect(created.body).not.toHaveProperty('token');
+      expect(created.body).not.toHaveProperty('acceptPath');
 
-      // The raw token must not be persisted.
-      const stored = await prisma.invitation.findUniqueOrThrow({ where: { id } });
-      expect(stored.tokenHash).not.toBe(token);
+      // The raw token is never returned or persisted; only an email-addressed
+      // token can activate the pending membership.
+      const stored = await prisma.invitation.findUniqueOrThrow({ where: { id: response.id } });
       expect(stored.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+      await prisma.invitation.update({ where: { id: stored.id }, data: { status: 'revoked' } });
 
-      // Preview is public and never leaks member data.
+      const { invitation, token } = await seedInvitation(
+        admin.organizationId,
+        invitedEmail,
+        role.id
+      );
       const preview = await jsonFetch(`/api/v1/invitations/${token}`);
       expect(preview.status).toBe(200);
       expect(preview.body).toMatchObject({ organizationName: expect.any(String) });
       expect(JSON.stringify(preview.body)).not.toMatch(/tokenHash|invitedBy/);
 
-      // The invited person signs in and accepts.
       const invitee = await prisma.user.create({
-        data: { email: invitedEmail, name: 'Invitee', status: 'active' },
+        data: {
+          email: invitedEmail,
+          name: 'Invitee',
+          status: 'active',
+          emailVerified: true,
+        },
       });
       const { sessionFor } = await import('./batch4-provisioning');
       const inviteeToken = await sessionFor(invitee.id);
@@ -329,13 +536,15 @@ describeIfDb('administration and RBAC (integration)', () => {
         })
       ).toBe(1);
 
-      // Single use: the second attempt is gone.
       const second = await jsonFetch('/api/v1/invitations/accept', {
         method: 'POST',
         headers: authHeaders(inviteeToken),
         body: JSON.stringify({ token }),
       });
       expect(second.status).toBe(410);
+      expect(
+        (await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id } })).status
+      ).toBe('accepted');
     });
 
     it('refuses acceptance by a different e-mail address', async () => {
@@ -343,12 +552,7 @@ describeIfDb('administration and RBAC (integration)', () => {
       const role = await prisma.role.findFirstOrThrow({
         where: { organizationId: admin.organizationId, isSystem: true },
       });
-      const created = await jsonFetch('/api/v1/admin/invitations', {
-        method: 'POST',
-        headers: authHeaders(admin.token),
-        body: JSON.stringify({ email: invitedEmail, roleId: role.id }),
-      });
-      const { token } = created.body as { token: string };
+      const { token } = await seedInvitation(admin.organizationId, invitedEmail, role.id);
 
       const stranger = await createOrganizationWithAdmin('stranger');
       createdOrganizations.push(stranger.organizationId);
@@ -367,51 +571,101 @@ describeIfDb('administration and RBAC (integration)', () => {
       expect(res.status).toBe(403);
     });
 
-    it('rejects an expired invitation', async () => {
+    it('requires verified ownership of the invitee e-mail before activation', async () => {
+      const invitedEmail = `unverified-${Date.now()}@integration.invalid`;
       const role = await prisma.role.findFirstOrThrow({
         where: { organizationId: admin.organizationId, isSystem: true },
       });
-      const created = await jsonFetch('/api/v1/admin/invitations', {
-        method: 'POST',
-        headers: authHeaders(admin.token),
-        body: JSON.stringify({
-          email: `expired-${Date.now()}@integration.invalid`,
-          roleId: role.id,
-        }),
+      const { token } = await seedInvitation(admin.organizationId, invitedEmail, role.id);
+      const invitee = await prisma.user.create({
+        data: { email: invitedEmail, name: 'Unverified', status: 'active', emailVerified: false },
       });
-      const { id, token } = created.body as { id: string; token: string };
+      const { sessionFor } = await import('./batch4-provisioning');
+      const inviteeToken = await sessionFor(invitee.id);
+      const response = await jsonFetch('/api/v1/invitations/accept', {
+        method: 'POST',
+        headers: authHeaders(inviteeToken),
+        body: JSON.stringify({ token }),
+      });
+      expect(response.status).toBe(403);
+      expect(
+        (await prisma.user.findUniqueOrThrow({ where: { id: invitee.id } })).organizationId
+      ).toBe(null);
+    });
 
+    it('rejects an expired invitation and reports its status', async () => {
+      const role = await prisma.role.findFirstOrThrow({
+        where: { organizationId: admin.organizationId, isSystem: true },
+      });
+      const { invitation, token } = await seedInvitation(
+        admin.organizationId,
+        `expired-${Date.now()}@integration.invalid`,
+        role.id
+      );
       await prisma.invitation.update({
-        where: { id },
+        where: { id: invitation.id },
         data: { expiresAt: new Date(Date.now() - 1000) },
       });
 
       const preview = await jsonFetch(`/api/v1/invitations/${token}`);
       expect(preview.status).toBe(410);
+      const listed = await jsonFetch('/api/v1/admin/invitations', {
+        headers: authHeaders(admin.token),
+      });
+      expect(
+        (listed.body as Array<{ id: string; status: string }>).find(
+          (item) => item.id === invitation.id
+        )?.status
+      ).toBe('expired');
     });
 
-    it('revokes a pending invitation', async () => {
+    it('revokes a pending invitation and invalidates its token', async () => {
       const role = await prisma.role.findFirstOrThrow({
         where: { organizationId: admin.organizationId, isSystem: true },
       });
-      const created = await jsonFetch('/api/v1/admin/invitations', {
-        method: 'POST',
-        headers: authHeaders(admin.token),
-        body: JSON.stringify({
-          email: `revoke-${Date.now()}@integration.invalid`,
-          roleId: role.id,
-        }),
-      });
-      const { id, token } = created.body as { id: string; token: string };
-
-      const revoked = await jsonFetch(`/api/v1/admin/invitations/${id}`, {
+      const { invitation, token } = await seedInvitation(
+        admin.organizationId,
+        `revoke-${Date.now()}@integration.invalid`,
+        role.id
+      );
+      const revoked = await jsonFetch(`/api/v1/admin/invitations/${invitation.id}`, {
         method: 'DELETE',
         headers: authHeaders(admin.token),
       });
       expect(revoked.status).toBe(200);
+      expect(
+        (await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id } })).status
+      ).toBe('revoked');
 
       const preview = await jsonFetch(`/api/v1/invitations/${token}`);
       expect(preview.status).toBe(410);
+    });
+
+    it('resends by rotating the token and revoking the old invitation', async () => {
+      const role = await prisma.role.findFirstOrThrow({
+        where: { organizationId: admin.organizationId, isSystem: true },
+      });
+      const { invitation, token } = await seedInvitation(
+        admin.organizationId,
+        `resend-${Date.now()}@integration.invalid`,
+        role.id
+      );
+      const response = await jsonFetch(`/api/v1/admin/invitations/${invitation.id}/resend`, {
+        method: 'POST',
+        headers: authHeaders(admin.token),
+      });
+      expect(response.status, JSON.stringify(response.body)).toBe(200);
+      expect(response.body).not.toHaveProperty('token');
+      expect(response.body).not.toHaveProperty('acceptPath');
+      expect(response.body).toMatchObject({ emailDelivery: { status: 'disabled' } });
+      expect(
+        (await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id } })).status
+      ).toBe('revoked');
+      const replacement = response.body as { id: string };
+      expect(
+        (await prisma.invitation.findUniqueOrThrow({ where: { id: replacement.id } })).status
+      ).toBe('pending');
+      expect((await jsonFetch(`/api/v1/invitations/${token}`)).status).toBe(410);
     });
 
     it('rejects inviting an existing member and a duplicate pending invite', async () => {
@@ -428,7 +682,7 @@ describeIfDb('administration and RBAC (integration)', () => {
         headers: authHeaders(admin.token),
         body: JSON.stringify({ email: member.email, roleId: role.id }),
       });
-      expect(duplicateMember.status).toBe(400);
+      expect(duplicateMember.status).toBe(409);
 
       const email = `twice-${Date.now()}@integration.invalid`;
       const first = await jsonFetch('/api/v1/admin/invitations', {
@@ -437,12 +691,48 @@ describeIfDb('administration and RBAC (integration)', () => {
         body: JSON.stringify({ email, roleId: role.id }),
       });
       expect(first.status).toBe(201);
-      const second = await jsonFetch('/api/v1/admin/invitations', {
-        method: 'POST',
-        headers: authHeaders(admin.token),
-        body: JSON.stringify({ email, roleId: role.id }),
+      const raceEmail = `race-${Date.now()}@integration.invalid`;
+      const race = await Promise.all([
+        jsonFetch('/api/v1/admin/invitations', {
+          method: 'POST',
+          headers: authHeaders(admin.token),
+          body: JSON.stringify({ email: raceEmail, roleId: role.id }),
+        }),
+        jsonFetch('/api/v1/admin/invitations', {
+          method: 'POST',
+          headers: authHeaders(admin.token),
+          body: JSON.stringify({ email: raceEmail.toUpperCase(), roleId: role.id }),
+        }),
+      ]);
+      expect(race.map((item) => item.status).sort()).toEqual([201, 409]);
+      expect(
+        await prisma.invitation.count({
+          where: {
+            organizationId: admin.organizationId,
+            email: { equals: raceEmail, mode: 'insensitive' },
+            status: 'pending',
+          },
+        })
+      ).toBe(1);
+    });
+
+    it('prevents an invitation manager from assigning a role with permissions they lack', async () => {
+      const manager = await createMemberWithPermissions(admin.organizationId, 'invite-manager', [
+        'invitation.create',
+      ]);
+      createdOrganizations.push(manager.organizationId);
+      const administrator = await prisma.role.findFirstOrThrow({
+        where: { organizationId: admin.organizationId, isSystem: true, name: 'Administrator' },
       });
-      expect(second.status).toBe(400);
+      const response = await jsonFetch('/api/v1/admin/invitations', {
+        method: 'POST',
+        headers: authHeaders(manager.token),
+        body: JSON.stringify({
+          email: `escalation-${Date.now()}@integration.invalid`,
+          roleId: administrator.id,
+        }),
+      });
+      expect(response.status).toBe(403);
     });
 
     it('cannot invite someone into another organization', async () => {

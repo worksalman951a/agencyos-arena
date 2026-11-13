@@ -23,6 +23,8 @@
  * Skips when DATABASE_URL is absent, exactly like the other integration suites.
  */
 
+import { createHash, randomBytes } from 'node:crypto';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { prisma } from '@/lib/db';
@@ -66,6 +68,25 @@ const auth = (token: string, extra: Record<string, string> = {}) => ({
   Origin: APP_ORIGIN,
   ...extra,
 });
+
+async function seedTeamInvitation(
+  email: string,
+  organizationId: string,
+  roleId: string
+): Promise<string> {
+  const token = randomBytes(32).toString('base64url');
+  await prisma.invitation.create({
+    data: {
+      organizationId,
+      email,
+      roleId,
+      tokenHash: createHash('sha256').update(token).digest('hex'),
+      status: 'pending',
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+  });
+  return token;
+}
 
 async function provisionOrganisation(label: string) {
   const email = `${label}-${SUFFIX}@security.integration.invalid`;
@@ -111,6 +132,7 @@ async function provisionOrganisation(label: string) {
 describeIfDb('CSRF and rate limiting (real PostgreSQL, real HTTP)', () => {
   let adminToken: string;
   let adminRoleId: string;
+  let adminOrganizationId: string;
   let otherToken: string;
   let otherOrganizationId: string;
 
@@ -118,6 +140,7 @@ describeIfDb('CSRF and rate limiting (real PostgreSQL, real HTTP)', () => {
     const admin = await provisionOrganisation('admin');
     adminToken = admin.token;
     adminRoleId = admin.roleId;
+    adminOrganizationId = admin.organizationId;
 
     const other = await provisionOrganisation('other');
     otherToken = other.token;
@@ -352,13 +375,11 @@ describeIfDb('CSRF and rate limiting (real PostgreSQL, real HTTP)', () => {
   describe('rate limiting at the HTTP boundary', () => {
     it('refuses with 429 once the public preview budget is spent, then recovers', async () => {
       // A real invite token so the handler has work to do when it is allowed.
-      const invitation = await http('/api/v1/admin/invitations', {
-        method: 'POST',
-        headers: auth(adminToken),
-        body: { email: `invitee-${SUFFIX}@example.invalid`, roleId: adminRoleId },
-      });
-      expect(invitation.status, invitation.text).toBe(201);
-      const token = (invitation.json as { token: string }).token;
+      const token = await seedTeamInvitation(
+        `invitee-${SUFFIX}@example.invalid`,
+        adminOrganizationId,
+        adminRoleId
+      );
 
       // The limit is keyed on the deployment-resolved client address, and this
       // suite shares 127.0.0.1 with every other integration file, so it must not
@@ -459,6 +480,8 @@ describeIfDb('CSRF and rate limiting (real PostgreSQL, real HTTP)', () => {
       expect([201, 429]).toContain(created.status);
       if (created.status === 201) {
         expect(created.headers.get('RateLimit-Limit')).toBeTruthy();
+        expect(created.json).not.toHaveProperty('token');
+        expect(created.json).not.toHaveProperty('acceptPath');
       }
     });
   });
@@ -477,13 +500,11 @@ describeIfDb('CSRF and rate limiting (real PostgreSQL, real HTTP)', () => {
     });
 
     it('refuses a cross-site invitation redemption even with a valid token', async () => {
-      const invitation = await http('/api/v1/admin/invitations', {
-        method: 'POST',
-        headers: auth(adminToken),
-        body: { email: `csrf-${SUFFIX}@example.invalid`, roleId: adminRoleId },
-      });
-      if (invitation.status !== 201) return; // budget exhausted; covered above
-      const token = (invitation.json as { token: string }).token;
+      const token = await seedTeamInvitation(
+        `csrf-${SUFFIX}@example.invalid`,
+        adminOrganizationId,
+        adminRoleId
+      );
 
       const crossSite = await http('/api/v1/invitations/accept', {
         method: 'POST',

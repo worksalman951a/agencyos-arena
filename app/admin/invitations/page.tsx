@@ -11,6 +11,7 @@ import { listRoles } from '@/lib/services/admin/role-service';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { NewInvitationForm } from './NewInvitationForm';
+import { InvitationActions } from './InvitationActions';
 
 export default async function InvitationsPage() {
   const result = await loadPageData(async () => {
@@ -47,12 +48,13 @@ export default async function InvitationsPage() {
               <th className="pb-3 font-medium">Role</th>
               <th className="pb-3 font-medium">Status</th>
               <th className="pb-3 font-medium text-right">Expires</th>
+              <th className="pb-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {invitations.length === 0 ? (
               <tr>
-                <td colSpan={4} className="text-center py-8 text-muted-foreground">
+                <td colSpan={5} className="text-center py-8 text-muted-foreground">
                   No invitations yet.
                 </td>
               </tr>
@@ -76,6 +78,9 @@ export default async function InvitationsPage() {
                   </td>
                   <td className="py-4 text-right text-sm text-muted-foreground">
                     {new Date(invitation.expiresAt).toLocaleDateString()}
+                  </td>
+                  <td className="py-4 text-right">
+                    <InvitationActions id={invitation.id} status={invitation.status} />
                   </td>
                 </tr>
               ))

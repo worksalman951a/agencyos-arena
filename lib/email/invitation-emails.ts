@@ -2,7 +2,7 @@ import 'server-only';
 
 import { sendEmail } from '@/lib/email/mailer';
 import { reserveInvitationEmail } from '@/lib/email/sending-limit';
-import { clientInvitationEmail } from '@/lib/email/templates';
+import { clientInvitationEmail, teamInvitationEmail } from '@/lib/email/templates';
 import type { EmailDeliveryResult } from '@/lib/email/types';
 
 /**
@@ -19,6 +19,34 @@ import type { EmailDeliveryResult } from '@/lib/email/types';
  * inside the message and for nothing else: it is not logged, and it is not part
  * of the returned result.
  */
+
+export interface TeamInvitationDelivery {
+  organizationId: string;
+  organizationName: string;
+  to: string;
+  acceptPath: string;
+  expiresAt: Date;
+}
+
+/** E-mail an internal team invitation through the shared SMTP delivery pipeline. */
+export function sendTeamInvitationEmail(
+  input: TeamInvitationDelivery
+): Promise<EmailDeliveryResult> {
+  return sendEmail(
+    (link) => ({
+      to: input.to,
+      ...teamInvitationEmail({
+        organizationName: input.organizationName,
+        acceptUrl: link(input.acceptPath),
+        expiresAt: input.expiresAt,
+      }),
+    }),
+    {
+      reserve: () =>
+        reserveInvitationEmail({ organizationId: input.organizationId, recipient: input.to }),
+    }
+  );
+}
 
 export interface ClientInvitationDelivery {
   /** The inviting organization: the session's organization, never a client-supplied id. */

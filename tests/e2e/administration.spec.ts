@@ -250,6 +250,8 @@ test.describe('administration', () => {
       .click();
     await expect(page.getByRole('heading', { name: 'Edit Member', level: 1 })).toBeVisible();
     await expect(page.getByRole('main').getByText(account.email)).toBeVisible();
+    await expect(page.locator('#displayName')).toBeVisible();
+    await expect(page.locator('#avatarUrl')).toBeVisible();
     // The role selector is populated from the organization's real roles.
     await expect(page.locator('#roleId')).toContainText('Administrator');
 
@@ -272,7 +274,7 @@ test.describe('administration', () => {
     await expect(page.getByText('No audit entries match these filters.')).toBeVisible();
   });
 
-  test('creates an invitation and shows the one-time acceptance link', async ({
+  test('creates, resends and revokes a pending team invitation without exposing its token', async ({
     authedPage: page,
   }) => {
     await page.goto('/admin/invitations');
@@ -280,25 +282,43 @@ test.describe('administration', () => {
 
     const email = `invited-${Date.now()}@e2e.agencyos.invalid`;
     await page.locator('#email').fill(email);
-    await Promise.all([
-      page.waitForResponse(
-        (response) =>
-          response.url().includes('/api/v1/admin/invitations') &&
-          response.request().method() === 'POST'
-      ),
-      page.getByRole('button', { name: 'Create invitation' }).click(),
-    ]);
+    const createResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/v1/admin/invitations') &&
+        response.request().method() === 'POST'
+    );
+    await page.getByRole('button', { name: 'Create invitation' }).click();
+    const createResponse = await createResponsePromise;
+    const created = (await createResponse.json()) as Record<string, unknown>;
+    expect(created).not.toHaveProperty('token');
+    expect(created).not.toHaveProperty('acceptPath');
+    await expect(page.getByRole('status')).toContainText('Invitation created');
 
-    await expect(page.getByTestId('invitation-link')).toContainText('/invite/');
-    await expect(page.getByRole('cell', { name: email })).toBeVisible();
+    const row = page.getByRole('row', { name: new RegExp(email) });
+    await expect(row.getByText('pending')).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Resend' })).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Revoke' })).toBeVisible();
 
-    // The acceptance page renders the invitation for the invited address.
-    const link = (await page.getByTestId('invitation-link').innerText()).trim();
-    const path = new URL(link).pathname;
-    await page.goto(path);
-    await expect(page.getByRole('heading', { name: 'Organization invitation' })).toBeVisible();
-    // The invitee address is shown as the invitation's target at least once.
-    await expect(page.getByText(email).first()).toBeVisible();
+    const resendPromise = page.waitForResponse(
+      (response) => response.url().includes('/resend') && response.request().method() === 'POST'
+    );
+    await row.getByRole('button', { name: 'Resend' }).click();
+    const resent = await resendPromise;
+    const resentBody = (await resent.json()) as Record<string, unknown>;
+    expect(resentBody).not.toHaveProperty('token');
+    expect(resentBody).not.toHaveProperty('acceptPath');
+    await expect(page.getByRole('row', { name: new RegExp(email) })).toHaveCount(2);
+
+    const activeRow = page.getByRole('row', { name: new RegExp(email) }).filter({
+      has: page.getByText('pending', { exact: true }),
+    });
+    const revokePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/v1/admin/invitations/`) &&
+        response.request().method() === 'DELETE'
+    );
+    await activeRow.getByRole('button', { name: 'Revoke' }).click();
+    expect((await revokePromise).ok()).toBe(true);
   });
 
   test('gates administration navigation on permissions', async ({ authedPage: page }) => {
