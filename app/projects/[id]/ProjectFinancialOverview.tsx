@@ -31,6 +31,36 @@ function CurrencyValues({
   );
 }
 
+const BILLING_STATUS_LABELS = {
+  available: 'Available to bill',
+  reserved: 'Reserved on draft invoice',
+  billed: 'Billed on issued invoice',
+  locked: 'Locked — reversal required',
+} as const;
+
+function SourceStatusBreakdown({
+  totals,
+  currency,
+}: {
+  totals: ProjectFinancialSummary['expenses']['billingStatusTotals'];
+  currency: string;
+}) {
+  return (
+    <ul className="mt-2 space-y-1 text-xs" aria-label="Source billing status totals">
+      {(Object.keys(BILLING_STATUS_LABELS) as Array<keyof typeof BILLING_STATUS_LABELS>).map(
+        (status) => (
+          <li key={status} className="flex justify-between gap-2">
+            <span>
+              {BILLING_STATUS_LABELS[status]} ({totals[status].count})
+            </span>
+            <span>{formatCurrencyAmount(totals[status].amount, currency)}</span>
+          </li>
+        )
+      )}
+    </ul>
+  );
+}
+
 function SummaryCard({
   label,
   children,
@@ -161,29 +191,30 @@ export function ProjectFinancialOverview({ summary }: { summary: ProjectFinancia
         </SummaryCard>
 
         <SummaryCard
-          label="Unbilled billable expenses"
-          description="Billable expenses with no invoice-source line attached."
+          label="Billable expense source status"
+          description="Available amounts include only billable expenses with no source link. Reserved and locked sources remain unavailable because their invoice-source link is retained."
         >
           <div className="font-semibold">
-            {formatCurrencyAmount(summary.expenses.unbilledBillable, projectCurrency)}
+            Available {formatCurrencyAmount(summary.expenses.unbilledBillable, projectCurrency)}
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {summary.expenses.unbilledCount} expense
-            {summary.expenses.unbilledCount === 1 ? '' : 's'}
-          </div>
+          <SourceStatusBreakdown
+            totals={summary.expenses.billingStatusTotals}
+            currency={projectCurrency}
+          />
         </SummaryCard>
 
         <SummaryCard
-          label="Approved change orders not yet billed"
-          description="Approved change orders without an invoice-source line; included in revised budget above."
+          label="Approved change-order source status"
+          description="Only approved, unlinked change orders are available to bill; approved orders remain in the revised budget above."
         >
           <div className="font-semibold">
+            Available{' '}
             {formatCurrencyAmount(summary.changeOrders.unbilledApprovedAmount, projectCurrency)}
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {summary.changeOrders.unbilledApprovedCount} change order
-            {summary.changeOrders.unbilledApprovedCount === 1 ? '' : 's'}
-          </div>
+          <SourceStatusBreakdown
+            totals={summary.changeOrders.billingStatusTotals}
+            currency={projectCurrency}
+          />
         </SummaryCard>
 
         <SummaryCard
@@ -341,7 +372,9 @@ export function ProjectFinancialOverview({ summary }: { summary: ProjectFinancia
                     <span>
                       {expense.category}
                       {expense.billable ? ' · billable' : ' · non-billable'}
-                      {expense.billed ? ' · linked to invoice' : ''}
+                      {` · ${expense.billingStatus === 'available' ? 'Available (unlinked)' : BILLING_STATUS_LABELS[expense.billingStatus]}`}
+                      {expense.billingStatus === 'locked' &&
+                        ' (invoice link retained; reversal/reconciliation needed)'}
                     </span>
                     <span className="font-medium">
                       {formatCurrencyAmount(expense.amount, projectCurrency)}
@@ -355,12 +388,16 @@ export function ProjectFinancialOverview({ summary }: { summary: ProjectFinancia
           <div>
             <h3 className="mb-2 text-sm font-semibold">Approved change orders</h3>
             {summary.changeOrders.details.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No unbilled approved change orders.</p>
+              <p className="text-sm text-muted-foreground">No approved change orders.</p>
             ) : (
               <ul className="divide-y text-sm">
                 {summary.changeOrders.details.map((changeOrder) => (
                   <li key={changeOrder.id} className="flex flex-wrap justify-between gap-2 py-2">
-                    <span>{changeOrder.description}</span>
+                    <span>
+                      {changeOrder.description} · {BILLING_STATUS_LABELS[changeOrder.billingStatus]}
+                      {changeOrder.billingStatus === 'locked' &&
+                        ' (invoice link retained; reversal/reconciliation needed)'}
+                    </span>
                     <span className="font-medium">
                       {formatCurrencyAmount(changeOrder.amount, projectCurrency)}
                     </span>
