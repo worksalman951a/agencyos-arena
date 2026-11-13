@@ -13,6 +13,7 @@ import {
 } from '@/lib/services/crm/project-service';
 import { listContracts } from '@/lib/services/documents/contract-service';
 import { listInvoices, type InvoiceResponse } from '@/lib/services/crm/invoice-service';
+import { getProjectFinancialSummary } from '@/lib/services/crm/project-financial-summary-service';
 import { getCurrentPermissions } from '@/lib/current-user';
 import { formatMinorUnitsAsCurrency } from '@/lib/currencies';
 import { loadPageData } from '@/lib/page-data';
@@ -22,6 +23,7 @@ import {
   ProjectMilestonesSection,
   ProjectTasksSection,
 } from './ProjectWorkspaceClient';
+import { ProjectFinancialOverview } from './ProjectFinancialOverview';
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -60,6 +62,17 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
       ),
       getCurrentPermissions(),
     ]);
+
+  const canViewFinancialOverview = [
+    'project.read',
+    'invoice.read',
+    'expense.read',
+    'time.entry.read',
+    'change.order.read',
+  ].every((permission) => permissions.has(permission));
+  const financialResult = canViewFinancialOverview
+    ? await loadPageData(() => getProjectFinancialSummary(id))
+    : null;
 
   // Never offer an action the invoice service would reject: new invoices need
   // `invoice.create` and a project that is neither deleted nor archived.
@@ -168,12 +181,14 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         >
           Change Orders ({workspace.counts.changeOrders})
         </Link>
-        <Link
-          href={`/projects/time-entries?projectId=${project.id}`}
-          className="px-3 py-1.5 rounded-md border border-input bg-background text-sm font-medium hover:bg-muted"
-        >
-          Time Entries ({workspace.timeSummary.totalHours.toFixed(1)} hrs)
-        </Link>
+        {permissions.has('time.entry.read') && (
+          <Link
+            href={`/projects/time-entries?projectId=${project.id}`}
+            className="px-3 py-1.5 rounded-md border border-input bg-background text-sm font-medium hover:bg-muted"
+          >
+            Time Entries ({workspace.timeSummary.totalHours.toFixed(1)} hrs)
+          </Link>
+        )}
         {permissions.has('expense.read') && permissions.has('project.read') && (
           <Link
             href={`/finance/expenses?projectId=${encodeURIComponent(project.id)}`}
@@ -191,6 +206,17 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
           </Link>
         )}
       </div>
+
+      {financialResult?.ok ? (
+        <ProjectFinancialOverview summary={financialResult.data} />
+      ) : financialResult ? (
+        <p
+          role="alert"
+          className="rounded-md border border-destructive/30 p-3 text-sm text-destructive"
+        >
+          Financial overview is currently unavailable.
+        </p>
+      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-2 space-y-6">
@@ -217,47 +243,54 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
                   {completedMilestones}/{totalMilestones} done
                 </div>
               </div>
-              <div className="border rounded-md p-2.5">
-                <div className="text-xs text-muted-foreground">Total Hours</div>
-                <div className="font-semibold">
-                  {workspace.timeSummary.totalHours.toFixed(1)} hrs
-                </div>
-              </div>
-              <div className="border rounded-md p-2.5">
-                <div className="text-xs text-muted-foreground">Billable Hours</div>
-                <div className="font-semibold text-green-700">
-                  {workspace.timeSummary.billableHours.toFixed(1)} hrs
-                </div>
-              </div>
-              <div className="border rounded-md p-2.5">
-                <div className="text-xs text-muted-foreground">Non-Billable</div>
-                <div className="font-semibold">
-                  {workspace.timeSummary.nonBillableHours.toFixed(1)} hrs
-                </div>
-              </div>
+              {permissions.has('time.entry.read') && (
+                <>
+                  <div className="border rounded-md p-2.5">
+                    <div className="text-xs text-muted-foreground">Total Hours</div>
+                    <div className="font-semibold">
+                      {workspace.timeSummary.totalHours.toFixed(1)} hrs
+                    </div>
+                  </div>
+                  <div className="border rounded-md p-2.5">
+                    <div className="text-xs text-muted-foreground">Billable Hours</div>
+                    <div className="font-semibold text-green-700">
+                      {workspace.timeSummary.billableHours.toFixed(1)} hrs
+                    </div>
+                  </div>
+                  <div className="border rounded-md p-2.5">
+                    <div className="text-xs text-muted-foreground">Non-Billable</div>
+                    <div className="font-semibold">
+                      {workspace.timeSummary.nonBillableHours.toFixed(1)} hrs
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-            {(workspace.timeSummary.billableAmountsByCurrency.length > 0 ||
-              workspace.timeSummary.unratedBillableEntryCount > 0) && (
-              <div
-                className="border rounded-md p-2.5 text-sm flex flex-wrap items-center justify-between gap-2"
-                data-testid="project-billable-summary"
-              >
-                <span className="text-xs text-muted-foreground uppercase">Billable Value</span>
-                <div className="flex flex-wrap items-center gap-3 font-medium">
-                  {workspace.timeSummary.billableAmountsByCurrency.map((bucket) => (
-                    <span key={bucket.currency} className="text-green-700">
-                      {formatMinorUnitsAsCurrency(bucket.amountMinor, bucket.currency)}{' '}
-                      <span className="text-xs text-muted-foreground">{bucket.currency}</span>
-                    </span>
-                  ))}
-                  {workspace.timeSummary.unratedBillableEntryCount > 0 && (
-                    <span className="text-xs text-muted-foreground">
-                      ({workspace.timeSummary.unratedBillableHours.toFixed(1)} hrs unrated)
-                    </span>
-                  )}
+            {permissions.has('time.entry.read') &&
+              (workspace.timeSummary.billableAmountsByCurrency.length > 0 ||
+                workspace.timeSummary.unratedBillableEntryCount > 0) && (
+                <div
+                  className="border rounded-md p-2.5 text-sm flex flex-wrap items-center justify-between gap-2"
+                  data-testid="project-billable-summary"
+                >
+                  <span className="text-xs text-muted-foreground uppercase">
+                    Billable Time Value (estimate)
+                  </span>
+                  <div className="flex flex-wrap items-center gap-3 font-medium">
+                    {workspace.timeSummary.billableAmountsByCurrency.map((bucket) => (
+                      <span key={bucket.currency} className="text-green-700">
+                        {formatMinorUnitsAsCurrency(bucket.amountMinor, bucket.currency)}{' '}
+                        <span className="text-xs text-muted-foreground">{bucket.currency}</span>
+                      </span>
+                    ))}
+                    {workspace.timeSummary.unratedBillableEntryCount > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        ({workspace.timeSummary.unratedBillableHours.toFixed(1)} hrs unrated)
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
           </div>
 
           <div className="rounded-md border bg-background p-4">
@@ -311,12 +344,6 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         <div className="rounded-md border bg-background p-4">
           <h2 className="text-lg font-semibold mb-2">Summary</h2>
           <dl className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Budget</dt>
-              <dd className="font-medium text-right">
-                {project.budget ? `$${Number(project.budget).toLocaleString()}` : '—'}
-              </dd>
-            </div>
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Start Date</dt>
               <dd className="font-medium text-right">
