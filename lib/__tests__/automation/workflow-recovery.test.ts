@@ -42,6 +42,7 @@ describe('workflow recovery policy', () => {
     const safeSnapshot = { list: [{ type: 'log', message: 'safe' }] };
     expect(shouldQuarantineWorkflowFailure('database', safeSnapshot)).toBe(false);
     expect(shouldQuarantineWorkflowFailure('authorization', safeSnapshot)).toBe(true);
+    expect(shouldQuarantineWorkflowFailure('uncertain_action', safeSnapshot)).toBe(true);
     expect(shouldQuarantineWorkflowFailure('unknown', { list: [{ type: 'future_action' }] })).toBe(
       true
     );

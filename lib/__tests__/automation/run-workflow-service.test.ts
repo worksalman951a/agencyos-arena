@@ -480,7 +480,7 @@ describe('workflow execution authorization, isolation and history', () => {
         attempts: 1,
       }),
     });
-    expect(mockExecutionUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mockExecutionUpdateMany).toHaveBeenCalledTimes(4);
     expect(mockExecutionUpdateMany).toHaveBeenLastCalledWith({
       where: expect.objectContaining({
         id: 'execution-1',
@@ -524,7 +524,7 @@ describe('workflow execution authorization, isolation and history', () => {
     });
 
     expect(result).toMatchObject({ failed: 1, executed: 0 });
-    expect(mockExecutionUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mockExecutionUpdateMany).toHaveBeenCalledTimes(3);
     expect(mockExecutionUpdateMany).toHaveBeenLastCalledWith({
       where: expect.objectContaining({
         id: 'execution-1',
@@ -787,7 +787,7 @@ describe('workflow retries', () => {
       data: expect.objectContaining({ status: 'running', attempts: { increment: 1 } }),
     });
     expect(mockExecutionUpdateMany).toHaveBeenNthCalledWith(
-      2,
+      3,
       expect.objectContaining({
         where: expect.objectContaining({
           id: 'execution-1',
@@ -880,6 +880,41 @@ describe('workflow retries', () => {
     expect(mockAuditCreate).not.toHaveBeenCalled();
   });
 
+  it('quarantines legacy mutation retries without durable action completion evidence', async () => {
+    const actionDefinitions = { list: [{ type: 'set_status', status: 'qualified' }] };
+    mockRuleFindFirst.mockResolvedValueOnce({
+      ...rule,
+      enabled: true,
+      actions: actionDefinitions,
+    });
+    mockExecutionFindFirst.mockResolvedValueOnce({
+      id: 'execution-1',
+      organizationId: 'org-1',
+      ruleId: 'rule-1',
+      recordType: 'Lead',
+      recordId: 'lead-1',
+      status: 'failed',
+      attempts: 1,
+      resultLog: {
+        eventType: 'record.created',
+        actionDefinitions,
+        actions: [],
+      },
+    });
+
+    await expect(retryWorkflowExecution('execution-1')).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(mockExecutionUpdateMany).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'quarantined',
+          errorCategory: 'uncertain_action',
+        }),
+      })
+    );
+    expect(mockLeadFindFirst).not.toHaveBeenCalled();
+  });
+
   it('retries legacy status_changed executions that did not snapshot previousStatus', async () => {
     mockRuleFindFirst.mockResolvedValueOnce({
       ...rule,
@@ -910,7 +945,7 @@ describe('workflow retries', () => {
 
     expect(result.status).toBe('succeeded');
     expect(mockExecutionUpdateMany).toHaveBeenNthCalledWith(
-      2,
+      3,
       expect.objectContaining({
         data: expect.objectContaining({
           resultLog: expect.objectContaining({ eventType: 'record.status_changed' }),
@@ -954,7 +989,7 @@ describe('workflow retries', () => {
     await expect(retryWorkflowExecution('execution-1')).rejects.toThrow('audit unavailable');
 
     expect(mockExecutionUpdateMany).toHaveBeenNthCalledWith(
-      3,
+      5,
       expect.objectContaining({
         where: expect.objectContaining({
           id: 'execution-1',

@@ -55,6 +55,8 @@ The protected scheduler remains the only scheduler entry point. Recovery is boun
 - `running` executions whose last attempt is at least 15 minutes old are eligible for recovery.
 - The worker uses the saved action and event snapshot, not a mutable current rule definition. It requires the same-tenant rule to still exist, remain enabled and owned by the original creator; that creator must remain an active internal member with current workflow and record-read permissions.
 - Only schema-valid `log`, deduplicated notification, and existing compare-and-set record mutation actions are automatically retryable. Unknown or invalid action types are quarantined. Potentially partial unsafe actions are never automatically replayed and require manual reconciliation.
+- `set_status` and `assign_record_owner` lock and verify the current execution claim in the same PostgreSQL transaction as the record write, audit row, and durable per-action success evidence. A later checkpoint cannot overwrite that success evidence.
+- Newly versioned execution snapshots can safely retry these transactional mutation actions. Older executions without evidence that a mutation committed are quarantined as `uncertain_action` rather than replayed.
 - Successful action outcomes remain in the audit snapshot and are skipped on subsequent attempts. Notification dedupe keys and record mutation guards remain safeguards against duplicate effects.
 - Persisted errors use stable non-sensitive categories, never exception text. Scheduler responses now include aggregate retry/quarantine/terminal totals and non-sensitive pending/running/failed/terminal counts.
 

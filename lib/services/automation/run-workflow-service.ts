@@ -464,6 +464,122 @@ async function createWorkflowNotificationOnce({
   }
 }
 
+function executionResultLog(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+const CLAIM_FENCED_MUTATION_ACTIONS = new Set(['set_status', 'assign_record_owner']);
+
+function uncertainMutationActionIndex(
+  actions: WorkflowAction[],
+  outcomes: ActionOutcome[],
+  actionEvidenceVersion: unknown
+): number | null {
+  // Version 1 is written before dispatch and its mutation, audit row, and `ok`
+  // evidence commit atomically. Earlier rows lack that guarantee.
+  if (actionEvidenceVersion === 1) return null;
+  for (const [index, action] of actions.entries()) {
+    if (!CLAIM_FENCED_MUTATION_ACTIONS.has(action.type)) continue;
+    const outcome = outcomes.find(
+      (candidate) => candidate.index === index && candidate.type === action.type
+    );
+    if (outcome?.status !== 'ok' && outcome?.status !== 'skipped') return index;
+  }
+  return null;
+}
+
+function mergeActionOutcomes(previous: unknown, incoming: ActionOutcome[]): ActionOutcome[] {
+  const outcomes = new Map<number, ActionOutcome>();
+  if (Array.isArray(previous)) {
+    for (const value of previous) {
+      if (
+        value &&
+        typeof value === 'object' &&
+        Number.isInteger((value as ActionOutcome).index) &&
+        typeof (value as ActionOutcome).type === 'string' &&
+        ['ok', 'skipped', 'failed'].includes((value as ActionOutcome).status)
+      ) {
+        const outcome = value as ActionOutcome;
+        outcomes.set(outcome.index, outcome);
+      }
+    }
+  }
+  for (const outcome of incoming) {
+    const current = outcomes.get(outcome.index);
+    // Durable success evidence from the mutation transaction always wins over
+    // an outer worker's stale or uncertain failure checkpoint.
+    if (
+      current?.status === 'ok' &&
+      CLAIM_FENCED_MUTATION_ACTIONS.has(current.type) &&
+      outcome.status !== 'ok'
+    ) {
+      continue;
+    }
+    outcomes.set(outcome.index, outcome);
+  }
+  return [...outcomes.values()].sort((left, right) => left.index - right.index);
+}
+
+/**
+ * Run an idempotent record mutation, its audit row, and durable completion
+ * evidence under one claim-fenced PostgreSQL transaction. The claim-row update
+ * obtains a row lock, so a concurrent stale-lease reclaimer must wait and then
+ * re-evaluate the token predicate after this transaction commits.
+ */
+export async function runClaimedWorkflowActionTransaction<T>(
+  claim: Pick<ActionContext, 'executionId' | 'actor' | 'claimToken'>,
+  action: (tx: unknown) => Promise<T>,
+  completionFor: (value: T) => ActionOutcome | undefined
+): Promise<T> {
+  return prisma.$transaction(async (tx: unknown) => {
+    const executionDelegate = getDelegate(tx, 'workflowExecution');
+    const claimLock = await executionDelegate.updateMany!({
+      where: {
+        id: claim.executionId,
+        organizationId: claim.actor.organizationId,
+        status: 'running',
+        claimToken: claim.claimToken,
+      },
+      data: { lastAttemptAt: new Date() },
+    });
+    if (claimLock.count !== 1) {
+      throw codedError('Workflow action claim was superseded', 409);
+    }
+
+    const execution = await executionDelegate.findFirst({
+      where: {
+        id: claim.executionId,
+        organizationId: claim.actor.organizationId,
+        status: 'running',
+        claimToken: claim.claimToken,
+      },
+    });
+    if (!execution) throw codedError('Workflow action claim was superseded', 409);
+
+    const result = await action(tx);
+    const completion = completionFor(result);
+    if (completion) {
+      const currentLog = executionResultLog(execution.resultLog);
+      const actions = mergeActionOutcomes(currentLog.actions, [completion]);
+      const persisted = await executionDelegate.updateMany!({
+        where: {
+          id: claim.executionId,
+          organizationId: claim.actor.organizationId,
+          status: 'running',
+          claimToken: claim.claimToken,
+        },
+        data: { resultLog: { ...currentLog, actions } },
+      });
+      if (persisted.count !== 1) {
+        throw codedError('Workflow action claim was superseded', 409);
+      }
+    }
+    return result;
+  });
+}
+
 async function runStatusAction(
   action: Extract<WorkflowAction, { type: 'set_status' }>,
   context: ActionContext
@@ -494,83 +610,95 @@ async function runStatusAction(
     return { status: 'skipped' as const, detail: `status is too long for ${event.recordType}` };
   }
 
-  const changed = await prisma.$transaction(async (tx: unknown) => {
-    const delegate = getDelegate(tx, descriptor.delegate);
-    const current = await delegate.findFirst({
-      where: recordLookupWhere(event.recordType, event.recordId, actor.organizationId),
-      ...(descriptor.include ? { include: descriptor.include } : {}),
-    });
-    if (!current) return { kind: 'missing' as const };
+  const changed = await runClaimedWorkflowActionTransaction(
+    context,
+    async (tx: unknown) => {
+      const delegate = getDelegate(tx, descriptor.delegate);
+      const current = await delegate.findFirst({
+        where: recordLookupWhere(event.recordType, event.recordId, actor.organizationId),
+        ...(descriptor.include ? { include: descriptor.include } : {}),
+      });
+      if (!current) return { kind: 'missing' as const };
 
-    const currentStatus = String(current.status ?? '');
-    if (!currentStatus) return { kind: 'invalid' as const, detail: 'record has no status field' };
-    if (currentStatus === action.status) return { kind: 'unchanged' as const };
-    if (
-      event.recordType === 'Lead' &&
-      (currentStatus === 'converted' || action.status === 'converted')
-    ) {
-      return {
-        kind: 'invalid' as const,
-        detail: 'lead conversion must use the lead conversion service',
-      };
-    }
-
-    const allowedTransitions = STATUS_TRANSITIONS[event.recordType]?.[currentStatus];
-    if (STATUS_TRANSITIONS[event.recordType] && !allowedTransitions?.includes(action.status)) {
-      return {
-        kind: 'invalid' as const,
-        detail: `status transition from '${currentStatus}' to '${action.status}' is not allowed for ${event.recordType}`,
-      };
-    }
-
-    if (event.recordType === 'Opportunity') {
-      const stage = current.stage as { isWon?: boolean; isLost?: boolean } | null | undefined;
+      const currentStatus = String(current.status ?? '');
+      if (!currentStatus) return { kind: 'invalid' as const, detail: 'record has no status field' };
+      if (currentStatus === action.status) return { kind: 'unchanged' as const };
       if (
-        (stage?.isWon && action.status !== 'won') ||
-        (stage?.isLost && action.status !== 'lost')
+        event.recordType === 'Lead' &&
+        (currentStatus === 'converted' || action.status === 'converted')
       ) {
         return {
           kind: 'invalid' as const,
-          detail: 'status change conflicts with the opportunity’s current won/lost stage',
+          detail: 'lead conversion must use the lead conversion service',
         };
       }
-    }
 
-    const result = await delegate.updateMany!({
-      where: {
-        ...recordLookupWhere(event.recordType, event.recordId, actor.organizationId),
-        status: currentStatus,
-      },
-      data: {
-        status: action.status,
-        ...(descriptor.updatedByField ? { [descriptor.updatedByField]: actor.userId } : {}),
-      },
-    });
-    if (result.count !== 1) {
-      throw codedError('Record changed concurrently; retry the workflow execution', 409);
-    }
+      const allowedTransitions = STATUS_TRANSITIONS[event.recordType]?.[currentStatus];
+      if (STATUS_TRANSITIONS[event.recordType] && !allowedTransitions?.includes(action.status)) {
+        return {
+          kind: 'invalid' as const,
+          detail: `status transition from '${currentStatus}' to '${action.status}' is not allowed for ${event.recordType}`,
+        };
+      }
 
-    await getDelegate(tx, 'auditLog').create!({
-      data: {
-        actorId: actor.userId,
-        actorName: actor.email,
-        action: 'workflow.set_status',
-        entityType: event.recordType,
-        entityId: event.recordId,
-        before: { status: currentStatus },
-        after: { status: action.status },
-        metadata: {
-          workflowRuleId: context.ruleId,
-          workflowExecutionId: context.executionId,
-          actionIndex: context.actionIndex,
-          eventType: event.type,
+      if (event.recordType === 'Opportunity') {
+        const stage = current.stage as { isWon?: boolean; isLost?: boolean } | null | undefined;
+        if (
+          (stage?.isWon && action.status !== 'won') ||
+          (stage?.isLost && action.status !== 'lost')
+        ) {
+          return {
+            kind: 'invalid' as const,
+            detail: 'status change conflicts with the opportunity’s current won/lost stage',
+          };
+        }
+      }
+
+      const result = await delegate.updateMany!({
+        where: {
+          ...recordLookupWhere(event.recordType, event.recordId, actor.organizationId),
+          status: currentStatus,
         },
-        organizationId: actor.organizationId,
-      },
-    });
+        data: {
+          status: action.status,
+          ...(descriptor.updatedByField ? { [descriptor.updatedByField]: actor.userId } : {}),
+        },
+      });
+      if (result.count !== 1) {
+        throw codedError('Record changed concurrently; retry the workflow execution', 409);
+      }
 
-    return { kind: 'updated' as const };
-  });
+      await getDelegate(tx, 'auditLog').create!({
+        data: {
+          actorId: actor.userId,
+          actorName: actor.email,
+          action: 'workflow.set_status',
+          entityType: event.recordType,
+          entityId: event.recordId,
+          before: { status: currentStatus },
+          after: { status: action.status },
+          metadata: {
+            workflowRuleId: context.ruleId,
+            workflowExecutionId: context.executionId,
+            actionIndex: context.actionIndex,
+            eventType: event.type,
+          },
+          organizationId: actor.organizationId,
+        },
+      });
+
+      return { kind: 'updated' as const };
+    },
+    (result) =>
+      result.kind === 'updated'
+        ? {
+            index: context.actionIndex,
+            type: 'set_status',
+            status: 'ok',
+            detail: `status set to ${action.status}`,
+          }
+        : undefined
+  );
 
   if (changed.kind === 'missing') {
     return {
@@ -611,47 +739,59 @@ async function runAssignOwnerAction(
     return { status: 'skipped' as const, detail: 'assignee is not a member of this organization' };
   }
 
-  const changed = await prisma.$transaction(async (tx: unknown) => {
-    const task = getDelegate(tx, 'task');
-    const existing = await task.findFirst({
-      where: recordLookupWhere('Task', event.recordId, actor.organizationId),
-      select: { id: true, assigneeId: true },
-    });
-    if (!existing) return { kind: 'missing' as const };
-    const currentAssignee = (existing.assigneeId as string | null) ?? null;
-    if (currentAssignee === userId) return { kind: 'unchanged' as const };
+  const changed = await runClaimedWorkflowActionTransaction(
+    context,
+    async (tx: unknown) => {
+      const task = getDelegate(tx, 'task');
+      const existing = await task.findFirst({
+        where: recordLookupWhere('Task', event.recordId, actor.organizationId),
+        select: { id: true, assigneeId: true },
+      });
+      if (!existing) return { kind: 'missing' as const };
+      const currentAssignee = (existing.assigneeId as string | null) ?? null;
+      if (currentAssignee === userId) return { kind: 'unchanged' as const };
 
-    const result = await task.updateMany!({
-      where: {
-        ...recordLookupWhere('Task', event.recordId, actor.organizationId),
-        assigneeId: currentAssignee,
-      },
-      data: { assigneeId: userId },
-    });
-    if (result.count !== 1) {
-      throw codedError('Task changed concurrently; retry the workflow execution', 409);
-    }
-
-    await getDelegate(tx, 'auditLog').create!({
-      data: {
-        actorId: actor.userId,
-        actorName: actor.email,
-        action: 'workflow.assign_record_owner',
-        entityType: 'Task',
-        entityId: event.recordId,
-        before: { assigneeId: currentAssignee },
-        after: { assigneeId: userId },
-        metadata: {
-          workflowRuleId: context.ruleId,
-          workflowExecutionId: context.executionId,
-          actionIndex: context.actionIndex,
-          eventType: event.type,
+      const result = await task.updateMany!({
+        where: {
+          ...recordLookupWhere('Task', event.recordId, actor.organizationId),
+          assigneeId: currentAssignee,
         },
-        organizationId: actor.organizationId,
-      },
-    });
-    return { kind: 'updated' as const };
-  });
+        data: { assigneeId: userId },
+      });
+      if (result.count !== 1) {
+        throw codedError('Task changed concurrently; retry the workflow execution', 409);
+      }
+
+      await getDelegate(tx, 'auditLog').create!({
+        data: {
+          actorId: actor.userId,
+          actorName: actor.email,
+          action: 'workflow.assign_record_owner',
+          entityType: 'Task',
+          entityId: event.recordId,
+          before: { assigneeId: currentAssignee },
+          after: { assigneeId: userId },
+          metadata: {
+            workflowRuleId: context.ruleId,
+            workflowExecutionId: context.executionId,
+            actionIndex: context.actionIndex,
+            eventType: event.type,
+          },
+          organizationId: actor.organizationId,
+        },
+      });
+      return { kind: 'updated' as const };
+    },
+    (result) =>
+      result.kind === 'updated'
+        ? {
+            index: context.actionIndex,
+            type: 'assign_record_owner',
+            status: 'ok',
+            detail: `assigned task to ${userId}`,
+          }
+        : undefined
+  );
 
   if (changed.kind === 'missing') {
     return {
@@ -807,11 +947,31 @@ async function persistExecutionCheckpoint({
   claimToken: string;
   resultLog: Record<string, unknown>;
 }): Promise<boolean> {
-  const updated = await prisma.workflowExecution.updateMany({
-    where: { id: executionId, organizationId, status: 'running', claimToken },
-    data: { resultLog, lastAttemptAt: new Date() },
+  return prisma.$transaction(async (tx: unknown) => {
+    const executionDelegate = getDelegate(tx, 'workflowExecution');
+    const locked = await executionDelegate.updateMany!({
+      where: { id: executionId, organizationId, status: 'running', claimToken },
+      data: { lastAttemptAt: new Date() },
+    });
+    if (locked.count !== 1) return false;
+    const execution = await executionDelegate.findFirst({
+      where: { id: executionId, organizationId, status: 'running', claimToken },
+    });
+    if (!execution) return false;
+    const currentLog = executionResultLog(execution.resultLog);
+    const mergedLog = { ...currentLog, ...resultLog };
+    if (Array.isArray(currentLog.actions) || Array.isArray(resultLog.actions)) {
+      mergedLog.actions = mergeActionOutcomes(
+        currentLog.actions,
+        (resultLog.actions ?? []) as ActionOutcome[]
+      );
+    }
+    const updated = await executionDelegate.updateMany!({
+      where: { id: executionId, organizationId, status: 'running', claimToken },
+      data: { resultLog: mergedLog },
+    });
+    return updated.count === 1;
   });
-  return updated.count === 1;
 }
 
 async function finalizeExecutionAttempt({
@@ -854,11 +1014,28 @@ async function finalizeExecutionAttempt({
   try {
     return await prisma.$transaction(async (tx: unknown) => {
       const executionDelegate = getDelegate(tx, 'workflowExecution');
+      const locked = await executionDelegate.updateMany!({
+        where: { id: executionId, organizationId, status: 'running', claimToken },
+        data: { lastAttemptAt: now },
+      });
+      if (locked.count !== 1) return null;
+      const current = await executionDelegate.findFirst({
+        where: { id: executionId, organizationId, status: 'running', claimToken },
+      });
+      if (!current) return null;
+      const currentLog = executionResultLog(current.resultLog);
+      const finalLog = { ...currentLog, ...persistedLog };
+      if (Array.isArray(currentLog.actions) || Array.isArray(persistedLog.actions)) {
+        finalLog.actions = mergeActionOutcomes(
+          currentLog.actions,
+          (persistedLog.actions ?? []) as ActionOutcome[]
+        );
+      }
       const changed = await executionDelegate.updateMany!({
         where: { id: executionId, organizationId, status: 'running', claimToken },
         data: {
           status,
-          resultLog: persistedLog,
+          resultLog: finalLog,
           errorCategory: failureCategory,
           nextAttemptAt,
           terminalAt: terminal ? now : null,
@@ -1011,6 +1188,7 @@ async function dispatchWorkflowEvent(
           claimToken,
           resultLog: {
             ...eventMetadata(event, actor),
+            actionEvidenceVersion: 1,
             actionDefinitions: parsedActions.success ? parsedActions.data : rule.actions,
             actions: [],
           },
@@ -1452,6 +1630,24 @@ export async function recoverWorkflowExecutionsForScheduler(now = new Date()) {
       }
       continue;
     }
+    const uncertainIndex = uncertainMutationActionIndex(
+      parsedActions.data.list,
+      previousActions,
+      previousLog.actionEvidenceVersion
+    );
+    if (uncertainIndex !== null) {
+      const changed = await finalizeUnclaimedRecoveryState({
+        candidate: { id: candidate.id, organizationId: candidate.organizationId },
+        priorStatus,
+        staleBefore,
+        now,
+        status: 'quarantined',
+        category: 'uncertain_action',
+        resultLog: { ...previousLog, uncertainActionIndex: uncertainIndex },
+      });
+      if (changed) totals.quarantined += 1;
+      continue;
+    }
 
     const claim = await prisma.workflowExecution.updateMany({
       where: {
@@ -1708,6 +1904,33 @@ export async function retryWorkflowExecution(executionId: string) {
     throw codedError('Execution requires manual reconciliation before retry', 409);
   }
 
+  const savedOutcomes = Array.isArray(retrySnapshot.actions)
+    ? (retrySnapshot.actions as ActionOutcome[])
+    : [];
+  const uncertainActionIndex = uncertainMutationActionIndex(
+    parsedSavedActions.data!.list,
+    savedOutcomes,
+    retrySnapshot.actionEvidenceVersion
+  );
+  if (uncertainActionIndex !== null) {
+    await prisma.workflowExecution.updateMany({
+      where: { id: execution.id, organizationId: actor.organizationId, status: 'failed' },
+      data: {
+        status: 'quarantined',
+        terminalAt: new Date(),
+        nextAttemptAt: null,
+        errorCategory: 'uncertain_action',
+        resultLog: {
+          ...retrySnapshot,
+          uncertainActionIndex,
+          errorCategory: 'uncertain_action',
+          terminalReason: 'quarantined',
+        },
+      },
+    });
+    throw codedError('Execution contains a mutation without durable completion evidence', 409);
+  }
+
   if (Number(execution.attempts) >= MAX_WORKFLOW_ATTEMPTS)
     throw codedError('Workflow execution reached its automatic attempt limit', 409);
   const retryClaimToken = randomUUID();
@@ -1847,6 +2070,35 @@ export async function retryWorkflowExecution(executionId: string) {
   try {
     updated = await prisma.$transaction(async (tx: unknown) => {
       const executionDelegate = getDelegate(tx, 'workflowExecution');
+      const locked = await executionDelegate.updateMany!({
+        where: {
+          id: execution.id,
+          organizationId: actor.organizationId,
+          status: 'running',
+          claimToken: retryClaimToken,
+        },
+        data: { lastAttemptAt: finalizedAt },
+      });
+      if (locked.count !== 1) {
+        throw codedError('Execution history changed while retrying', 409);
+      }
+      const current = await executionDelegate.findFirst({
+        where: {
+          id: execution.id,
+          organizationId: actor.organizationId,
+          status: 'running',
+          claimToken: retryClaimToken,
+        },
+      });
+      if (!current) throw codedError('Execution history disappeared while retrying', 409);
+      const currentLog = executionResultLog(current.resultLog);
+      const finalResultLog = { ...currentLog, ...resultLog };
+      if (Array.isArray(currentLog.actions) || Array.isArray(resultLog.actions)) {
+        finalResultLog.actions = mergeActionOutcomes(
+          currentLog.actions,
+          (resultLog.actions ?? []) as ActionOutcome[]
+        );
+      }
       const updatedCount = await executionDelegate.updateMany!({
         where: {
           id: execution.id,
@@ -1856,7 +2108,7 @@ export async function retryWorkflowExecution(executionId: string) {
         },
         data: {
           status,
-          resultLog,
+          resultLog: finalResultLog,
           errorCategory: failureCategory,
           nextAttemptAt:
             status === 'failed'
@@ -1895,24 +2147,53 @@ export async function retryWorkflowExecution(executionId: string) {
     // the execution retryable rather than leaving the compare-and-set claim in
     // `running`; never report success without its audit record.
     try {
-      await prisma.workflowExecution.updateMany({
-        where: {
-          id: execution.id,
-          organizationId: actor.organizationId,
-          status: 'running',
-          claimToken: retryClaimToken,
-        },
-        data: {
-          status: 'failed',
-          claimToken: null,
-          errorCategory: 'database',
-          nextAttemptAt: nextWorkflowAttemptAt(Number(execution.attempts) + 1, new Date()),
-          resultLog: {
-            ...resultLog,
-            errorCategory: 'database',
-            error: 'Retry finalization failed',
+      await prisma.$transaction(async (tx: unknown) => {
+        const executionDelegate = getDelegate(tx, 'workflowExecution');
+        const locked = await executionDelegate.updateMany!({
+          where: {
+            id: execution.id,
+            organizationId: actor.organizationId,
+            status: 'running',
+            claimToken: retryClaimToken,
           },
-        },
+          data: { lastAttemptAt: new Date() },
+        });
+        if (locked.count !== 1) return;
+        const current = await executionDelegate.findFirst({
+          where: {
+            id: execution.id,
+            organizationId: actor.organizationId,
+            status: 'running',
+            claimToken: retryClaimToken,
+          },
+        });
+        if (!current) return;
+        const currentLog = executionResultLog(current.resultLog);
+        const failedLog = {
+          ...currentLog,
+          ...resultLog,
+          errorCategory: 'database',
+          error: 'Retry finalization failed',
+          actions: mergeActionOutcomes(
+            currentLog.actions,
+            (resultLog.actions ?? []) as ActionOutcome[]
+          ),
+        };
+        await executionDelegate.updateMany!({
+          where: {
+            id: execution.id,
+            organizationId: actor.organizationId,
+            status: 'running',
+            claimToken: retryClaimToken,
+          },
+          data: {
+            status: 'failed',
+            claimToken: null,
+            errorCategory: 'database',
+            nextAttemptAt: nextWorkflowAttemptAt(Number(execution.attempts) + 1, new Date()),
+            resultLog: failedLog,
+          },
+        });
       });
     } catch {
       // If persistence is unavailable, retain the original error and leave the

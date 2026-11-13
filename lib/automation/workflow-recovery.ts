@@ -26,6 +26,7 @@ export type WorkflowErrorCategory =
   | 'record_unavailable'
   | 'invalid_action'
   | 'unsafe_action'
+  | 'uncertain_action'
   | 'attempt_limit'
   | 'conflict'
   | 'database'
@@ -63,6 +64,7 @@ export function shouldQuarantineWorkflowFailure(
       'record_unavailable',
       'invalid_action',
       'unsafe_action',
+      'uncertain_action',
     ].includes(category)
   );
 }
