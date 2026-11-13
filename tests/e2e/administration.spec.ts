@@ -13,9 +13,10 @@
  * nothing shared is mutated.
  */
 
+import { chromium, request as playwrightRequest } from '@playwright/test';
 import type { APIRequestContext, Page } from '@playwright/test';
 
-import { expect, requireDatabase, test } from './fixtures';
+import { APP_URL, expect, requireDatabase, test } from './fixtures';
 import type { TestAccount } from './fixtures';
 
 requireDatabase();
@@ -250,23 +251,162 @@ test.describe('administration', () => {
     // The role selector is populated from the organization's real roles.
     await expect(page.locator('#roleId')).toContainText('Administrator');
 
+    // The Bento shell is what every bootstrapped organization renders, so the
+    // audit log is asserted through its visible Bento page: heading, register and
+    // the "Total Audit Entries" metric (the legacy `audit-total` testid and the
+    // `<td>` table only exist in the non-Bento markup).
     await page.goto('/admin/audit-logs');
-    await expect(page.getByRole('heading', { name: 'Audit Log', level: 1 })).toBeVisible();
-    await expect(page.getByTestId('audit-total')).toContainText('entr');
+    const main = page.locator('#main-content');
+    await expect(main.getByRole('heading', { name: 'Audit Activity Log', level: 1 })).toBeVisible();
+    await expect(main.getByText('Total Audit Entries')).toBeVisible();
+    await expect(main.getByText(/^\d[\d,]*$/).first()).toBeVisible();
   });
 
   test('filters the audit log by action', async ({ authedPage: page, api, account }) => {
-    // Produce a known audit entry.
+    // Produce known audit entries with two different actions: `notification.`
+    // matches the first, and must never match the second.
     await createNotification(api, account, { type: 'audit_probe' });
+    const otherRes = await api.post('/api/v1/crm/contacts', {
+      headers: { ...authHeader(account), Origin: APP_URL },
+      data: { firstName: 'Audit', lastName: `Filter${Date.now()}` },
+    });
+    expect(otherRes.status(), `contact create failed: ${await otherRes.text()}`).toBe(201);
+
+    const main = page.locator('#main-content');
+    // The register panel, not the forensic inspector beside it - both render the
+    // selected entry's action, so the row count must be scoped to the register.
+    const register = main
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: /Audit Register/ }) });
 
     await page.goto('/admin/audit-logs?action=notification.');
-    await expect(page.getByRole('heading', { name: 'Audit Log', level: 1 })).toBeVisible();
-    await expect(page.getByRole('cell', { name: 'notification.create' }).first()).toBeVisible();
-    await expect(page.getByRole('cell', { name: 'Audit Log' })).toHaveCount(0);
+    await expect(main.getByRole('heading', { name: 'Audit Activity Log', level: 1 })).toBeVisible();
 
-    // A filter that matches nothing reports an explicit empty state.
+    // Matching entries are shown…
+    await expect(register.getByText('notification.create').first()).toBeVisible();
+    // …and non-matching ones are excluded.
+    await expect(register.getByText(/^contact\./)).toHaveCount(0);
+    // Every register row under this filter carries the filtered action.
+    const actions = await register.getByText(/^[a-z_]+\.[a-z_]+$/).allInnerTexts();
+    expect(actions.length, 'the filtered register should list matching entries').toBeGreaterThan(0);
+    expect(actions.every((action) => action.startsWith('notification.'))).toBe(true);
+
+    // A filter that matches nothing reports the explicit Bento empty state.
     await page.goto('/admin/audit-logs?action=does.not.exist');
-    await expect(page.getByText('No audit entries match these filters.')).toBeVisible();
+    await expect(main.getByRole('status').getByText('No audit entries match query')).toBeVisible();
+    // The empty state is scoped to this filter, not a general empty list.
+    await expect(main.getByText('Filtered Action')).toBeVisible();
+    await expect(main.getByText('does.not.exist')).toBeVisible();
+  });
+
+  test('keeps the action filter when paging to page 2', async ({
+    authedPage: page,
+    api,
+    account,
+  }) => {
+    // The register paginates at 25 entries, so seed past one page of matches.
+    for (let i = 0; i < 26; i++) {
+      await createNotification(api, account, { type: 'audit_probe' });
+    }
+
+    const main = page.locator('#main-content');
+    const register = main
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: /Audit Register/ }) });
+
+    await page.goto('/admin/audit-logs?action=notification.');
+    await expect(main.getByText(/Page 1 of \d+/)).toBeVisible();
+
+    // The Next link has to carry the active filter, not just the page number.
+    const next = main.getByRole('link', { name: 'Next' });
+    await expect(next).toHaveAttribute('href', /action=notification\./);
+
+    await next.click();
+    await page.waitForURL((url) => url.searchParams.get('page') === '2');
+    expect(new URL(page.url()).searchParams.get('action')).toBe('notification.');
+
+    // Page 2 is still the filtered set: matching rows, no non-matching ones.
+    await expect(main.getByText(/Page 2 of \d+/)).toBeVisible();
+    await expect(register.getByText('notification.create').first()).toBeVisible();
+    await expect(register.getByText(/^contact\./)).toHaveCount(0);
+    // The filter is still reported by the page, and Previous keeps it too.
+    await expect(main.getByText('Filtered Action')).toBeVisible();
+    await expect(main.getByRole('link', { name: 'Previous' })).toHaveAttribute(
+      'href',
+      /action=notification\./
+    );
+  });
+
+  test('blocks a signed-in member without audit log permission', async ({ api, account }) => {
+    // A member whose role grants no `audit_log.read`: a billing role with a
+    // single permission, invited and accepted through the real admin flows.
+    const adminHeaders = { ...authHeader(account), Origin: APP_URL };
+    const roleRes = await api.post('/api/v1/admin/roles', {
+      headers: adminHeaders,
+      data: {
+        name: `Audit Restricted ${Date.now()}`,
+        description: 'Billing only - no audit log access',
+        permissionCodes: ['invoice.read'],
+      },
+    });
+    expect(roleRes.status(), `role create failed: ${await roleRes.text()}`).toBe(201);
+    const role = (await roleRes.json()) as { id: string };
+
+    const email = `restricted-${Date.now()}@e2e.agencyos.invalid`;
+    const password = `Restricted!${Date.now()}Aa1`;
+    const inviteRes = await api.post('/api/v1/admin/invitations', {
+      headers: adminHeaders,
+      data: { email, roleId: role.id },
+    });
+    expect(inviteRes.status(), `invite failed: ${await inviteRes.text()}`).toBe(201);
+    const invitation = (await inviteRes.json()) as { token: string };
+
+    // The member signs up, signs in and accepts, in a context of their own.
+    const memberApi = await playwrightRequest.newContext({ baseURL: APP_URL });
+    const signUp = await memberApi.post('/api/auth/sign-up/email', {
+      headers: { Origin: APP_URL },
+      data: { email, password, name: 'Restricted User' },
+    });
+    expect(signUp.status(), `sign-up failed: ${await signUp.text()}`).toBe(200);
+    const signIn = await memberApi.post('/api/auth/sign-in/email', {
+      headers: { Origin: APP_URL },
+      data: { email, password },
+    });
+    expect(signIn.status(), `sign-in failed: ${await signIn.text()}`).toBe(200);
+    const accept = await memberApi.post('/api/v1/invitations/accept', {
+      headers: { Origin: APP_URL },
+      data: { token: invitation.token },
+    });
+    expect(accept.status(), `accept failed: ${await accept.text()}`).toBe(200);
+
+    // API result: the audit endpoint refuses to return records at all.
+    const apiRes = await memberApi.get('/api/v1/admin/audit-logs?page=1');
+    const apiBody = await apiRes.text();
+    expect(apiRes.status(), 'the audit API must forbid a member without audit_log.read').toBe(403);
+    expect(apiBody).not.toContain('"logs"');
+    expect(apiBody).not.toContain('notification.');
+
+    // Page result (separate from the API): the shell renders, but the audit log
+    // itself is replaced by the explicit access notice and no entries leak.
+    const browser = await chromium.launch();
+    const memberContext = await browser.newContext({ baseURL: APP_URL });
+    await memberContext.request.post('/api/auth/sign-in/email', {
+      headers: { Origin: APP_URL },
+      data: { email, password },
+    });
+    const page = await memberContext.newPage();
+    const pageRes = await page.goto('/admin/audit-logs');
+    // Next renders its own `role="alert"` route announcer, so scope to the
+    // page's notice container.
+    await expect(page.locator('#main-content').getByRole('alert')).toContainText(
+      /do not have access/i
+    );
+    expect(pageRes?.status(), 'the page renders a notice rather than a server error').toBe(200);
+    await expect(page.getByText('Audit Register')).toHaveCount(0);
+    await expect(page.getByText(/^notification\./)).toHaveCount(0);
+
+    await browser.close();
+    await memberApi.dispose();
   });
 
   test('creates an invitation and shows the one-time acceptance link', async ({
