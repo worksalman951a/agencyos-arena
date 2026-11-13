@@ -139,35 +139,41 @@ describeIfDb('administration and RBAC (integration)', () => {
     });
 
     it('keeps at least one active administrator', async () => {
-      // Promote a second admin so we can try to remove the last one.
-      const second = await createMemberWithPermissions(admin.organizationId, 'second-admin', []);
-      createdOrganizations.push(second.organizationId);
+      // Use a fresh tenant: other tests promote members in their own fixtures,
+      // which must not change the number of administrators this invariant tests.
+      const testAdmin = await createOrganizationWithAdmin('last-admin-protection');
+      createdOrganizations.push(testAdmin.organizationId);
+      const second = await createMemberWithPermissions(
+        testAdmin.organizationId,
+        'second-admin',
+        []
+      );
       const adminRole = await prisma.role.findFirstOrThrow({
-        where: { organizationId: admin.organizationId, name: 'Administrator' },
+        where: { organizationId: testAdmin.organizationId, isSystem: true, name: 'Administrator' },
       });
       await prisma.userRole.updateMany({
-        where: { userId: second.userId, organizationId: admin.organizationId },
+        where: { userId: second.userId, organizationId: testAdmin.organizationId },
         data: { roleId: adminRole.id },
       });
 
-      // Demote the second admin: allowed (admin stays active).
+      // Demote the second admin: allowed (the fixture admin stays active).
       const employeeRole = await prisma.role.create({
-        data: { organizationId: admin.organizationId, name: `Employee2 ${Date.now()}` },
+        data: { organizationId: testAdmin.organizationId, name: `Employee2 ${Date.now()}` },
       });
       const demote = await jsonFetch(`/api/v1/admin/users/${second.userId}`, {
         method: 'PATCH',
-        headers: authHeaders(admin.token),
+        headers: authHeaders(testAdmin.token),
         body: JSON.stringify({ roleId: employeeRole.id }),
       });
       expect(demote.status).toBe(200);
 
-      // Marking the only remaining administrator as suspended is refused.
-      const suspendSelf = await jsonFetch(`/api/v1/admin/users/${admin.userId}`, {
+      // Suspending the only remaining administrator is refused.
+      const suspend = await jsonFetch(`/api/v1/admin/users/${testAdmin.userId}`, {
         method: 'PATCH',
-        headers: authHeaders(admin.token),
+        headers: authHeaders(testAdmin.token),
         body: JSON.stringify({ status: 'suspended' }),
       });
-      expect(suspendSelf.status).toBe(400);
+      expect(suspend.status).toBe(400);
     });
 
     it('updates supported member profile fields and audits the change', async () => {
@@ -260,68 +266,87 @@ describeIfDb('administration and RBAC (integration)', () => {
     });
 
     it('does not suspend the last active administrator even when an authorized manager targets them', async () => {
-      const manager = await createMemberWithPermissions(admin.organizationId, 'status-manager', [
-        'user.update',
-      ]);
-      createdOrganizations.push(manager.organizationId);
+      const testAdmin = await createOrganizationWithAdmin('last-admin-suspend');
+      createdOrganizations.push(testAdmin.organizationId);
+      const manager = await createMemberWithPermissions(
+        testAdmin.organizationId,
+        'status-manager',
+        ['user.update']
+      );
 
-      const response = await jsonFetch(`/api/v1/admin/users/${admin.userId}`, {
+      const response = await jsonFetch(`/api/v1/admin/users/${testAdmin.userId}`, {
         method: 'PATCH',
         headers: authHeaders(manager.token),
         body: JSON.stringify({ status: 'suspended' }),
       });
       expect(response.status).toBe(400);
-      expect((await prisma.user.findUniqueOrThrow({ where: { id: admin.userId } })).status).toBe(
-        'active'
-      );
+      expect(
+        (await prisma.user.findUniqueOrThrow({ where: { id: testAdmin.userId } })).status
+      ).toBe('active');
     });
 
     it('protects the last administrator from member removal as well as suspension', async () => {
-      const manager = await createMemberWithPermissions(admin.organizationId, 'remove-manager', [
-        'user.delete',
-      ]);
-      createdOrganizations.push(manager.organizationId);
-      const response = await jsonFetch(`/api/v1/admin/users/${admin.userId}`, {
+      const testAdmin = await createOrganizationWithAdmin('last-admin-remove');
+      createdOrganizations.push(testAdmin.organizationId);
+      const manager = await createMemberWithPermissions(
+        testAdmin.organizationId,
+        'remove-manager',
+        ['user.delete']
+      );
+      const response = await jsonFetch(`/api/v1/admin/users/${testAdmin.userId}`, {
         method: 'DELETE',
         headers: authHeaders(manager.token),
       });
       expect(response.status).toBe(400);
       expect(
-        (await prisma.user.findUniqueOrThrow({ where: { id: admin.userId } })).organizationId
-      ).toBe(admin.organizationId);
+        (await prisma.user.findUniqueOrThrow({ where: { id: testAdmin.userId } })).organizationId
+      ).toBe(testAdmin.organizationId);
     });
 
     it('serializes concurrent administrator suspensions so one active administrator remains', async () => {
+      // The authorizing manager is not one of the two target admins, so a
+      // successful suspension cannot revoke the credentials for the competing
+      // request. Serializing on the organization row must let exactly one win.
+      const testAdmin = await createOrganizationWithAdmin('concurrent-admin-suspension');
+      createdOrganizations.push(testAdmin.organizationId);
+      const manager = await createMemberWithPermissions(
+        testAdmin.organizationId,
+        'suspension-manager',
+        ['user.update']
+      );
       const second = await createMemberWithPermissions(
-        admin.organizationId,
-        'concurrent-admin',
+        testAdmin.organizationId,
+        'target-admin',
         []
       );
-      createdOrganizations.push(second.organizationId);
       const adminRole = await prisma.role.findFirstOrThrow({
-        where: { organizationId: admin.organizationId, isSystem: true, name: 'Administrator' },
+        where: {
+          organizationId: testAdmin.organizationId,
+          isSystem: true,
+          name: 'Administrator',
+        },
       });
       await prisma.userRole.updateMany({
-        where: { userId: second.userId, organizationId: admin.organizationId },
+        where: { userId: second.userId, organizationId: testAdmin.organizationId },
         data: { roleId: adminRole.id },
       });
 
       const responses = await Promise.all([
-        jsonFetch(`/api/v1/admin/users/${second.userId}`, {
+        jsonFetch(`/api/v1/admin/users/${testAdmin.userId}`, {
           method: 'PATCH',
-          headers: authHeaders(admin.token),
+          headers: authHeaders(manager.token),
           body: JSON.stringify({ status: 'suspended' }),
         }),
-        jsonFetch(`/api/v1/admin/users/${admin.userId}`, {
+        jsonFetch(`/api/v1/admin/users/${second.userId}`, {
           method: 'PATCH',
-          headers: authHeaders(second.token),
+          headers: authHeaders(manager.token),
           body: JSON.stringify({ status: 'suspended' }),
         }),
       ]);
       expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
       const remaining = await prisma.userRole.count({
         where: {
-          organizationId: admin.organizationId,
+          organizationId: testAdmin.organizationId,
           role: { isSystem: true, name: 'Administrator' },
           user: { status: 'active' },
         },
