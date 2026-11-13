@@ -237,29 +237,60 @@ test.describe('administration', () => {
   test('lists members, opens a member and shows the audit trail', async ({
     authedPage: page,
     account,
+    api,
   }) => {
-    await page.goto('/admin/users');
-    await expect(page.getByRole('heading', { name: 'Users', level: 1 })).toBeVisible();
-    await expect(page.getByRole('cell', { name: account.email })).toBeVisible();
+    // Produce a known audit event whose actor is this member, so the audit trail
+    // below is tied to the member that was opened rather than to any entry.
+    await createNotification(api, account, { type: 'audit_probe' });
 
-    await page
-      .getByRole('row', { name: new RegExp(account.email) })
-      .getByRole('link', { name: 'Edit' })
-      .click();
-    await expect(page.getByRole('heading', { name: 'Edit Member', level: 1 })).toBeVisible();
-    await expect(page.getByRole('main').getByText(account.email)).toBeVisible();
-    // The role selector is populated from the organization's real roles.
-    await expect(page.locator('#roleId')).toContainText('Administrator');
-
-    // The Bento shell is what every bootstrapped organization renders, so the
-    // audit log is asserted through its visible Bento page: heading, register and
-    // the "Total Audit Entries" metric (the legacy `audit-total` testid and the
-    // `<td>` table only exist in the non-Bento markup).
-    await page.goto('/admin/audit-logs');
+    // Every bootstrapped organization renders the Bento shell, whose Users &
+    // Members directory lists rows as buttons (the legacy `<td>` table with
+    // `role=cell` is only rendered without Bento).
     const main = page.locator('#main-content');
+    await page.goto('/admin/users');
+    await expect(main.getByRole('heading', { name: 'Users & Members', level: 1 })).toBeVisible();
+
+    const directory = main
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: /Members Directory/ }) });
+    // Find the seeded member by its unique identity - never by row position.
+    const memberRow = directory.getByRole('button').filter({ hasText: account.email });
+    await expect(
+      memberRow,
+      'the directory should list exactly one row for this member'
+    ).toHaveCount(1);
+    await expect(memberRow).toContainText(account.email);
+
+    // Open it through the visible row action.
+    await memberRow.getByRole('link', { name: 'Edit' }).click();
+    await page.waitForURL(/\/admin\/users\/[^/]+$/);
+
+    // The detail page settles on the member that was opened: the email and the
+    // heading both name it, so a wrong member could not pass.
+    const detailHeading = page.locator('h1').first();
+    await expect(detailHeading).toContainText('Edit Member');
+    await expect(detailHeading).not.toContainText('Loading');
+    await expect(page.getByText(account.email).first()).toBeVisible();
+    await expect(detailHeading).toContainText('E2E account');
+
+    // The role selector is populated from the organization's real roles.
+    const roleSelector = page.locator('#roleId');
+    await expect(roleSelector).toBeVisible();
+    await expect(roleSelector).toContainText('Administrator');
+
+    // The audit trail shows the event produced above, attributed to this member.
+    await page.goto('/admin/audit-logs?action=notification.');
     await expect(main.getByRole('heading', { name: 'Audit Activity Log', level: 1 })).toBeVisible();
     await expect(main.getByText('Total Audit Entries')).toBeVisible();
-    await expect(main.getByText(/^\d[\d,]*$/).first()).toBeVisible();
+
+    const register = main
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: /Audit Register/ }) });
+    await expect(register.getByText('notification.create').first()).toBeVisible();
+    await expect(
+      register.getByText(`by ${account.email}`).first(),
+      'the audit entry should be attributed to the member that was opened'
+    ).toBeVisible();
   });
 
   test('filters the audit log by action', async ({ authedPage: page, api, account }) => {
