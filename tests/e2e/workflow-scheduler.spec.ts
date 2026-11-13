@@ -64,7 +64,12 @@ test.describe('workflow scheduler', () => {
           name: `E2E invoice overdue ${randomUUID()}`,
           trigger: 'invoice.overdue',
           conditions: {},
-          actions: { list: [{ type: 'log', message: 'daily invoice overdue trigger' }] },
+          actions: {
+            list: [
+              { type: 'log', message: 'already completed' },
+              { type: 'log', message: 'safe retry' },
+            ],
+          },
           enabled: true,
         },
       });
