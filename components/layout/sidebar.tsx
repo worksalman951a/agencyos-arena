@@ -73,6 +73,7 @@ export const SIDEBAR_ICONS: Record<NavIconKey, React.ComponentType<{ className?:
   sharedLinks: Link2,
   workflows: Workflow,
   notifications: Bell,
+  approvals: FileSignature,
   users: UserCog,
   roles: ShieldCheck,
   auditLog: ScrollText,

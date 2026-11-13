@@ -86,6 +86,7 @@ describe('Phase 8B Bento Settings & Administration Integration', () => {
         saves={{
           organization: { status: 'idle' },
           branding: { status: 'idle' },
+          appearance: { status: 'idle' },
           currency: { status: 'idle' },
           invoice: { status: 'idle' },
           proposal: { status: 'idle' },
@@ -157,6 +158,7 @@ describe('Phase 8B Bento Settings & Administration Integration', () => {
         saves={{
           organization: { status: 'idle' },
           branding: { status: 'idle' },
+          appearance: { status: 'idle' },
           currency: { status: 'idle' },
           invoice: { status: 'idle' },
           proposal: { status: 'idle' },
@@ -215,7 +217,7 @@ describe('Phase 8B Bento Settings & Administration Integration', () => {
     );
 
     // Switch to Brand & Appearance
-    fireEvent.click(screen.getByText('Brand & Appearance'));
+    fireEvent.click(screen.getByText('Branding'));
     expect(screen.getByText('Brand & Visual Identity')).toBeInTheDocument();
     expect(screen.getByText('Curated Accessible Palette Swatches')).toBeInTheDocument();
 
@@ -238,6 +240,7 @@ describe('Phase 8B Bento Settings & Administration Integration', () => {
         saves={{
           organization: { status: 'idle' },
           branding: { status: 'idle' },
+          appearance: { status: 'idle' },
           currency: { status: 'idle' },
           invoice: { status: 'idle' },
           proposal: { status: 'idle' },

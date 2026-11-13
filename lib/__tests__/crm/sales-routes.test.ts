@@ -22,7 +22,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-import { NAV_SECTIONS } from '@/lib/navigation';
+import { NAV_SECTIONS, allNavItems } from '@/lib/navigation';
 
 const ROOT = process.cwd();
 
@@ -109,14 +109,15 @@ describe('Sidebar navigation includes Proposals and Quotations', () => {
   });
 
   it('All CRM and Sales modules are accessible from sidebar', () => {
-    const hrefs = navItems.map((item) => item.href);
+    const flat = allNavItems(NAV_SECTIONS);
+    const hrefs = flat.map((item) => item.href);
     const expected = [
       '/dashboard',
       '/crm/contacts',
       '/crm/accounts',
-      '/crm/pipelines',
       '/crm/leads',
       '/crm/opportunities',
+      '/crm/pipeline-stages',
       '/sales/proposals',
       '/sales/quotations',
     ];
@@ -438,12 +439,12 @@ it('Future-only module routes use dynamic = force-dynamic', () => {
 
 it('Sidebar navigation remains intact with all modules listed', () => {
   // The menu lives in lib/navigation.ts so every module renders the same one.
-  const hrefs = NAV_SECTIONS.flatMap((section) => section.items.map((item) => item.href));
+  const flat = allNavItems(NAV_SECTIONS);
+  const hrefs = flat.map((item) => item.href);
   const expected = [
     '/dashboard',
     '/crm/contacts',
     '/crm/accounts',
-    '/crm/pipelines',
     '/crm/leads',
     '/crm/opportunities',
     '/sales/proposals',
@@ -453,8 +454,6 @@ it('Sidebar navigation remains intact with all modules listed', () => {
     '/projects/time-entries',
     '/documents/contracts',
     '/automation/rules',
-    '/admin/users',
-    '/settings',
   ];
   for (const href of expected) {
     expect(hrefs).toContain(href);

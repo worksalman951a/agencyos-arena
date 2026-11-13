@@ -149,6 +149,7 @@ export default function SettingsPage() {
   const [saves, setSaves] = useState<Record<SectionKey, SaveState>>({
     organization: EMPTY_SAVE,
     branding: EMPTY_SAVE,
+    appearance: EMPTY_SAVE,
     currency: EMPTY_SAVE,
     invoice: EMPTY_SAVE,
     proposal: EMPTY_SAVE,

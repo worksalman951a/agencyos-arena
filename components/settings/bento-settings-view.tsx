@@ -15,6 +15,15 @@ import {
   Sun,
   Moon,
   Laptop,
+  Users,
+  ScrollText,
+  Flag,
+  Activity,
+  Bell,
+  KeyRound,
+  Database,
+  Sliders,
+  ExternalLink,
 } from 'lucide-react';
 
 import { Panel, StatStrip, StatusPill } from '@/components/ui/premium/primitives';
@@ -71,7 +80,7 @@ export interface UserProfileResponse {
 }
 
 export type SectionKey =
-  'organization' | 'branding' | 'currency' | 'invoice' | 'proposal' | 'profile';
+  'organization' | 'branding' | 'appearance' | 'currency' | 'invoice' | 'proposal' | 'profile';
 
 export interface SaveState {
   status: 'idle' | 'saving' | 'success' | 'error';
@@ -225,45 +234,147 @@ export function BentoSettingsView({
     return saves[section]?.fieldErrors?.[field];
   };
 
-  const navItems: Array<{ id: SectionKey; label: string; icon: React.ElementType; note: string }> =
-    [
-      {
-        id: 'organization',
-        label: 'Organisation Profile',
-        icon: Building2,
-        note: 'Identity & contact info',
-      },
-      {
-        id: 'branding',
-        label: 'Brand & Appearance',
-        icon: Palette,
-        note: 'Accent palette & logos',
-      },
-      {
-        id: 'currency',
-        label: 'Currency & Dates',
-        icon: CreditCard,
-        note: 'Financial formatting defaults',
-      },
-      {
-        id: 'invoice',
-        label: 'Invoice Preferences',
-        icon: FileText,
-        note: 'Prefixes & sequences',
-      },
-      {
-        id: 'proposal',
-        label: 'Proposal Preferences',
-        icon: Sparkles,
-        note: 'Prefixes & validity',
-      },
-      {
-        id: 'profile',
-        label: 'Your Account',
-        icon: User,
-        note: 'Personal credentials',
-      },
-    ];
+  interface SettingsCategoryItem {
+    id?: SectionKey;
+    label: string;
+    icon: React.ElementType;
+    note: string;
+    href?: string;
+    disabledBadge?: string;
+    adminOnly?: boolean;
+  }
+
+  interface SettingsCategory {
+    category: string;
+    adminOnly?: boolean;
+    items: SettingsCategoryItem[];
+  }
+
+  const settingsCategories: SettingsCategory[] = [
+    {
+      category: 'Account',
+      items: [
+        {
+          id: 'profile',
+          label: 'My Profile',
+          icon: User,
+          note: 'Personal credentials & avatar',
+        },
+        {
+          label: 'Notifications',
+          icon: Bell,
+          note: 'Delivery alerts & preferences',
+          href: '/automation/preferences',
+        },
+        {
+          label: 'Security',
+          icon: KeyRound,
+          note: 'Password & sessions',
+          disabledBadge: 'Coming Soon',
+        },
+      ],
+    },
+    {
+      category: 'Appearance',
+      items: [
+        {
+          id: 'appearance',
+          label: 'Theme & Display',
+          icon: Sun,
+          note: 'Light, Dark, and System modes',
+        },
+      ],
+    },
+    {
+      category: 'Workspace',
+      items: [
+        {
+          id: 'organization',
+          label: 'Organization Profile',
+          icon: Building2,
+          note: 'Company name & address',
+        },
+        {
+          id: 'branding',
+          label: 'Branding',
+          icon: Palette,
+          note: 'Logos, colors & brand name',
+        },
+        {
+          id: 'currency',
+          label: 'Currency & Dates',
+          icon: CreditCard,
+          note: 'Currency, dates & tax rules',
+        },
+        {
+          id: 'invoice',
+          label: 'Invoice Preferences',
+          icon: FileText,
+          note: 'Prefixes & sequences',
+        },
+        {
+          id: 'proposal',
+          label: 'Proposal Preferences',
+          icon: Sparkles,
+          note: 'Prefixes & validity',
+        },
+      ],
+    },
+    {
+      category: 'Administration',
+      adminOnly: true,
+      items: [
+        {
+          label: 'Users & Invitations',
+          icon: Users,
+          note: 'Team access management',
+          href: '/admin/users',
+        },
+        {
+          label: 'Roles & Permissions',
+          icon: Shield,
+          note: 'RBAC & permission policies',
+          href: '/admin/roles',
+        },
+        {
+          label: 'Audit Log',
+          icon: ScrollText,
+          note: 'System activity logs',
+          href: '/admin/audit-logs',
+        },
+        {
+          label: 'Feature Flags',
+          icon: Flag,
+          note: 'Beta features & toggles',
+          href: '/admin/feature-flags',
+        },
+      ],
+    },
+    {
+      category: 'System',
+      adminOnly: true,
+      items: [
+        {
+          label: 'System Health',
+          icon: Activity,
+          note: 'Database & operational metrics',
+          href: '/admin/health',
+        },
+        {
+          label: 'Backup & Data',
+          icon: Database,
+          note: 'Snapshots & export',
+          disabledBadge: 'Coming Soon',
+        },
+        {
+          label: 'Integrations',
+          icon: Sliders,
+          note: 'External services & webhooks',
+          disabledBadge: 'Coming Soon',
+        },
+      ],
+    },
+  ];
 
   return (
     <div className="bento-crm space-y-6">
@@ -337,36 +448,85 @@ export function BentoSettingsView({
 
       {/* ── Main Layout: Section Navigation & Bento Panel Content ─────── */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-        {/* Navigation Sidebar */}
-        <div className="lg:col-span-1 space-y-2">
-          <Panel title="Configuration Modules">
-            <div className="p-2 space-y-1">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeSection === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveSection(item.id)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium transition-colors flex items-start gap-2.5 ${
-                      isActive
-                        ? 'bg-accent text-accent-foreground font-semibold shadow-xs'
-                        : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                    }`}
-                  >
-                    <Icon className="h-4 w-4 shrink-0 mt-0.5" />
-                    <div className="min-w-0">
-                      <div className="truncate">{item.label}</div>
-                      <div
-                        className={`text-[10px] truncate ${isActive ? 'text-accent-foreground/80' : 'text-muted-foreground/70'}`}
-                      >
-                        {item.note}
-                      </div>
+        {/* Secondary Navigation Sidebar Organized by Categories */}
+        <div className="lg:col-span-1 space-y-4">
+          <Panel title="Settings Center">
+            <div className="p-2 space-y-4">
+              {settingsCategories
+                .filter((group) => !group.adminOnly || org.isAdmin)
+                .map((group) => (
+                  <div key={group.category} className="space-y-1">
+                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      {group.category}
                     </div>
-                  </button>
-                );
-              })}
+                    <div className="space-y-0.5">
+                      {group.items.map((item, idx) => {
+                        const Icon = item.icon;
+                        if (item.href) {
+                          return (
+                            <Link
+                              key={idx}
+                              href={item.href}
+                              className="w-full text-left px-3 py-2 rounded-md text-xs font-medium transition-colors flex items-center justify-between text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <Icon className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">{item.label}</span>
+                              </div>
+                              <ExternalLink className="h-3 w-3 shrink-0 opacity-50" />
+                            </Link>
+                          );
+                        }
+
+                        if (item.disabledBadge) {
+                          return (
+                            <div
+                              key={idx}
+                              className="w-full text-left px-3 py-2 rounded-md text-xs font-medium flex items-center justify-between text-muted-foreground/50 cursor-not-allowed select-none"
+                              title={item.note}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <Icon className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">{item.label}</span>
+                              </div>
+                              <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground/70">
+                                {item.disabledBadge}
+                              </span>
+                            </div>
+                          );
+                        }
+
+                        const isActive = activeSection === item.id;
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => item.id && setActiveSection(item.id)}
+                            className={`w-full text-left px-3 py-2 rounded-md text-xs font-medium transition-colors flex items-start gap-2.5 ${
+                              isActive
+                                ? 'bg-accent text-accent-foreground font-semibold shadow-xs'
+                                : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                            }`}
+                          >
+                            <Icon className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <div className="min-w-0">
+                              <div className="truncate">{item.label}</div>
+                              <div
+                                className={`text-[10px] truncate ${
+                                  isActive
+                                    ? 'text-accent-foreground/80'
+                                    : 'text-muted-foreground/70'
+                                }`}
+                              >
+                                {item.note}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
             </div>
           </Panel>
         </div>
@@ -544,28 +704,16 @@ export function BentoSettingsView({
             </Panel>
           )}
 
-          {/* 2. Brand & Appearance */}
-          {activeSection === 'branding' && (
-            <Panel
-              title="Brand & Visual Identity"
-              action={
-                org.isAdmin ? (
-                  <StatusPill tone="ok">Admin Authorized</StatusPill>
-                ) : (
-                  <StatusPill tone="neutral">Read Only</StatusPill>
-                )
-              }
-            >
+          {/* Appearance (Theme & Display) */}
+          {activeSection === 'appearance' && (
+            <Panel title="Theme & Display Preferences">
               <div className="p-5 space-y-6">
-                {/* Appearance Preference Mode (Issue 2 Requirement) */}
-                <div className="space-y-3 pb-5 border-b border-border">
+                <div className="space-y-3 pb-5">
                   <div>
-                    <h4 className="text-xs font-semibold text-foreground">
-                      Theme &amp; Appearance
-                    </h4>
+                    <h4 className="text-xs font-semibold text-foreground">Interface Theme Mode</h4>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      Choose your interface presentation mode. Selecting System synchronizes with
-                      your device preferences.
+                      Choose your personal interface presentation mode. Selecting System
+                      synchronizes with your operating system preferences.
                     </p>
                   </div>
 
@@ -636,7 +784,23 @@ export function BentoSettingsView({
                     </button>
                   </div>
                 </div>
+              </div>
+            </Panel>
+          )}
 
+          {/* 2. Branding (Workspace Identity) */}
+          {activeSection === 'branding' && (
+            <Panel
+              title="Brand & Visual Identity"
+              action={
+                org.isAdmin ? (
+                  <StatusPill tone="ok">Admin Authorized</StatusPill>
+                ) : (
+                  <StatusPill tone="neutral">Read Only</StatusPill>
+                )
+              }
+            >
+              <div className="p-5 space-y-6">
                 <form onSubmit={onBrandingSave} className="space-y-6">
                   <div className="text-xs text-muted-foreground">
                     Configure white-label branding, logo artwork, and primary color palette. Accent

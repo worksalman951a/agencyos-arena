@@ -99,7 +99,7 @@ export function BentoContractFormView({
           </Button>
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              <Link href="/documents" className="hover:underline">
+              <Link href="/documents/contracts" className="hover:underline">
                 Documents
               </Link>
               <span>/</span>

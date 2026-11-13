@@ -1,20 +1,20 @@
 /**
  * AgencyOS navigation model.
  *
- * Single source of truth for the application sidebar. Every module renders
- * the same shell (see components/layout/app-shell.tsx) and therefore the same
- * navigation, so this file - not the individual route folders - determines
- * what exists in the menu.
+ * Single source of truth for the application sidebar and navigation hierarchy.
+ * Every module renders the same shell (components/layout/bento-app-shell.tsx and app-shell.tsx)
+ * and therefore the same navigation structure.
  *
- * Deliberately serializable: icons are referenced by key and resolved inside
- * the client Sidebar component, so this module can be imported by both server
- * and client code (and unit-tested without React).
+ * Approved Balanced Modern Navigation Hierarchy:
+ * - Dashboard: /dashboard
+ * - Clients & Sales: Contacts, Accounts, Leads, Pipeline (Opportunities, Stages), Proposals, Quotations
+ * - Work Management: Projects (Projects, Templates), Time Tracking, Approvals, Change Orders
+ * - Finance: Invoices, Estimates, Expenses, Reports
+ * - Tools: Documents (Contracts, Document Templates, Shared Links), Automations (Workflow Rules)
+ * - Fixed Footer: Settings (/settings) & User Account Menu
  *
- * Permission codes mirror the ones the corresponding service layer enforces
- * (see lib/services/**). An item whose permission the actor does not hold is
- * removed from the menu, so a user never sees a link to a page that would
- * answer 403. Items without a `permission` key are available to any
- * authenticated member of an organization.
+ * Permission codes mirror the ones enforced by the corresponding service layer.
+ * Items without a `permission` key are accessible to all authenticated organization members.
  */
 
 export type NavIconKey =
@@ -33,6 +33,7 @@ export type NavIconKey =
   | 'reports'
   | 'projects'
   | 'projectTemplates'
+  | 'approvals'
   | 'changeOrders'
   | 'timeEntries'
   | 'contracts'
@@ -47,14 +48,22 @@ export type NavIconKey =
   | 'health'
   | 'settings';
 
+export interface NavSubItem {
+  name: string;
+  href: string;
+  permission?: string;
+}
+
 export interface NavItem {
   /** Label shown in the sidebar. */
   name: string;
-  /** Route within the app (always absolute, never a hardcoded host). */
+  /** Route within the app (always absolute). */
   href: string;
   icon: NavIconKey;
   /** Permission code required to see the item. Omit for always-visible items. */
   permission?: string;
+  /** Optional nested sub-items (e.g. Pipeline -> Opportunities, Stages). */
+  subItems?: NavSubItem[];
 }
 
 export interface NavSection {
@@ -65,42 +74,27 @@ export interface NavSection {
 
 export const NAV_SECTIONS: readonly NavSection[] = [
   {
-    id: 'workspace',
-    label: 'Workspace',
-    items: [
-      { name: 'Dashboard', href: '/dashboard', icon: 'dashboard' },
-      { name: 'Settings', href: '/settings', icon: 'settings' },
-      // Diagnostics page performs no permission check of its own, so it is not
-      // part of the admin-only group.
-      { name: 'System Health', href: '/admin/health', icon: 'health' },
-    ],
+    id: 'dashboard',
+    label: 'Dashboard',
+    items: [{ name: 'Dashboard', href: '/dashboard', icon: 'dashboard' }],
   },
   {
-    id: 'crm',
-    label: 'CRM',
+    id: 'clients-sales',
+    label: 'Clients & Sales',
     items: [
       { name: 'Contacts', href: '/crm/contacts', icon: 'contacts', permission: 'contact.read' },
       { name: 'Accounts', href: '/crm/accounts', icon: 'accounts', permission: 'account.read' },
-      { name: 'Pipelines', href: '/crm/pipelines', icon: 'pipelines', permission: 'pipeline.read' },
-      {
-        name: 'Pipeline Stages',
-        href: '/crm/pipeline-stages',
-        icon: 'pipelineStages',
-        permission: 'pipeline.read',
-      },
       { name: 'Leads', href: '/crm/leads', icon: 'leads', permission: 'lead.read' },
       {
-        name: 'Opportunities',
+        name: 'Pipeline',
         href: '/crm/opportunities',
-        icon: 'opportunities',
+        icon: 'pipelines',
         permission: 'opportunity.read',
+        subItems: [
+          { name: 'Opportunities', href: '/crm/opportunities', permission: 'opportunity.read' },
+          { name: 'Pipeline Stages', href: '/crm/pipeline-stages', permission: 'pipeline.read' },
+        ],
       },
-    ],
-  },
-  {
-    id: 'sales',
-    label: 'Sales',
-    items: [
       {
         name: 'Proposals',
         href: '/sales/proposals',
@@ -116,6 +110,44 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     ],
   },
   {
+    id: 'work-management',
+    label: 'Work Management',
+    items: [
+      {
+        name: 'Projects',
+        href: '/projects',
+        icon: 'projects',
+        permission: 'project.read',
+        subItems: [
+          { name: 'All Projects', href: '/projects', permission: 'project.read' },
+          {
+            name: 'Project Templates',
+            href: '/projects/templates',
+            permission: 'project.template.read',
+          },
+        ],
+      },
+      {
+        name: 'Time Tracking',
+        href: '/projects/time-entries',
+        icon: 'timeEntries',
+        permission: 'time.entry.read',
+      },
+      {
+        name: 'Approvals',
+        href: '/projects/approvals',
+        icon: 'approvals',
+        permission: 'project.approval.read',
+      },
+      {
+        name: 'Change Orders',
+        href: '/projects/change-orders',
+        icon: 'changeOrders',
+        permission: 'change.order.read',
+      },
+    ],
+  },
+  {
     id: 'finance',
     label: 'Finance',
     items: [
@@ -127,107 +159,32 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         permission: 'estimate.read',
       },
       { name: 'Expenses', href: '/finance/expenses', icon: 'expenses', permission: 'expense.read' },
-      // Reports aggregate invoices, estimates and expenses; invoice.read is
-      // the narrowest permission that unlocks every source it reads.
       { name: 'Reports', href: '/finance/reports', icon: 'reports', permission: 'invoice.read' },
     ],
   },
   {
-    id: 'projects',
-    label: 'Projects',
-    items: [
-      { name: 'Projects', href: '/projects', icon: 'projects', permission: 'project.read' },
-      {
-        name: 'Templates',
-        href: '/projects/templates',
-        icon: 'projectTemplates',
-        permission: 'project.template.read',
-      },
-      {
-        name: 'Change Orders',
-        href: '/projects/change-orders',
-        icon: 'changeOrders',
-        permission: 'change.order.read',
-      },
-      {
-        name: 'Time Entries',
-        href: '/projects/time-entries',
-        icon: 'timeEntries',
-        permission: 'time.entry.read',
-      },
-    ],
-  },
-  {
-    id: 'documents',
-    label: 'Documents',
+    id: 'tools',
+    label: 'Tools',
     items: [
       {
-        name: 'Contracts',
+        name: 'Documents',
         href: '/documents/contracts',
         icon: 'contracts',
         permission: 'contract.read',
+        subItems: [
+          { name: 'Contracts', href: '/documents/contracts', permission: 'contract.read' },
+          { name: 'Document Templates', href: '/documents/templates', permission: 'template.read' },
+          { name: 'Shared Links', href: '/documents/links', permission: 'document.read' },
+        ],
       },
       {
-        name: 'Templates',
-        href: '/documents/templates',
-        icon: 'documentTemplates',
-        permission: 'template.read',
-      },
-      {
-        name: 'Shared Links',
-        href: '/documents/links',
-        icon: 'sharedLinks',
-        permission: 'document.read',
-      },
-    ],
-  },
-  {
-    id: 'automation',
-    label: 'Automation',
-    items: [
-      {
-        name: 'Workflow Rules',
+        name: 'Automations',
         href: '/automation/rules',
         icon: 'workflows',
         permission: 'workflow.read',
-      },
-      {
-        name: 'Notifications',
-        href: '/automation/notifications',
-        icon: 'notifications',
-        permission: 'notification.read',
-      },
-      {
-        name: 'Preferences',
-        href: '/automation/preferences',
-        icon: 'settings',
-        permission: 'notification.preference',
-      },
-    ],
-  },
-  {
-    id: 'admin',
-    label: 'Administration',
-    items: [
-      { name: 'Users', href: '/admin/users', icon: 'users', permission: 'user.read' },
-      { name: 'Roles', href: '/admin/roles', icon: 'roles', permission: 'role.read' },
-      {
-        name: 'Invitations',
-        href: '/admin/invitations',
-        icon: 'users',
-        permission: 'invitation.read',
-      },
-      {
-        name: 'Audit Log',
-        href: '/admin/audit-logs',
-        icon: 'auditLog',
-        permission: 'audit_log.read',
-      },
-      {
-        name: 'Feature Flags',
-        href: '/admin/feature-flags',
-        icon: 'featureFlags',
-        permission: 'feature_flag.read',
+        subItems: [
+          { name: 'Workflow Rules', href: '/automation/rules', permission: 'workflow.read' },
+        ],
       },
     ],
   },
@@ -235,9 +192,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
 
 /**
  * Keep only the navigation sections the actor can actually use.
- *
- * Sections whose items are all filtered out are dropped entirely, so a user
- * with no admin permissions never sees an empty "Administration" heading.
+ * Filters both top-level items and nested subItems.
  */
 export function filterNavigation(
   sections: readonly NavSection[],
@@ -246,23 +201,37 @@ export function filterNavigation(
   return sections
     .map((section) => ({
       ...section,
-      items: section.items.filter(
-        (item) => item.permission === undefined || permissions.has(item.permission)
-      ),
+      items: section.items
+        .filter((item) => item.permission === undefined || permissions.has(item.permission))
+        .map((item) => ({
+          ...item,
+          subItems: item.subItems?.filter(
+            (sub) => sub.permission === undefined || permissions.has(sub.permission)
+          ),
+        })),
     }))
     .filter((section) => section.items.length > 0);
 }
 
-/** All items from a section list, flattened (used for active-link resolution). */
-export function allNavItems(sections: readonly NavSection[]): NavItem[] {
-  return sections.flatMap((section) => section.items);
+/** All items and subItems from a section list, flattened (used for active-link resolution). */
+export function allNavItems(
+  sections: readonly NavSection[]
+): Array<{ name: string; href: string; icon?: NavIconKey; permission?: string }> {
+  return sections.flatMap((section) =>
+    section.items.flatMap((item) => [
+      { name: item.name, href: item.href, icon: item.icon, permission: item.permission },
+      ...(item.subItems?.map((s) => ({
+        name: s.name,
+        href: s.href,
+        icon: item.icon,
+        permission: s.permission,
+      })) ?? []),
+    ])
+  );
 }
 
 /**
  * Does `pathname` belong to the route `href`?
- *
- * Exact matches count, and so do child routes: `/crm/contacts/abc` is inside
- * `/crm/contacts`, but `/crm/contacts-archive` is not.
  */
 export function isHrefActive(pathname: string, href: string): boolean {
   if (!pathname || !href) return false;
@@ -272,11 +241,11 @@ export function isHrefActive(pathname: string, href: string): boolean {
 
 /**
  * Resolve the single active navigation href for a pathname.
- *
- * The longest matching href wins so that nested entries (for example
- * `/finance/invoices` inside `/finance`) highlight the most specific link.
  */
-export function resolveActiveHref(pathname: string, items: readonly NavItem[]): string | null {
+export function resolveActiveHref(
+  pathname: string,
+  items: ReadonlyArray<{ name: string; href: string }>
+): string | null {
   let best: string | null = null;
   for (const item of items) {
     if (!isHrefActive(pathname, item.href)) continue;

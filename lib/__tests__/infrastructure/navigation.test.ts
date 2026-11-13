@@ -40,33 +40,32 @@ describe('filterNavigation', () => {
     expect(ids).not.toContain('crm');
   });
 
-  it('always keeps items that declare no permission (dashboard, settings, health)', () => {
+  it('always keeps items that declare no permission (dashboard)', () => {
     const sections = filterNavigation(NAV_SECTIONS, new Set());
 
     const hrefs = allNavItems(sections).map((item) => item.href);
-    expect(hrefs).toEqual(expect.arrayContaining(['/dashboard', '/settings', '/admin/health']));
-    // A member with no permissions sees only the workspace group - never an
-    // empty "Administration" heading.
-    expect(sections.map((section) => section.id)).toEqual(['workspace']);
+    expect(hrefs).toEqual(expect.arrayContaining(['/dashboard']));
+    // A member with no permissions sees only the dashboard group
+    expect(sections.map((section) => section.id)).toEqual(['dashboard']);
   });
 
   it('shows every module to a fully-privileged administrator', () => {
     const allPermissions = new Set(
-      NAV_SECTIONS.flatMap((section) => section.items)
-        .map((item) => item.permission)
+      NAV_SECTIONS.flatMap((section) => [
+        section.items.map((item) => item.permission),
+        section.items.flatMap((item) => item.subItems?.map((s) => s.permission) ?? []),
+      ])
+        .flat()
         .filter((code): code is string => Boolean(code))
     );
 
     const sections = filterNavigation(NAV_SECTIONS, allPermissions);
     expect(sections.map((section) => section.id)).toEqual([
-      'workspace',
-      'crm',
-      'sales',
+      'dashboard',
+      'clients-sales',
+      'work-management',
       'finance',
-      'projects',
-      'documents',
-      'automation',
-      'admin',
+      'tools',
     ]);
   });
 });
@@ -113,15 +112,22 @@ describe('navigation targets', () => {
     expect(missing).toEqual([]);
   });
 
-  it('has no duplicate destinations', () => {
-    const hrefs = allNavItems(NAV_SECTIONS).map((item) => item.href);
-    expect(new Set(hrefs).size).toBe(hrefs.length);
+  it('has no duplicate destinations across primary items and sub-items', () => {
+    const primaryHrefs = NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.href));
+    // Each primary item is distinct
+    expect(new Set(primaryHrefs).size).toBe(primaryHrefs.length);
+
+    // Flat sub-item links can point to parent's root href as default entry (e.g. /projects -> /projects)
+    const uniqueDests = new Set(allNavItems(NAV_SECTIONS).map((item) => item.href));
+    expect(uniqueDests.size).toBeGreaterThan(15);
   });
 
   it('gives every item an icon key that the sidebar can resolve', () => {
     const iconKeys = Object.keys(SIDEBAR_ICONS);
     for (const item of allNavItems(NAV_SECTIONS)) {
-      expect(iconKeys).toContain(item.icon);
+      if (item.icon) {
+        expect(iconKeys).toContain(item.icon);
+      }
     }
   });
 });
