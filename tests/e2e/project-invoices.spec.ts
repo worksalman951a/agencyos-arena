@@ -91,11 +91,13 @@ test.describe('project invoices', () => {
     await expect(page).toHaveURL(new RegExp(`/finance/invoices/new\\?projectId=${project.id}$`));
     await expect(page.getByTestId('invoice-project-handoff')).toContainText(project.name);
     await expect(page.locator('#projectId')).toHaveValue(project.id);
-    await expect(page.locator('#clientId')).toHaveValue(contact.id);
+    // Bento orgs render the shell form view, whose client select is #invoice-client
+    // (the legacy #clientId belongs to the non-Bento markup).
+    await expect(page.locator('#invoice-client')).toHaveValue(contact.id);
 
     // 3. Create the invoice through the regular form.
     const invoiceTitle = `E2E Project Invoice ${suffix}`;
-    await page.locator('#title').fill(invoiceTitle);
+    await page.locator('#invoice-title').fill(invoiceTitle);
     await page.getByLabel('Line 1 description').fill('Discovery workshop');
     await page.getByLabel('Line 1 quantity').fill('2');
     await page.getByLabel('Line 1 unit price').fill('150.00');
