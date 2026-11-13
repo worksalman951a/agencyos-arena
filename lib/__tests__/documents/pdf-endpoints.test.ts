@@ -10,18 +10,15 @@ vi.mock('@/lib/services/crm/estimate-service', () => ({
   getEstimate: vi.fn(),
 }));
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
-    organizationSetting: {
-      findFirst: vi.fn().mockResolvedValue({
-        brandName: 'Test Org Agency',
-        brandColor: '#2563eb',
-        logoUrl: null,
-      }),
-    },
-  },
+vi.mock('@/lib/services/settings/branding-service', () => ({
+  getBrandingForOrganization: vi.fn().mockResolvedValue({
+    brandName: 'Test Org Agency',
+    brandColor: '#2563eb',
+    logoUrl: null,
+  }),
 }));
 
+import { getBrandingForOrganization } from '@/lib/services/settings/branding-service';
 import { getInvoice } from '@/lib/services/crm/invoice-service';
 import { getEstimate } from '@/lib/services/crm/estimate-service';
 
@@ -64,6 +61,7 @@ describe('Phase 11A: PDF Download API Endpoints', () => {
       const res = await getInvoicePdf(req, { params });
 
       expect(res.status).toBe(200);
+      expect(getBrandingForOrganization).toHaveBeenCalledExactlyOnceWith('org-1');
       expect(res.headers.get('Content-Type')).toBe('application/pdf');
       expect(res.headers.get('Content-Disposition')).toBe(
         'attachment; filename="Invoice_INV-1001.pdf"'
@@ -85,6 +83,7 @@ describe('Phase 11A: PDF Download API Endpoints', () => {
       const res = await getInvoicePdf(req, { params });
 
       expect(res.status).toBe(404);
+      expect(getBrandingForOrganization).not.toHaveBeenCalled();
       const data = await res.json();
       expect(data.error).toBe('Not found');
     });
@@ -112,6 +111,7 @@ describe('Phase 11A: PDF Download API Endpoints', () => {
       const res = await getEstimatePdf(req, { params });
 
       expect(res.status).toBe(200);
+      expect(getBrandingForOrganization).toHaveBeenCalledExactlyOnceWith('org-1');
       expect(res.headers.get('Content-Type')).toBe('application/pdf');
       expect(res.headers.get('Content-Disposition')).toBe(
         'attachment; filename="Estimate_EST-2026.pdf"'
@@ -133,6 +133,7 @@ describe('Phase 11A: PDF Download API Endpoints', () => {
       const res = await getEstimatePdf(req, { params });
 
       expect(res.status).toBe(403);
+      expect(getBrandingForOrganization).not.toHaveBeenCalled();
       const data = await res.json();
       expect(data.error).toBe('Forbidden');
     });

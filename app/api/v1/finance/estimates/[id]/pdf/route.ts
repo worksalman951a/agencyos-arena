@@ -8,33 +8,16 @@ import { NextResponse } from 'next/server';
 import { getEstimate } from '@/lib/services/crm/estimate-service';
 import { generateEstimatePdf } from '@/lib/services/documents/pdf-service';
 import { apiErrorFrom } from '@/lib/api/route-error';
-import { prisma } from '@/lib/db';
+import { getBrandingForOrganization } from '@/lib/services/settings/branding-service';
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const estimate = await getEstimate(id);
 
-    // Fetch branding info if available
-    let branding: {
-      brandName?: string | null;
-      brandColor?: string | null;
-      logoUrl?: string | null;
-    } = {};
-    try {
-      const orgSettings = await prisma.organizationSetting.findFirst({
-        where: { organizationId: estimate.organizationId },
-      });
-      if (orgSettings) {
-        branding = {
-          brandName: orgSettings.brandName,
-          brandColor: orgSettings.brandColor,
-          logoUrl: orgSettings.logoUrl,
-        };
-      }
-    } catch {
-      // Graceful fallback to default branding
-    }
+    const branding = await getBrandingForOrganization(estimate.organizationId).catch(
+      () => undefined
+    );
 
     const pdfBytes = generateEstimatePdf(estimate, branding);
     const safeDocNumber = estimate.number ? estimate.number.replace(/[^a-zA-Z0-9_-]/g, '_') : id;
