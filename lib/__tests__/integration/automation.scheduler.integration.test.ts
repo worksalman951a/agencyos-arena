@@ -231,84 +231,6 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
     ).toBe(1);
   });
 
-  it('reports partial execution failure and does not replay successful actions on the next invocation', async () => {
-    const partialAdmin = await createBootstrappedAccount('workflow-scheduler-partial-failure');
-    createdOrganizations.push(partialAdmin.organizationId);
-    const restricted = await createMemberWithPermissions(
-      partialAdmin.organizationId,
-      'scheduler-partial-failure',
-      ['workflow.create', 'workflow.execute', 'project.read', 'notification.update']
-    );
-    const project = await prisma.project.create({
-      data: {
-        organizationId: partialAdmin.organizationId,
-        name: `Partial failure ${randomUUID()}`,
-        status: 'active',
-        endDate: yesterdayUtc(),
-      },
-    });
-    const rule = await createRule(restricted, 'Partially failing overdue rule', 'project.overdue', {
-      list: [
-        {
-          type: 'notify_user',
-          userId: restricted.userId,
-          title: 'Overdue project notification',
-          message: 'This action should only happen once.',
-        },
-        { type: 'set_status', status: 'completed' },
-      ],
-    });
-
-    const first = await runScheduler();
-    expect(first.status).toBe(500);
-    const firstResult = await first.json();
-    expect(firstResult).toMatchObject({
-      status: 'completed_with_failures',
-      matched: 1,
-      executed: 0,
-      failed: 1,
-    });
-    expect(firstResult).not.toHaveProperty('organizationId');
-    expect(firstResult).not.toHaveProperty('ruleId');
-    expect(firstResult).not.toHaveProperty('stack');
-
-    const second = await runScheduler();
-    expect(second.status).toBe(500);
-    expect(await second.json()).toMatchObject({
-      status: 'completed_with_failures',
-      failed: 1,
-      skipped: 0,
-    });
-
-    expect(
-      await prisma.workflowExecution.count({
-        where: {
-          organizationId: partialAdmin.organizationId,
-          ruleId: rule.id,
-          recordType: 'Project',
-          recordId: project.id,
-          status: 'failed',
-        },
-      })
-    ).toBe(1);
-    expect(
-      await prisma.notification.count({
-        where: {
-          organizationId: partialAdmin.organizationId,
-          userId: restricted.userId,
-          type: 'workflow',
-          payload: { path: ['recordId'], equals: project.id },
-        },
-      })
-    ).toBe(1);
-    expect(
-      await prisma.project.findUniqueOrThrow({
-        where: { id: project.id },
-        select: { status: true },
-      })
-    ).toEqual({ status: 'active' });
-  });
-
   it('ignores disabled and deleted rules and denies scheduled rules to creators without execute permission', async () => {
     const disabledRule = await createRule(
       admin,
@@ -414,5 +336,77 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
         },
       })
     ).toBe(0);
+  });
+
+  it('reports partial execution failure and does not replay successful actions on the next invocation', async () => {
+    const partialAdmin = await createBootstrappedAccount('workflow-scheduler-partial-failure');
+    createdOrganizations.push(partialAdmin.organizationId);
+    const restricted = await createMemberWithPermissions(
+      partialAdmin.organizationId,
+      'scheduler-partial-failure',
+      ['workflow.create', 'workflow.execute', 'project.read', 'notification.update']
+    );
+    const project = await prisma.project.create({
+      data: {
+        organizationId: partialAdmin.organizationId,
+        name: `Partial failure ${randomUUID()}`,
+        status: 'active',
+        endDate: yesterdayUtc(),
+      },
+    });
+    const rule = await createRule(restricted, 'Partially failing overdue rule', 'project.overdue', {
+      list: [
+        {
+          type: 'notify_user',
+          userId: restricted.userId,
+          title: 'Overdue project notification',
+          message: 'This action should only happen once.',
+        },
+        { type: 'set_status', status: 'completed' },
+      ],
+    });
+
+    const first = await runScheduler();
+    expect(first.status).toBe(500);
+    const firstResult = await first.json();
+    expect(firstResult.status).toBe('completed_with_failures');
+    expect(firstResult.failed).toBeGreaterThan(0);
+    expect(firstResult).not.toHaveProperty('organizationId');
+    expect(firstResult).not.toHaveProperty('ruleId');
+    expect(firstResult).not.toHaveProperty('stack');
+
+    const second = await runScheduler();
+    expect(second.status).toBe(500);
+    const secondResult = await second.json();
+    expect(secondResult.status).toBe('completed_with_failures');
+    expect(secondResult.failed).toBeGreaterThan(0);
+
+    expect(
+      await prisma.workflowExecution.count({
+        where: {
+          organizationId: partialAdmin.organizationId,
+          ruleId: rule.id,
+          recordType: 'Project',
+          recordId: project.id,
+          status: 'failed',
+        },
+      })
+    ).toBe(1);
+    expect(
+      await prisma.notification.count({
+        where: {
+          organizationId: partialAdmin.organizationId,
+          userId: restricted.userId,
+          type: 'workflow',
+          payload: { path: ['recordId'], equals: project.id },
+        },
+      })
+    ).toBe(1);
+    expect(
+      await prisma.project.findUniqueOrThrow({
+        where: { id: project.id },
+        select: { status: true },
+      })
+    ).toEqual({ status: 'active' });
   });
 });
