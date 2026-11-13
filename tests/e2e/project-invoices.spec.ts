@@ -124,7 +124,9 @@ test.describe('project invoices', () => {
     await expect(page).toHaveURL(new RegExp(`/finance/invoices\\?projectId=${project.id}$`));
 
     // The filter control reports the project the workspace handed over.
-    const projectFilter = page.getByLabel('Filter by project');
+    // Scoped to the rendered shell: the same control also exists in React's
+    // hidden streamed staging node until the Suspense boundary hydrates.
+    const projectFilter = page.locator('#main-content').getByLabel('Filter by project');
     await expect(projectFilter).toHaveValue(project.id);
 
     // The register is scoped by the server: the linked invoice is listed and the

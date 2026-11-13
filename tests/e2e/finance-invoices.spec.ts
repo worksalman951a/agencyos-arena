@@ -207,7 +207,9 @@ test.describe('invoice list project filter', () => {
     const response = await page.goto(`/finance/invoices?projectId=${project.id}`);
     expect(response?.status(), 'the filtered list must render').toBe(200);
 
-    const projectFilter = page.getByLabel('Filter by project').first();
+    // Scoped to the rendered shell: the same control also exists in React's
+    // hidden streamed staging node until the Suspense boundary hydrates.
+    const projectFilter = page.locator('#main-content').getByLabel('Filter by project');
     await expect(projectFilter).toBeVisible();
     await expect(projectFilter).toHaveValue(project.id);
 
@@ -248,7 +250,7 @@ test.describe('invoice list project filter', () => {
       `/finance/invoices?search=${encodeURIComponent(sentInvoice.number)}&status=sent&page=2`
     );
 
-    await page.getByLabel('Filter by project').first().selectOption(project.id);
+    await page.locator('#main-content').getByLabel('Filter by project').selectOption(project.id);
     await page.waitForURL((url) => url.searchParams.get('projectId') === project.id);
 
     const url = new URL(page.url());
@@ -269,7 +271,7 @@ test.describe('invoice list project filter', () => {
     const foreign = 'proj_does_not_exist_for_this_org';
     await page.goto(`/finance/invoices?projectId=${foreign}`);
 
-    const projectFilter = page.getByLabel('Filter by project');
+    const projectFilter = page.locator('#main-content').getByLabel('Filter by project');
     await expect(projectFilter).toHaveValue(foreign);
     await expect(projectFilter.locator(`option[value="${foreign}"]`)).toHaveText(
       'Unavailable project'
