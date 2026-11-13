@@ -196,7 +196,6 @@ describe('Phase 8A: Premium Administration & RBAC Integration Tests', () => {
           totalPages={1}
           actions={['user.role_assigned']}
           isFiltered={false}
-          hrefBuilder={(p) => `/admin/audit-logs?page=${p}`}
         />
       );
 
@@ -216,7 +215,6 @@ describe('Phase 8A: Premium Administration & RBAC Integration Tests', () => {
           totalPages={1}
           actions={['user.role_assigned']}
           isFiltered={false}
-          hrefBuilder={(p) => `/admin/audit-logs?page=${p}`}
         />
       );
 

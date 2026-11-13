@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useBentoShell } from '@/components/providers/bento-theme-provider';
 import { BentoAuditLogsView } from '@/components/admin/bento-audit-logs-view';
 import type { AuditLogResponse } from '@/lib/services/admin/audit-log-service';
+import { buildAuditLogPageHref } from '@/lib/admin/audit-log-links';
 
 interface AuditLogsClientProps {
   logs: AuditLogResponse[];
@@ -15,7 +16,6 @@ interface AuditLogsClientProps {
   currentAction?: string;
   currentEntityType?: string;
   isFiltered: boolean;
-  hrefBuilder: (page: number) => string;
 }
 
 export function AuditLogsClient({
@@ -27,9 +27,12 @@ export function AuditLogsClient({
   currentAction,
   currentEntityType,
   isFiltered,
-  hrefBuilder,
 }: AuditLogsClientProps) {
   const isBento = useBentoShell();
+  // Rebuilt here from the active filters (plain strings) rather than received
+  // as a function, see lib/admin/audit-log-links.ts.
+  const pageHref = (nextPage: number) =>
+    buildAuditLogPageHref(nextPage, { action: currentAction, entityType: currentEntityType });
 
   if (isBento) {
     return (
@@ -41,7 +44,6 @@ export function AuditLogsClient({
         actions={actions}
         currentAction={currentAction}
         currentEntityType={currentEntityType}
-        hrefBuilder={hrefBuilder}
       />
     );
   }
@@ -158,7 +160,7 @@ export function AuditLogsClient({
           <div className="flex gap-2">
             {currentPage > 1 && (
               <Link
-                href={hrefBuilder(currentPage - 1)}
+                href={pageHref(currentPage - 1)}
                 className="px-3 py-1.5 border rounded-md text-sm hover:bg-muted"
               >
                 Previous
@@ -166,7 +168,7 @@ export function AuditLogsClient({
             )}
             {currentPage < totalPages && (
               <Link
-                href={hrefBuilder(currentPage + 1)}
+                href={pageHref(currentPage + 1)}
                 className="px-3 py-1.5 border rounded-md text-sm hover:bg-muted"
               >
                 Next
