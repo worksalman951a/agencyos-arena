@@ -32,6 +32,15 @@ export const invoiceCreateSchema = baseInvoiceSchema
   .extend({ status: z.enum(INVOICE_INITIAL_STATUSES).default('draft') })
   .strict();
 
+/** Tax is a percentage: 0–100 inclusive, with at most two fractional digits. */
+export const invoiceTaxRateSchema = z
+  .string()
+  .trim()
+  .regex(/^\d+(?:\.\d{1,2})?$/, 'Tax rate must have at most two decimal places')
+  .refine((value) => Number.isFinite(Number(value)) && Number(value) <= 100, {
+    message: 'Tax rate must be between 0 and 100 percent',
+  });
+
 export const invoiceUpdateSchema = baseInvoiceSchema
   .extend({
     status: z.enum(INVOICE_MANUAL_UPDATE_STATUSES).optional(),
@@ -93,13 +102,7 @@ export const invoiceLineItemSchema = z.object({
     },
     { message: 'Unit price must be a non-negative number' }
   ),
-  taxRate: z.string().refine(
-    (val) => {
-      const n = Number(val);
-      return !isNaN(n) && n >= 0;
-    },
-    { message: 'Tax rate must be a non-negative number' }
-  ),
+  taxRate: invoiceTaxRateSchema,
 });
 
 export type InvoiceLineItemInput = z.infer<typeof invoiceLineItemSchema>;
@@ -131,10 +134,7 @@ export const invoiceBillableSourcesSchema = z
         z
           .object({
             id: z.string().cuid(),
-            taxRate: z
-              .string()
-              .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0)
-              .default('0'),
+            taxRate: invoiceTaxRateSchema.default('0'),
           })
           .strict()
       )
@@ -145,10 +145,7 @@ export const invoiceBillableSourcesSchema = z
         z
           .object({
             id: z.string().cuid(),
-            taxRate: z
-              .string()
-              .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0)
-              .default('0'),
+            taxRate: invoiceTaxRateSchema.default('0'),
           })
           .strict()
       )
