@@ -98,7 +98,19 @@ test.describe('finance invoices list', () => {
     const response = await page.goto('/finance/invoices');
     expect(response?.status(), 'the invoice list must not fail to render').toBe(200);
     await expect(page.getByRole('heading', { name: 'Invoices', level: 1 })).toBeVisible();
-    await expect(page.getByText(/invoices? tracked in accounting register/)).toBeVisible();
+
+    // The accounting-register summary lives in the Bento page header, one of the
+    // subtrees React streams inside this page's <Suspense> boundary. Until that
+    // boundary hydrates, React keeps a second copy of the chunk in a hidden
+    // staging node (`<div hidden id="S:0">`) outside `#main-content`; it is never
+    // displayed and is removed once hydration swaps it in. Both copies carry the
+    // same text, so `getByText` is momentarily ambiguous - scope to the rendered
+    // shell rather than racing it, and never mask it with .first(), which would
+    // also accept the copy a user cannot see.
+    const registerSummary = page
+      .locator('#main-content')
+      .getByText(/invoices? tracked in accounting register/);
+    await expect(registerSummary).toBeVisible();
 
     // 2. Both invoices are listed: loading stays server-side and organization-scoped.
     await expect(page.getByText(`#${projectInvoice.number}`).first()).toBeVisible();
@@ -119,7 +131,10 @@ test.describe('finance invoices list', () => {
 
     // The server ANDed both filters, so nothing matches: the client never
     // narrows a result set on its own, and the empty state is a server render.
-    await expect(page.getByText('No invoices match those filters')).toBeVisible();
+    // Same streaming caveat as the register summary above.
+    await expect(
+      page.locator('#main-content').getByText('No invoices match those filters')
+    ).toBeVisible();
 
     // 4. Clearing the search restores the project-scoped list, again server-side.
     await page.getByRole('button', { name: 'Clear' }).click();
@@ -259,6 +274,9 @@ test.describe('invoice list project filter', () => {
     await expect(projectFilter.locator(`option[value="${foreign}"]`)).toHaveText(
       'Unavailable project'
     );
-    await expect(page.getByText('No invoices match those filters')).toBeVisible();
+    // Same streaming caveat as the register summary above.
+    await expect(
+      page.locator('#main-content').getByText('No invoices match those filters')
+    ).toBeVisible();
   });
 });
