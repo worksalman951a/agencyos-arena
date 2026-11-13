@@ -32,12 +32,17 @@ export default function LoginPage() {
     setError(null);
     setIsLoading(true);
     try {
+      const requestedInvite = new URLSearchParams(window.location.search).get('invite');
+      const returnTo =
+        requestedInvite && /^[A-Za-z0-9_-]{20,200}$/.test(requestedInvite)
+          ? `/invite/${encodeURIComponent(requestedInvite)}`
+          : '/dashboard';
       await signInEmail({
         email: data.email,
         password: data.password,
-        callbackUrl: '/dashboard',
+        callbackUrl: returnTo,
       });
-      router.push('/dashboard');
+      router.push(returnTo);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid email or password');

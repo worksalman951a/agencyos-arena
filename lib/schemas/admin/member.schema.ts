@@ -1,16 +1,20 @@
 /** Member administration validation (pure module). */
 
 import { z } from 'zod';
+import { userProfileUpdateSchema } from '@/lib/schemas/settings/user.schema';
 
 export const USER_STATUSES = ['active', 'suspended', 'invited'] as const;
 
-export const adminUserUpdateSchema = z
-  .object({
+export const adminUserUpdateSchema = userProfileUpdateSchema
+  .extend({
     /** Id of a role that exists in the actor's organization. */
     roleId: z.string().min(1).max(120).optional(),
     status: z.enum(USER_STATUSES).optional(),
   })
-  .strict();
+  .strict()
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'At least one member field must be provided',
+  });
 
 export const roleUpdateSchema = z
   .object({

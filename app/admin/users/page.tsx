@@ -45,6 +45,7 @@ export default async function UsersPage() {
                 id: string;
                 name: string | null;
                 email: string;
+                emailVerified: boolean;
                 role: string;
                 status: string;
                 createdAt: Date;
@@ -61,6 +62,7 @@ export default async function UsersPage() {
                   id: string;
                   name: string | null;
                   email: string;
+                  emailVerified: boolean;
                   role: string;
                   roles: string[];
                   status: string;
@@ -69,7 +71,16 @@ export default async function UsersPage() {
               ).map((u) => (
                 <tr key={u.id} className="border-b border-border hover:bg-muted/50">
                   <td className="py-4 font-medium">{u.name || 'Unnamed'}</td>
-                  <td className="py-4 text-sm text-muted-foreground">{u.email}</td>
+                  <td className="py-4 text-sm text-muted-foreground">
+                    <div>{u.email}</div>
+                    <span
+                      className={
+                        u.emailVerified ? 'text-xs text-green-700' : 'text-xs text-amber-700'
+                      }
+                    >
+                      {u.emailVerified ? 'Email verified' : 'Email unverified'}
+                    </span>
+                  </td>
                   <td className="py-4 text-sm font-medium">{u.role}</td>
                   <td className="py-4 text-sm text-muted-foreground">
                     {u.roles.length > 0 ? u.roles.join(', ') : '—'}

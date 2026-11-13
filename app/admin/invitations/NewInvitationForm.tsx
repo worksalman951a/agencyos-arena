@@ -13,14 +13,14 @@ import { toast } from 'sonner';
 export function NewInvitationForm({ roles }: { roles: Array<{ id: string; name: string }> }) {
   const router = useRouter();
   const [pending, setPending] = React.useState(false);
-  const [inviteLink, setInviteLink] = React.useState<string | null>(null);
+  const [deliveryNotice, setDeliveryNotice] = React.useState<string | null>(null);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
     setPending(true);
-    setInviteLink(null);
+    setDeliveryNotice(null);
 
     try {
       const res = await fetch('/api/v1/admin/invitations', {
@@ -35,7 +35,7 @@ export function NewInvitationForm({ roles }: { roles: Array<{ id: string; name: 
 
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
-        acceptPath?: string;
+        emailDelivery?: { status: 'sent' | 'disabled' | 'failed'; reason?: string };
       };
 
       if (!res.ok) {
@@ -43,9 +43,18 @@ export function NewInvitationForm({ roles }: { roles: Array<{ id: string; name: 
         return;
       }
 
-      const path = body.acceptPath ?? '';
-      setInviteLink(`${window.location.origin}${path}`);
-      toast.success('Invitation created — copy the link below');
+      const delivery = body.emailDelivery;
+      if (delivery?.status === 'sent') {
+        setDeliveryNotice('Invitation created and emailed. The secure link is not shown here.');
+        toast.success('Invitation emailed');
+      } else {
+        setDeliveryNotice(
+          delivery?.status === 'disabled'
+            ? 'Invitation created, but email delivery is disabled. Configure SMTP before sending or resending invitations.'
+            : `Invitation created, but email was not sent${delivery?.reason ? ` (${delivery.reason})` : ''}. You can retry with Resend after fixing delivery.`
+        );
+        toast.error('Invitation created, but email delivery did not succeed');
+      }
       form.reset();
       router.refresh();
     } catch {
@@ -98,13 +107,10 @@ export function NewInvitationForm({ roles }: { roles: Array<{ id: string; name: 
         </button>
       </form>
 
-      {inviteLink ? (
-        <div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1">
-          <p className="font-medium">Acceptance link (shown once)</p>
-          <code data-testid="invitation-link" className="block break-all text-xs">
-            {inviteLink}
-          </code>
-        </div>
+      {deliveryNotice ? (
+        <p role="status" className="rounded-md border bg-muted/40 p-3 text-sm">
+          {deliveryNotice}
+        </p>
       ) : null}
     </div>
   );

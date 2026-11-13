@@ -16,7 +16,12 @@
  */
 
 import { prisma } from '@/lib/db';
-import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
+import {
+  getUserPermissions,
+  requirePermission,
+  requireOrganization,
+  type AuthorizedUser,
+} from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 import { adminUserUpdateSchema } from '@/lib/schemas/admin/member.schema';
@@ -26,6 +31,7 @@ export interface UserResponse {
   email: string;
   name: string | null;
   image: string | null;
+  emailVerified: boolean;
   role: string;
   /** Role names assigned in this organization, for the member list. */
   roles: string[];
@@ -62,42 +68,12 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
   };
 }
 
-async function audit({
-  actorId,
-  actorName,
-  action,
-  entityId,
-  before,
-  after,
-  organizationId,
-}: {
-  actorId: string;
-  actorName: string | null;
-  action: string;
-  entityId: string;
-  before?: Record<string, unknown> | null;
-  after?: Record<string, unknown> | null;
-  organizationId: string;
-}) {
-  await prisma.auditLog.create({
-    data: {
-      actorId,
-      actorName,
-      action,
-      entityType: 'User',
-      entityId,
-      before: before ?? null,
-      after: after ?? null,
-      organizationId,
-    },
-  });
-}
-
 interface UserRecord {
   id: string;
   email: string;
   name: string | null;
   image: string | null;
+  emailVerified: boolean;
   role: string;
   status: string;
   organizationId: string | null;
@@ -111,6 +87,7 @@ function serialize(user: UserRecord, roles: string[]): UserResponse {
     email: user.email,
     name: user.name,
     image: user.image,
+    emailVerified: user.emailVerified,
     role: user.role,
     roles,
     status: user.status,
@@ -163,8 +140,12 @@ export async function getUser(id: string) {
 }
 
 /** How many active members currently hold the organization's administrator role. */
-async function activeAdministratorCount(organizationId: string, excludeUserId?: string) {
-  const admins = await prisma.userRole.findMany({
+async function activeAdministratorCount(
+  organizationId: string,
+  excludeUserId?: string,
+  db: typeof prisma = prisma
+) {
+  const admins = await db.userRole.findMany({
     where: {
       organizationId,
       role: { isSystem: true, name: 'Administrator' },
@@ -174,10 +155,25 @@ async function activeAdministratorCount(organizationId: string, excludeUserId?: 
   });
   const ids = Array.from(new Set((admins as Array<{ userId: string }>).map((a) => a.userId)));
   if (ids.length === 0) return 0;
-  const active = await prisma.user.count({
+  const active = await db.user.count({
     where: { id: { in: ids }, organizationId, status: 'active' },
   });
   return active;
+}
+
+async function assertRoleAssignable(roleId: string, organizationId: string, actorId: string) {
+  const role = await prisma.role.findFirst({
+    where: { id: roleId, organizationId },
+    include: { permissions: { include: { permission: { select: { code: true } } } } },
+  });
+  if (!role) throw codedError('Role not found in this organization', 404);
+
+  const actorPermissions = await getUserPermissions(actorId, organizationId);
+  const escalation = role.permissions
+    .map((entry: { permission: { code: string } }) => entry.permission.code)
+    .filter((code: string) => !actorPermissions.has(code));
+  if (escalation.length)
+    throw codedError('You cannot assign a role with permissions you do not hold', 403);
 }
 
 export async function updateUser(id: string, input: unknown) {
@@ -196,37 +192,42 @@ export async function updateUser(id: string, input: unknown) {
     throw codedError('You cannot change your own role or status', 400);
   }
 
-  const isCurrentlyAdmin = (await prisma.userRole.findFirst({
-    where: { userId: id, organizationId, role: { isSystem: true, name: 'Administrator' } },
-    select: { roleId: true },
-  })) as { roleId: string } | null;
-
   if (parsed.data.roleId) {
-    const role = await prisma.role.findFirst({
-      where: { id: parsed.data.roleId, organizationId },
-      select: { id: true, name: true },
-    });
-    if (!role) throw codedError('Role not found in this organization', 404);
+    await assertRoleAssignable(parsed.data.roleId, organizationId, actorId);
   }
 
   const willBeSuspended = parsed.data.status !== undefined && parsed.data.status !== 'active';
-  const willLoseAdmin =
-    isCurrentlyAdmin &&
-    parsed.data.roleId !== undefined &&
-    parsed.data.roleId !== isCurrentlyAdmin.roleId;
-
-  if ((willBeSuspended || willLoseAdmin) && isCurrentlyAdmin) {
-    const remaining = await activeAdministratorCount(organizationId, id);
-    if (remaining === 0) {
-      throw codedError('The organization must keep at least one active administrator', 400);
-    }
-  }
 
   const updated = await prisma.$transaction(async (tx: typeof prisma) => {
+    // Serialize all membership/status changes within this organization so two
+    // concurrent admin removals cannot both observe the other as a survivor.
+    await tx.$queryRawUnsafe(
+      'SELECT id FROM "Organization" WHERE id = $1 FOR UPDATE',
+      organizationId
+    );
+    const current = await tx.user.findFirst({
+      where: { id, organizationId },
+      select: { id: true, role: true, status: true, name: true, image: true },
+    });
+    if (!current) throw codedError('Not found', 404);
+    const currentAdmin = await tx.userRole.findFirst({
+      where: { userId: id, organizationId, role: { isSystem: true, name: 'Administrator' } },
+      select: { roleId: true },
+    });
+    const losesAdmin =
+      currentAdmin &&
+      (willBeSuspended ||
+        (parsed.data.roleId !== undefined && parsed.data.roleId !== currentAdmin.roleId));
+    if (losesAdmin && (await activeAdministratorCount(organizationId, id, tx)) === 0) {
+      throw codedError('The organization must keep at least one active administrator', 400);
+    }
+
     const user = await tx.user.update({
       where: { id },
       data: {
         ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
+        ...(parsed.data.displayName !== undefined ? { name: parsed.data.displayName } : {}),
+        ...(parsed.data.avatarUrl !== undefined ? { image: parsed.data.avatarUrl } : {}),
       },
     });
 
@@ -252,22 +253,41 @@ export async function updateUser(id: string, input: unknown) {
       await tx.session.deleteMany({ where: { userId: id } });
     }
 
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        actorName: actorEmail,
+        action:
+          parsed.data.status !== undefined
+            ? 'user.status_changed'
+            : parsed.data.roleId !== undefined
+              ? 'user.role_changed'
+              : 'user.profile_changed',
+        entityType: 'User',
+        entityId: id,
+        before: {
+          role: current.role,
+          status: current.status,
+          name: current.name,
+          image: current.image,
+        },
+        after: {
+          role: user.role,
+          status: user.status,
+          name: user.name,
+          image: user.image,
+          roleId: parsed.data.roleId ?? null,
+        },
+        organizationId,
+      },
+    });
+
     return user;
   });
 
   const roles = await prisma.userRole.findMany({
     where: { userId: id, organizationId },
     include: { role: { select: { name: true } } },
-  });
-
-  await audit({
-    actorId,
-    actorName: actorEmail,
-    action: parsed.data.status !== undefined ? 'user.status_changed' : 'user.role_changed',
-    entityId: id,
-    before: { role: existing.role, status: existing.status },
-    after: { role: updated.role, status: updated.status, roleId: parsed.data.roleId ?? null },
-    organizationId,
   });
 
   return serialize(
@@ -290,21 +310,25 @@ export async function removeMember(id: string) {
 
   if (id === actorId) throw codedError('You cannot remove yourself', 400);
 
-  const existing = await prisma.user.findFirst({ where: { id, organizationId } });
-  if (!existing) throw codedError('Not found', 404);
+  await prisma.$transaction(async (tx: typeof prisma) => {
+    await tx.$queryRawUnsafe(
+      'SELECT id FROM "Organization" WHERE id = $1 FOR UPDATE',
+      organizationId
+    );
+    const existing = await tx.user.findFirst({
+      where: { id, organizationId },
+      select: { id: true, status: true },
+    });
+    if (!existing) throw codedError('Not found', 404);
 
-  const isAdmin = await prisma.userRole.findFirst({
-    where: { userId: id, organizationId, role: { isSystem: true, name: 'Administrator' } },
-    select: { id: true },
-  });
-  if (isAdmin) {
-    const remaining = await activeAdministratorCount(organizationId, id);
-    if (remaining === 0) {
+    const isAdmin = await tx.userRole.findFirst({
+      where: { userId: id, organizationId, role: { isSystem: true, name: 'Administrator' } },
+      select: { id: true },
+    });
+    if (isAdmin && (await activeAdministratorCount(organizationId, id, tx)) === 0) {
       throw codedError('The organization must keep at least one active administrator', 400);
     }
-  }
 
-  await prisma.$transaction(async (tx: typeof prisma) => {
     // Revoke live sessions before detaching the membership: the removed member
     // must not keep acting on a cookie issued while they were still a member.
     await tx.session.deleteMany({ where: { userId: id } });
@@ -313,16 +337,18 @@ export async function removeMember(id: string) {
       where: { id },
       data: { organizationId: null, status: 'suspended' },
     });
-  });
-
-  await audit({
-    actorId,
-    actorName: actorEmail,
-    action: 'user.remove',
-    entityId: id,
-    before: { organizationId, status: existing.status },
-    after: { organizationId: null, status: 'suspended' },
-    organizationId,
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        actorName: actorEmail,
+        action: 'user.remove',
+        entityType: 'User',
+        entityId: id,
+        before: { organizationId, status: existing.status },
+        after: { organizationId: null, status: 'suspended' },
+        organizationId,
+      },
+    });
   });
 
   return { id };

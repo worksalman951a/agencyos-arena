@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { getInvitationByToken } from '@/lib/services/admin/invitation-service';
 import { getSessionUser } from '@/lib/current-user';
 import { AcceptInvitationButton } from './AcceptInvitationButton';
+import { RequestEmailVerificationButton } from '@/components/auth/request-email-verification-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,16 +51,31 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
             {!session ? (
               <p className="text-sm">
                 Please{' '}
-                <Link href="/login" className="text-accent hover:underline">
+                <Link
+                  href={`/login?invite=${encodeURIComponent(token)}`}
+                  className="text-accent hover:underline"
+                >
                   sign in
                 </Link>{' '}
-                with {invitation!.email} to accept.
+                with {invitation!.email} to accept, or{' '}
+                <Link
+                  href={`/register?invite=${encodeURIComponent(token)}&email=${encodeURIComponent(invitation!.email)}`}
+                  className="text-accent hover:underline"
+                >
+                  create an account
+                </Link>{' '}
+                using that address.
               </p>
             ) : session.email?.toLowerCase() !== invitation!.email.toLowerCase() ? (
               <p className="text-sm text-red-700">
                 You are signed in as {session.email}, but this invitation was issued to{' '}
                 {invitation!.email}.
               </p>
+            ) : !session.emailVerified ? (
+              <div className="space-y-3 text-sm">
+                <p>Verify ownership of this e-mail address before accepting the team invitation.</p>
+                <RequestEmailVerificationButton email={session.email ?? invitation!.email} />
+              </div>
             ) : (
               <AcceptInvitationButton token={token} />
             )}

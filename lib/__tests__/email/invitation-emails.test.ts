@@ -26,7 +26,8 @@ vi.mock('@/lib/db', () => ({
   prisma: { $queryRawUnsafe: (...args: unknown[]) => queryRaw(...args) },
 }));
 
-const { sendClientInvitationEmail } = await import('@/lib/email/invitation-emails');
+const { sendClientInvitationEmail, sendTeamInvitationEmail } =
+  await import('@/lib/email/invitation-emails');
 const { reserveInvitationEmail } = await import('@/lib/email/sending-limit');
 const { RATE_LIMITS, rateLimitKey } = await import('@/lib/security/rate-limit');
 
@@ -206,6 +207,28 @@ describe('reserveInvitationEmail', () => {
     queryRaw.mockRejectedValue(new Error('connection terminated'));
 
     await expect(reserveInvitationEmail(input)).rejects.toThrow('connection terminated');
+  });
+});
+
+describe('sendTeamInvitationEmail', () => {
+  it('sends the internal acceptance link through configured SMTP', async () => {
+    const server = await enableSmtp();
+    const acceptPath = `/invite/${TOKEN}`;
+    const result = await sendTeamInvitationEmail({
+      organizationId: ORGANIZATION_ID,
+      organizationName: 'Acme Agency',
+      to: 'teammate@example.test',
+      acceptPath,
+      expiresAt: EXPIRES_AT,
+    });
+
+    expect(result).toMatchObject({ status: 'sent', attempts: 1 });
+    expect(server.messages).toHaveLength(1);
+    const parsed = parseMessage(server.messages[0]!.raw);
+    expect(parsed.headers.to).toBe('teammate@example.test');
+    expect(parsed.headers.subject).toContain('Acme Agency');
+    expect(parsed.text).toContain(`https://app.example.test${acceptPath}`);
+    expect(parsed.text).toContain('can be used once');
   });
 });
 

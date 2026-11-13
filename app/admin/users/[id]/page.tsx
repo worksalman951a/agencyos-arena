@@ -24,6 +24,7 @@ interface MemberDetail {
   id: string;
   email: string;
   name: string | null;
+  image: string | null;
   role: string;
   roles: string[];
   status: string;
@@ -35,6 +36,8 @@ export default function EditUserPage({ params }: { params: Promise<{ id: string 
   const [member, setMember] = useState<MemberDetail | null>(null);
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [roleId, setRoleId] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
   const [status, setStatus] = useState('active');
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -50,6 +53,8 @@ export default function EditUserPage({ params }: { params: Promise<{ id: string 
     const memberData = (await memberRes.json()) as MemberDetail;
     const roleData = (await rolesRes.json()) as RoleOption[];
     setMember(memberData);
+    setDisplayName(memberData.name ?? '');
+    setAvatarUrl(memberData.image ?? '');
     setStatus(memberData.status);
 
     // Preselect the role the member currently holds, when it is one of the
@@ -79,6 +84,8 @@ export default function EditUserPage({ params }: { params: Promise<{ id: string 
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
+          ...(displayName !== (member?.name ?? '') ? { displayName } : {}),
+          ...(avatarUrl !== (member?.image ?? '') ? { avatarUrl } : {}),
           ...(roleId ? { roleId } : {}),
           ...(status !== member?.status ? { status } : {}),
         }),
@@ -124,6 +131,35 @@ export default function EditUserPage({ params }: { params: Promise<{ id: string 
       ) : null}
 
       <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor="displayName">
+            Display name
+          </label>
+          <input
+            id="displayName"
+            value={displayName}
+            maxLength={120}
+            onChange={(event) => setDisplayName(event.target.value)}
+            className="w-full border border-input rounded-md px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor="avatarUrl">
+            Avatar URL
+          </label>
+          <input
+            id="avatarUrl"
+            type="url"
+            value={avatarUrl}
+            maxLength={500}
+            onChange={(event) => setAvatarUrl(event.target.value)}
+            placeholder="https://example.com/avatar.png"
+            className="w-full border border-input rounded-md px-3 py-2 text-sm"
+          />
+          <p className="text-xs text-muted-foreground">Leave blank to clear the avatar.</p>
+        </div>
+
         <div className="space-y-2">
           <label className="text-sm font-medium" htmlFor="roleId">
             Role
