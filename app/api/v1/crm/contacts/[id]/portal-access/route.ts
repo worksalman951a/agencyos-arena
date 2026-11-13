@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { requireOrganization } from '@/lib/permissions';
-import { auth } from '@/lib/auth-server';
-import { cookies } from 'next/headers';
 import {
+  getContactPortalAccess,
   inviteContactToPortal,
   revokeContactPortalAccess,
 } from '@/lib/services/portal/portal-auth-service';
@@ -11,31 +8,7 @@ import {
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id: contactId } = await params;
-    const cookieStore = await cookies();
-    const result = await auth.api.getSession({
-      headers: { cookie: cookieStore.toString() },
-    });
-
-    if (!result?.session || !result.user) {
-      return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
-    }
-
-    const { organizationId } = await requireOrganization(result.user.id);
-
-    const portalAccess = await prisma.clientPortalAccess.findUnique({
-      where: {
-        organizationId_contactId: { organizationId, contactId },
-      },
-      select: {
-        id: true,
-        email: true,
-        status: true,
-        invitedAt: true,
-        activatedAt: true,
-        revokedAt: true,
-        lastLoginAt: true,
-      },
-    });
+    const portalAccess = await getContactPortalAccess(contactId);
 
     return NextResponse.json({ portalAccess });
   } catch (error) {

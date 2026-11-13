@@ -38,17 +38,17 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD ?? 'test_arena_password_2026';
 async function createAuthenticatedUser(email: string, name: string) {
   const signUpRes = await fetch(`${SERVER_URL}/api/auth/sign-up/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: new URL(SERVER_URL).origin },
     body: JSON.stringify({ email, password: TEST_PASSWORD, name }),
   });
-  expect(signUpRes.status).toBe(200);
+  expect(signUpRes.status, await signUpRes.text()).toBe(200);
 
   const signInRes = await fetch(`${SERVER_URL}/api/auth/sign-in/email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: new URL(SERVER_URL).origin },
     body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
-  expect(signInRes.status).toBe(200);
+  expect(signInRes.status, await signInRes.text()).toBe(200);
 
   const setCookie = signInRes.headers.get('set-cookie') || '';
   const cookieMatch = setCookie.match(/better-auth.session_token=([^;]+)/);
@@ -175,6 +175,56 @@ describeIfDb('Organization Bootstrap integration (real PostgreSQL)', () => {
       });
       expect(userRole).toBeDefined();
       expect(userRole?.roleId).toBe(role?.id);
+    });
+
+    it('bootstraps two organizations on one database with independent Bento flags', async () => {
+      const userIds: string[] = [];
+      const organizationIds: string[] = [];
+
+      try {
+        const stamp = Date.now();
+        for (const suffix of ['a', 'b']) {
+          const email = `bootstrap-bento-${stamp}-${suffix}${TEST_EMAIL_SUFFIX}`;
+          const { user, token } = await createAuthenticatedUser(email, 'Bento Bootstrap User');
+          userIds.push(user.id);
+          expect(token).toBeTruthy();
+
+          const res = await fetch(`${SERVER_URL}/api/auth/bootstrap-organization`, {
+            method: 'POST',
+            headers: {
+              Cookie: `better-auth.session_token=${token}`,
+              'Content-Type': 'application/json',
+              Origin: new URL(SERVER_URL).origin,
+            },
+            body: JSON.stringify({ organizationName: `Bento Bootstrap ${stamp} ${suffix}` }),
+          });
+          expect(res.status).toBe(200);
+          const { organization } = await res.json();
+          organizationIds.push(organization.id);
+        }
+
+        const [firstId, secondId] = organizationIds;
+        expect(firstId).not.toBe(secondId);
+
+        const key = (organizationId: string) => ({
+          organizationId_flagKey: { organizationId, flagKey: 'bento_shell' },
+        });
+        const first = await prisma.featureFlag.findUniqueOrThrow({ where: key(firstId) });
+        const second = await prisma.featureFlag.findUniqueOrThrow({ where: key(secondId) });
+        expect(first.enabled).toBe(true);
+        expect(second.enabled).toBe(true);
+
+        await prisma.featureFlag.update({ where: key(firstId), data: { enabled: false } });
+        const other = await prisma.featureFlag.findUniqueOrThrow({ where: key(secondId) });
+        expect(other.enabled).toBe(true);
+
+        await expect(
+          prisma.featureFlag.create({ data: { organizationId: firstId, flagKey: 'bento_shell' } })
+        ).rejects.toMatchObject({ code: 'P2002' });
+      } finally {
+        await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+        await prisma.organization.deleteMany({ where: { id: { in: organizationIds } } });
+      }
     });
 
     it('returns 409 on repeated bootstrap (idempotent)', async () => {

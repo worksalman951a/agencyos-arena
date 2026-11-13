@@ -28,7 +28,8 @@ vi.mock('@/lib/permissions', () => ({
   requireOrganization: vi.fn(),
 }));
 
-vi.mock('@/lib/services/portal/portal-auth-service', () => ({
+vi.mock('@/lib/services/portal/portal-auth-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/services/portal/portal-auth-service')>()),
   inviteContactToPortal: vi.fn(),
   revokeContactPortalAccess: vi.fn(),
 }));
@@ -58,6 +59,22 @@ describe('Phase 12B: Client Portal Administration Widget API', () => {
       );
 
       expect(res.status).toBe(401);
+    });
+
+    it('returns 403 for non-admin users without querying portal access', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue({
+        session: { id: 's1', userId: 'u-1' },
+        user: { id: 'u-1', email: 'editor@agency.com', role: 'employee' },
+      } as unknown as Awaited<ReturnType<typeof auth.api.getSession>>);
+      vi.mocked(requireOrganization).mockResolvedValue({ organizationId: 'org-1' });
+
+      const res = await GET(
+        new Request('http://localhost:3001/api/v1/crm/contacts/c-1/portal-access'),
+        { params: Promise.resolve({ id: 'c-1' }) }
+      );
+
+      expect(res.status).toBe(403);
+      expect(prisma.clientPortalAccess.findUnique).not.toHaveBeenCalled();
     });
 
     it('returns portal access state for authenticated organization admin', async () => {

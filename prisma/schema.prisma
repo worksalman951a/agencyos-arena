@@ -292,13 +292,15 @@ model CustomFieldValue {
 model FeatureFlag {
   id             String   @id @default(cuid())
   organizationId String
-  flagKey        String   @unique
+  flagKey        String
   enabled        Boolean  @default(false)
   description    String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, flagKey])
 }
 
 /// Webhook events
