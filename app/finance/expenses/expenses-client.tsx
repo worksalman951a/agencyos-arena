@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useBentoShell } from '@/components/providers/bento-theme-provider';
 import { BentoExpensesView } from '@/components/finance/bento-expenses-view';
 import { formatMinorUnitsAsCurrency } from '@/lib/currencies';
+import { expenseListHref, type ExpenseListFilters } from '@/lib/finance/expense-list-url';
 import type { ExpenseResponse } from '@/lib/services/crm/expense-service';
 
 interface ExpensesClientProps {
@@ -22,18 +23,8 @@ interface ExpensesClientProps {
     total: number;
     totalPages: number;
   };
-  filters: {
-    q: string;
-    category: string;
-    billable: string;
-    from: string;
-    to: string;
-    sort: string;
-    page: string;
-    pageSize: string;
-  };
+  filters: ExpenseListFilters;
   isFiltered: boolean;
-  pageHref: (page: number) => string;
 }
 
 export function ExpensesClient(props: ExpensesClientProps) {
@@ -44,7 +35,8 @@ export function ExpensesClient(props: ExpensesClientProps) {
   }
 
   // Legacy Presentation
-  const { expenses, currency, summary, pagination, isFiltered, pageHref } = props;
+  const { expenses, currency, summary, pagination, filters, isFiltered } = props;
+  const pageHref = (page: number) => expenseListHref(filters, page);
 
   const money = (amount: string) =>
     formatMinorUnitsAsCurrency(Math.round(Number(amount || 0) * 100), currency);
