@@ -160,6 +160,40 @@ describeIfDb('Project source billing (real PostgreSQL)', () => {
     expect(blockedDelete.status).toBe(409);
   });
 
+  it('rejects excessive and unsupported tax rates before writing, then bills a supported fractional rate', async () => {
+    const sourceResponse = await createExpense(admin, true);
+    expect(sourceResponse.status).toBe(201);
+    const sourceId = (sourceResponse.body as { id: string }).id;
+    const invoice = await createInvoice();
+
+    for (const taxRate of ['-0.01', '100.01', '101', '8.251', '1e2', 'Infinity']) {
+      const rejected = await addSources(invoice.id, admin, {
+        expenses: [{ id: sourceId, taxRate }],
+        changeOrders: [],
+      });
+      expect(rejected.status, `tax rate ${taxRate}: ${JSON.stringify(rejected.body)}`).toBe(400);
+      expect(await prisma.invoiceItem.count({ where: { invoiceId: invoice.id } })).toBe(1);
+      expect(
+        await prisma.invoiceItem.findFirst({ where: { sourceExpenseId: sourceId } })
+      ).toBeNull();
+      const unchanged = await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
+      expect([
+        unchanged.subtotal.toString(),
+        unchanged.tax.toString(),
+        unchanged.total.toString(),
+      ]).toEqual(['100', '0', '100']);
+    }
+
+    const valid = await addSources(invoice.id, admin, {
+      expenses: [{ id: sourceId, taxRate: '8.25' }],
+      changeOrders: [],
+    });
+    expect(valid.status, JSON.stringify(valid.body)).toBe(200);
+    expect(valid.body).toMatchObject({ subtotal: '110.25', tax: '0.85', total: '111.10' });
+    const line = await prisma.invoiceItem.findFirst({ where: { sourceExpenseId: sourceId } });
+    expect(line?.taxRate.toString()).toBe('8.25');
+  });
+
   it('bills only approved change orders, rejects unapproved sources and preserves source history', async () => {
     const approved = await createChangeOrder('approved');
     const pending = await createChangeOrder('pending');

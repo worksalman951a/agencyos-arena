@@ -22,6 +22,7 @@ import type {
   InvoicePaymentInput,
   InvoiceBillableSourcesInput,
 } from '@/lib/schemas/crm/invoice.schema';
+import { invoiceBillableSourcesSchema } from '@/lib/schemas/crm/invoice.schema';
 import {
   INVOICE_INITIAL_STATUSES,
   INVOICE_EDITABLE_STATUSES,
@@ -735,6 +736,14 @@ export async function addBillableSourcesToInvoice(
   invoiceId: string,
   input: InvoiceBillableSourcesInput
 ) {
+  // Validate again at the service boundary so non-route callers cannot bypass
+  // the shared invoice tax-rate range/precision rules before any transaction.
+  const validatedInput = invoiceBillableSourcesSchema.safeParse(input);
+  if (!validatedInput.success) {
+    throw codedError('Invalid billable source selection or tax rate', 400);
+  }
+  input = validatedInput.data;
+
   const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
   await requirePermission(userId, organizationId, 'invoice.update');
   await requirePermission(userId, organizationId, 'project.read');
@@ -748,12 +757,6 @@ export async function addBillableSourcesToInvoice(
     ...input.expenses.map((source) => [`expense:${source.id}`, source.taxRate] as const),
     ...input.changeOrders.map((source) => [`changeOrder:${source.id}`, source.taxRate] as const),
   ]);
-  for (const rate of sourceTaxRates.values()) {
-    if (!Number.isFinite(Number(rate)) || Number(rate) < 0) {
-      throw codedError('Tax rate must be a non-negative number', 400);
-    }
-  }
-
   try {
     await prisma.$transaction(async (tx: PrismaTransactionClient) => {
       await tx.$queryRawUnsafe('SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE', invoiceId);

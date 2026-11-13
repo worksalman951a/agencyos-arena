@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { invoiceBillableSourcesSchema } from '@/lib/schemas/crm/invoice.schema';
+import {
+  invoiceBillableSourcesSchema,
+  invoiceLineItemSchema,
+} from '@/lib/schemas/crm/invoice.schema';
 import { expenseCreateSchema } from '@/lib/schemas/crm/expense.schema';
 import { changeOrderCreateSchema } from '@/lib/schemas/projects/change-order.schema';
 
@@ -32,6 +35,25 @@ describe('invoice billable source selection schema', () => {
         organizationId: 'org-other',
       }).success
     ).toBe(false);
+  });
+
+  it('shares invoice tax range and precision rules with source billing', () => {
+    const validRates = ['0', '0.00', '8.25', '100', '100.00'];
+    const invalidRates = ['-0.01', '100.01', '101', '8.251', '1e2', 'Infinity', 'NaN'];
+    const invoiceLine = { description: 'Work', quantity: '1', unitPrice: '1.00' };
+
+    for (const taxRate of validRates) {
+      expect(invoiceLineItemSchema.safeParse({ ...invoiceLine, taxRate }).success).toBe(true);
+      expect(
+        invoiceBillableSourcesSchema.safeParse({ expenses: [{ id: sourceId, taxRate }] }).success
+      ).toBe(true);
+    }
+    for (const taxRate of invalidRates) {
+      expect(invoiceLineItemSchema.safeParse({ ...invoiceLine, taxRate }).success).toBe(false);
+      expect(
+        invoiceBillableSourcesSchema.safeParse({ expenses: [{ id: sourceId, taxRate }] }).success
+      ).toBe(false);
+    }
   });
 
   it('accepts exact minor-unit source amounts while preserving unlinked expenses', () => {

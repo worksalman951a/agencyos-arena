@@ -65,6 +65,7 @@ import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 import { allocateDocumentNumber } from '@/lib/services/settings/document-numbering';
 import {
+  addBillableSourcesToInvoice,
   createInvoice,
   getInvoice,
   listInvoices,
@@ -166,6 +167,25 @@ beforeEach(() => {
   mockQueryRawUnsafe.mockResolvedValue([]);
   mockPaymentCount.mockResolvedValue(0);
   mockProjectFindFirst.mockResolvedValue({ id: PROJECT_A, status: 'active' });
+});
+
+describe('source billing tax-rate service guard', () => {
+  it.each(['-0.01', '100.01', '8.251', '1e2', 'Infinity'])(
+    'rejects tax rate %s before authentication, transactions, or financial writes',
+    async (taxRate) => {
+      await expect(
+        addBillableSourcesToInvoice('invoice-id', {
+          expenses: [{ id: PROJECT_A, taxRate }],
+          changeOrders: [],
+        } as never)
+      ).rejects.toMatchObject({ statusCode: 400 });
+
+      expect(mockGetSession).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockInvoiceUpdate).not.toHaveBeenCalled();
+      expect(mockAuditCreate).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('invoice schemas: projectId', () => {
