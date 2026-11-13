@@ -1,7 +1,7 @@
 /* ============================================================================
    AgencyOS Premium Modern Bento Application Shell Styles
    Scoped specifically to .pm-shell container
-   Includes Hybrid Animated Hover-Expand & Pinned Sidebar System
+   Unified Hybrid Hover-Expand Sidebar System (Refined)
    ========================================================================== */
 
 .pm-shell {
@@ -94,29 +94,19 @@
   }
 }
 
-/* ── Hybrid Sidebar Architecture (.ps-wrapper & .ps) ─────────────────── */
+/* ── Unified Hybrid Hover-Expand Sidebar Architecture ────────────────── */
 
 /*
-  The .ps-wrapper reserves DOM space according to pinned state:
-  - When pinned: width = 240px
-  - When unpinned (compact rail): width = 72px
-  When unpinned and hovered, .ps expands over the canvas without changing the wrapper width,
-  thereby guaranteeing ZERO layout shift for the main content!
+  The .ps-wrapper strictly reserves 72px in the DOM flow.
+  When hovered, .ps expands over the canvas to 240px with a smooth floating overlay,
+  guaranteeing ZERO layout shift for the main content!
 */
 .ps-wrapper {
   position: relative;
+  width: 72px;
   height: 100vh;
   flex-shrink: 0;
   z-index: 50;
-  transition: width 240ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.ps-wrapper[data-pinned='true'] {
-  width: 240px;
-}
-
-.ps-wrapper[data-pinned='false'] {
-  width: 72px;
 }
 
 .ps {
@@ -135,15 +125,15 @@
   overflow: hidden;
 }
 
-.ps[data-mode='expanded'] {
-  width: 240px;
-}
-
 .ps[data-mode='compact'] {
   width: 72px;
 }
 
-/* Floating overlay state when unpinned and hovered */
+.ps[data-mode='expanded'] {
+  width: 240px;
+}
+
+/* Floating overlay state when hovered */
 .ps[data-floating='true'] {
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
 }
@@ -156,11 +146,11 @@
   overflow: hidden;
 }
 
-/* Subtle background scrim when hovering unpinned over content */
+/* Subtle background scrim when hovering over canvas on desktop */
 .ps-floating-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.05);
   backdrop-filter: blur(1px);
   z-index: 45;
   pointer-events: auto;
@@ -208,10 +198,14 @@
   align-items: center;
   justify-content: space-between;
   height: 52px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--pm-line, #e2e8f0);
+  padding: 0 14px;
   flex-shrink: 0;
   position: relative;
+}
+
+.ps[data-mode='compact'] .ps-brand {
+  padding: 0;
+  justify-content: center;
 }
 
 .ps-brand__meta {
@@ -222,12 +216,17 @@
   overflow: hidden;
 }
 
+.ps[data-mode='compact'] .ps-brand__meta {
+  width: 100%;
+  justify-content: center;
+}
+
 .ps-brand__logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: var(--pm-r-md, 8px);
   background: var(--pm-accent, #0f766e);
   color: #ffffff;
@@ -261,60 +260,20 @@
   letter-spacing: 0.04em;
 }
 
-/* ── Compact Brand Header Refinements (Prevents Overlap & Clipping) ──── */
-
-.ps[data-mode='compact'] .ps-brand {
-  padding: 0 8px;
-  justify-content: center;
-}
-
-.ps[data-mode='compact'] .ps-brand__meta {
-  width: 100%;
-  justify-content: center;
-}
-
-/* Position toggle right next to logo with proper spacing, inside bounds */
-.ps[data-mode='compact'] .ps-brand__collapse-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  background: var(--pm-tile, #ffffff);
-  border: 1px solid var(--pm-line, #e2e8f0);
-  border-radius: 50%;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  cursor: pointer;
-  color: var(--pm-ink-3, #64748b);
-  transition: all 150ms ease;
-  /* Placed safely inside the header rail rather than negative clipped margins */
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 20;
-}
-
-.ps[data-mode='compact'] .ps-brand__collapse-btn:hover {
-  color: var(--pm-ink, #0f172a);
-  background: var(--pm-inset, #f8fafc);
-  border-color: var(--pm-accent, #0f766e);
-}
-
-/* ── Sidebar Navigation List ──────────────────────────────────────────── */
+/* ── Sidebar Navigation List (No Horizontal Lines, Consistent Spacing) ── */
 
 .ps-nav {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   flex: 1;
-  min-height: 0; /* Crucial for flex scrolling on short screens! */
+  min-height: 0; /* Ensures flex container scrolls cleanly without clipping on short screens */
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px 10px;
-  /* Thin discreet scrollbar that never causes clipping */
+  padding: 10px 10px 16px 10px;
+  /* Hide intrusive scrollbars while preserving full scrollability */
   scrollbar-width: thin;
-  scrollbar-color: var(--pm-line, #e2e8f0) transparent;
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
 }
 
 .ps-nav::-webkit-scrollbar {
@@ -326,7 +285,7 @@
 }
 
 .ps-nav::-webkit-scrollbar-thumb {
-  background: var(--pm-line, #e2e8f0);
+  background: rgba(148, 163, 184, 0.25);
   border-radius: 4px;
 }
 
@@ -337,20 +296,13 @@
 }
 
 .ps-section__label {
-  padding: 4px 8px;
+  padding: 6px 10px 4px 10px;
   font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--pm-ink-4, #94a3b8);
   white-space: nowrap;
-}
-
-.ps-section__divider {
-  height: 1px;
-  margin: 6px 12px;
-  background: var(--pm-line, #e2e8f0);
-  opacity: 0.7;
 }
 
 .ps-item {
@@ -441,7 +393,7 @@
 /* ── Collapsed Compact Mode Navigation Overrides ─────────────────────── */
 
 .ps[data-mode='compact'] .ps-nav {
-  padding: 12px 0;
+  padding: 8px 0 16px 0;
   align-items: center;
 }
 
@@ -502,16 +454,6 @@
   position: relative;
 }
 
-.ps-subnav::before {
-  content: '';
-  position: absolute;
-  left: 19px;
-  top: 4px;
-  bottom: 6px;
-  width: 1px;
-  background: var(--pm-line, #e2e8f0);
-}
-
 .ps-subitem {
   display: flex;
   align-items: center;
@@ -542,14 +484,12 @@
   background: var(--pm-accent-soft, #ccfbf1);
 }
 
-/* ── Fixed Sidebar Footer (.ps-foot) ──────────────────────────────────── */
+/* ── Fixed Sidebar Footer: ONLY User Avatar & Popover ─────────────────── */
 
 .ps-foot {
-  padding: 10px 8px;
-  border-top: 1px solid var(--pm-line, #e2e8f0);
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
   flex-shrink: 0;
   background: var(--pm-tile, #ffffff);
   z-index: 10;
@@ -564,7 +504,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px;
+  padding: 4px 6px;
   border-radius: var(--pm-r-md, 8px);
   min-width: 0;
 }
@@ -622,7 +562,7 @@
 .ps-profile-popover {
   position: absolute;
   left: calc(100% + 14px);
-  bottom: 0;
+  bottom: 6px;
   width: 200px;
   background: var(--pm-tile, #ffffff);
   border: 1px solid var(--pm-line, #e2e8f0);
@@ -682,13 +622,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ps-wrapper,
   .ps,
   .ps-chevron-anim,
   .ps-subnav-container,
   .ps-item,
   .ps-subitem,
-  .ps-brand__collapse-btn,
   .ps-floating-scrim {
     transition: none !important;
     animation: none !important;
@@ -703,43 +641,15 @@
   border-color: var(--pm-border, #334155);
 }
 
-[data-theme='dark'] .ps-brand,
-.dark .ps-brand {
-  border-color: var(--pm-border, #334155);
-}
-
-[data-theme='dark'] .ps-brand__collapse-btn,
-.dark .ps-brand__collapse-btn {
-  background: var(--pm-card, #1e293b);
-  border-color: var(--pm-border, #334155);
-  color: var(--pm-ink-3, #94a3b8);
-}
-
 [data-theme='dark'] .ps-foot,
 .dark .ps-foot {
   background: var(--pm-card, #1e293b);
-  border-color: var(--pm-border, #334155);
 }
 
 [data-theme='dark'] .pm-topbar,
 .dark .pm-topbar {
   background: var(--pm-card, #1e293b);
   border-color: var(--pm-border, #334155);
-}
-
-[data-theme='dark'] .ps-nav::-webkit-scrollbar-thumb,
-.dark .ps-nav::-webkit-scrollbar-thumb {
-  background: var(--pm-border, #334155);
-}
-
-[data-theme='dark'] .ps-section__divider,
-.dark .ps-section__divider {
-  background: var(--pm-border, #334155);
-}
-
-[data-theme='dark'] .ps-subnav::before,
-.dark .ps-subnav::before {
-  background: var(--pm-border, #334155);
 }
 
 [data-theme='dark'] .ps-profile-popover,

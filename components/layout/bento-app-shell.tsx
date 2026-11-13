@@ -3,21 +3,7 @@
 import * as React from 'react';
 import NextLink from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import {
-  Menu,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
-  LogOut,
-  Sun,
-  Moon,
-  Settings,
-  Bell,
-  User,
-  X,
-  Pin,
-  PinOff,
-} from 'lucide-react';
+import { Menu, ChevronDown, LogOut, Sun, Moon, Settings, Bell, User, X } from 'lucide-react';
 import { Toaster as SonnerToaster } from 'sonner';
 import { Toaster } from '@/components/ui/toaster';
 import { signOut } from '@/lib/auth-client';
@@ -43,19 +29,8 @@ interface BentoAppShellProps {
   branding?: BrandContext | null;
 }
 
-const PIN_STORAGE_KEY = 'agencyos:sidebar:pinned';
-
 export function BentoAppShell({ children, user, sections, branding }: BentoAppShellProps) {
-  // Pinned state: true = always expanded (default), false = collapsed rail with hover-to-expand
-  const [isPinned, setIsPinned] = React.useState<boolean>(() => {
-    if (typeof window === 'undefined') return true;
-    try {
-      const stored = window.localStorage.getItem(PIN_STORAGE_KEY);
-      return stored !== null ? stored === 'true' : true;
-    } catch {
-      return true;
-    }
-  });
+  // Sidebar state: collapsed by default, smoothly expands on hover without shifting page content
   const [isHovered, setIsHovered] = React.useState<boolean>(false);
   const [mobileOpen, setMobileOpen] = React.useState<boolean>(false);
   const [profileMenuOpen, setProfileMenuOpen] = React.useState<boolean>(false);
@@ -70,18 +45,6 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
   const { theme, resolvedTheme, mounted, setTheme } = useTheme();
   const pathname = usePathname();
   const router = useRouter();
-
-  const handleTogglePin = React.useCallback(() => {
-    setIsPinned((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(PIN_STORAGE_KEY, String(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
 
   // Close profile dropdown when clicking outside or pressing Escape
   React.useEffect(() => {
@@ -126,7 +89,31 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
     };
   }, [pathname]);
 
-  const flatItems = React.useMemo(() => allNavItems(sections), [sections]);
+  // Ensure Settings is part of the normal navigation list rather than the fixed footer
+  const effectiveSections = React.useMemo(() => {
+    const hasSettings = sections.some((sec) => sec.items.some((item) => item.href === '/settings'));
+    if (hasSettings) return sections;
+
+    // Append Settings to the last section ('tools') or add as an item
+    return sections.map((sec, idx) => {
+      if (sec.id === 'tools' || idx === sections.length - 1) {
+        return {
+          ...sec,
+          items: [
+            ...sec.items,
+            {
+              name: 'Settings',
+              href: '/settings',
+              icon: 'settings' as const,
+            },
+          ],
+        };
+      }
+      return sec;
+    });
+  }, [sections]);
+
+  const flatItems = React.useMemo(() => allNavItems(effectiveSections), [effectiveSections]);
   const activeHref = resolveActiveHref(pathname ?? '', flatItems);
 
   // Track manually toggled items; active parents are dynamically computed
@@ -136,7 +123,7 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
   const activeParentMap = React.useMemo(() => {
     const map: Record<string, boolean> = {};
     if (!pathname) return map;
-    for (const sec of sections) {
+    for (const sec of effectiveSections) {
       for (const item of sec.items) {
         if (
           item.subItems?.some((sub) => sub.href === activeHref || pathname.startsWith(sub.href))
@@ -146,7 +133,7 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
       }
     }
     return map;
-  }, [sections, activeHref, pathname]);
+  }, [effectiveSections, activeHref, pathname]);
 
   const isParentExpanded = React.useCallback(
     (itemName: string) => {
@@ -164,14 +151,14 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
       if (e.key === 'Escape') {
         if (profileMenuOpen) {
           setProfileMenuOpen(false);
-        } else if (isHovered && !isPinned) {
+        } else if (isHovered) {
           setIsHovered(false);
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [profileMenuOpen, isHovered, isPinned]);
+  }, [profileMenuOpen, isHovered]);
 
   // Focus trap and keyboard handling for mobile navigation drawer
   React.useEffect(() => {
@@ -253,34 +240,27 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
       clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = null;
     }
-    if (!isPinned) {
-      // Small debounce (60ms) prevents accidental fluttering
-      hoverTimeoutRef.current = setTimeout(() => {
-        setIsHovered(true);
-      }, 60);
-    }
-  }, [isPinned]);
+    // Small debounce (60ms) prevents accidental fluttering
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsHovered(true);
+    }, 60);
+  }, []);
 
   const handleMouseLeave = React.useCallback(() => {
     if (hoverTimeoutRef.current) {
       clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = null;
     }
-    if (!isPinned) {
-      // 180ms delay gives natural smooth glide when mouse momentarily strays
-      hoverTimeoutRef.current = setTimeout(() => {
-        setIsHovered(false);
-        setProfileMenuOpen(false);
-      }, 180);
-    }
-  }, [isPinned]);
+    // 180ms delay gives natural smooth glide when mouse momentarily leaves
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsHovered(false);
+      setProfileMenuOpen(false);
+    }, 180);
+  }, []);
 
-  // Is the sidebar content visually expanded right now?
-  // It is visually expanded if:
-  // 1. Mobile drawer is open, OR
-  // 2. Desktop is pinned, OR
-  // 3. Desktop is hovered while unpinned
-  const isVisuallyExpanded = mobileOpen || isPinned || isHovered;
+  // Is the sidebar visually expanded right now?
+  // Visually expanded if mobile drawer is open or desktop is hovered
+  const isVisuallyExpanded = mobileOpen || isHovered;
 
   return (
     <div className="pm-shell" data-theme={mounted ? resolvedTheme : 'light'}>
@@ -292,15 +272,14 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
       {/* Mobile scrim overlay */}
       {mobileOpen && <div className="pm-scrim" onClick={closeMobileDrawer} aria-hidden="true" />}
 
-      {/* Hover-expand backdrop scrim (subtle scrim when floating over main canvas in unpinned hover mode) */}
-      {!isPinned && isHovered && !mobileOpen && (
+      {/* Hover-expand backdrop scrim (subtle scrim when floating over main canvas on desktop) */}
+      {isHovered && !mobileOpen && (
         <div className="ps-floating-scrim" onClick={() => setIsHovered(false)} aria-hidden="true" />
       )}
 
-      {/* Bento Sidebar Rail Container */}
+      {/* Bento Sidebar Rail Container - Fixed 72px slot reserving DOM space so main canvas NEVER shifts */}
       <div
         className="ps-wrapper"
-        data-pinned={isPinned ? 'true' : 'false'}
         data-hovered={isHovered ? 'true' : 'false'}
         data-mobile-open={mobileOpen ? 'true' : undefined}
         onMouseEnter={handleMouseEnter}
@@ -310,12 +289,12 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
           ref={sidebarRef}
           className="ps"
           data-mode={isVisuallyExpanded ? 'expanded' : 'compact'}
-          data-floating={!isPinned && isHovered && !mobileOpen ? 'true' : 'false'}
+          data-floating={isHovered && !mobileOpen ? 'true' : 'false'}
           data-mobile-open={mobileOpen ? 'true' : undefined}
           aria-label="Main navigation"
         >
           <div className="ps-inner">
-            {/* Brand header */}
+            {/* Brand header: Logo with clean, non-overlapping title text */}
             <div className="ps-brand">
               <div className="ps-brand__meta">
                 <div className="ps-brand__logo" aria-hidden="true">
@@ -342,65 +321,13 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
                   <X size={18} />
                 </button>
               )}
-
-              {/* Desktop Pin / Unpin & Collapse Controls */}
-              <div className="hidden md:flex items-center gap-1">
-                {isVisuallyExpanded && (
-                  <button
-                    type="button"
-                    className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors flex items-center justify-center"
-                    onClick={handleTogglePin}
-                    aria-label={
-                      isPinned ? 'Unpin sidebar (auto-collapse)' : 'Pin sidebar (keep open)'
-                    }
-                    title={isPinned ? 'Unpin sidebar (auto-collapse)' : 'Pin sidebar (keep open)'}
-                  >
-                    {isPinned ? (
-                      <Pin className="w-3.5 h-3.5 rotate-45 text-accent" />
-                    ) : (
-                      <PinOff className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                )}
-
-                {/* Direct Collapse/Expand Toggle Chevron */}
-                <button
-                  type="button"
-                  className={`p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors flex items-center justify-center ${
-                    !isVisuallyExpanded ? 'ps-brand__collapse-btn' : ''
-                  }`}
-                  onClick={() => {
-                    if (isPinned) {
-                      setIsPinned(false);
-                      setIsHovered(false);
-                      try {
-                        localStorage.setItem(PIN_STORAGE_KEY, 'false');
-                      } catch {}
-                    } else {
-                      setIsPinned(true);
-                      setIsHovered(false);
-                      try {
-                        localStorage.setItem(PIN_STORAGE_KEY, 'true');
-                      } catch {}
-                    }
-                  }}
-                  aria-label={isPinned ? 'Collapse sidebar' : 'Expand & pin sidebar'}
-                  title={isPinned ? 'Collapse sidebar' : 'Expand & pin sidebar'}
-                >
-                  {isVisuallyExpanded ? <ChevronLeft size={15} /> : <ChevronRight size={14} />}
-                </button>
-              </div>
             </div>
 
-            {/* Scrollable Navigation Sections with Custom Smooth Scrollbar */}
+            {/* Scrollable Navigation Sections with clean vertical spacing (NO horizontal lines) */}
             <nav className="ps-nav" aria-label="Sections">
-              {sections.map((section) => (
+              {effectiveSections.map((section) => (
                 <div key={section.id} className="ps-section">
-                  {isVisuallyExpanded ? (
-                    <div className="ps-section__label">{section.label}</div>
-                  ) : (
-                    <div className="ps-section__divider" aria-hidden="true" />
-                  )}
+                  {isVisuallyExpanded && <div className="ps-section__label">{section.label}</div>}
 
                   <div className="flex flex-col gap-1">
                     {section.items.map((item: NavItem) => {
@@ -496,27 +423,11 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
               ))}
             </nav>
 
-            {/* Fixed Sidebar Footer: Settings & User Account Menu */}
+            {/* Fixed Sidebar Footer: ONLY User Avatar & Account Menu Popover */}
             <div className="ps-foot" ref={profileMenuRef}>
-              <NextLink
-                href="/settings"
-                className="ps-item"
-                aria-current={activeHref === '/settings' ? 'page' : undefined}
-                title="Settings & Preferences"
-                onClick={() => {
-                  if (mobileOpen) closeMobileDrawer();
-                }}
-              >
-                <span className="ps-item__icon" aria-hidden="true">
-                  <Settings className="w-4 h-4" />
-                </span>
-                {isVisuallyExpanded && <span className="ps-item__label">Settings</span>}
-              </NextLink>
-
-              {/* User Profile / Account Footer */}
               {!isVisuallyExpanded ? (
                 /* Collapsed rail: Centered avatar button triggering accessible account menu */
-                <div className="relative flex justify-center py-1">
+                <div className="relative flex justify-center py-0.5">
                   <button
                     type="button"
                     className="ps-user-btn"
@@ -580,7 +491,7 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
                 </div>
               ) : (
                 /* Expanded state: Full user info with inline sign-out */
-                <div className="flex items-center justify-between pt-1 border-t border-border/50">
+                <div className="flex items-center justify-between py-1">
                   <div className="ps-user">
                     <Avatar name={user.name ?? user.email ?? 'Member'} size="sm" />
                     <div className="ps-user__info">
@@ -608,7 +519,7 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
         </aside>
       </div>
 
-      {/* Main Canvas Area - Width/Margin adjusts strictly based on pinned state so hover does NOT shift layout! */}
+      {/* Main Canvas Area - Preserves 72px margin; content never shifts on sidebar hover */}
       <div className="pm-canvas" aria-hidden={mobileOpen ? 'true' : undefined}>
         <div className="pm-main">
           {/* Topbar with Global Header Quick Light/Dark Toggle */}

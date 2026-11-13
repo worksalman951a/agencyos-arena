@@ -1,15 +1,18 @@
 /**
- * BentoAppShell & Hybrid Animated Sidebar Unit and Integration Tests.
+ * BentoAppShell & Refined Hybrid Animated Sidebar Tests.
  *
  * Verifies:
- * - Collapsed, hover-expanded, and pinned states
- * - Animated nested submenus for Pipeline, Projects, Documents, etc.
+ * - Collapsed by default (72px rail) and smooth hover expansion (to 240px)
+ * - Main canvas content has zero shift on hover
+ * - No horizontal separator lines in sidebar (clean vertical spacing only)
+ * - Pin/unpin control completely removed (no localStorage dependency)
+ * - Settings is in the normal sidebar navigation list
+ * - Fixed footer contains ONLY user avatar/account popover
+ * - Animated nested submenus for Pipeline, Projects, Documents
  * - Active route highlighting and auto-expansion
  * - Keyboard navigation, focus states, and Escape key behavior
- * - Pin/unpin toggles with localStorage persistence
- * - Mobile navigation drawer and touch accessibility
- * - Light, Dark, and System theme toggles
- * - Visual regression fixes (brand logo/collapse button alignment, scrollbar container)
+ * - Mobile drawer navigation and touch accessibility
+ * - Short viewport height behavior without scroll clipping or icon truncation
  */
 
 import React from 'react';
@@ -68,10 +71,9 @@ const allPermissions = new Set([
 
 const sections = filterNavigation(NAV_SECTIONS, allPermissions);
 
-describe('BentoAppShell Hybrid Animated Sidebar', () => {
+describe('BentoAppShell Refined Hybrid Animated Sidebar', () => {
   beforeEach(() => {
     currentPathname = '/dashboard';
-    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -79,7 +81,7 @@ describe('BentoAppShell Hybrid Animated Sidebar', () => {
     vi.clearAllMocks();
   });
 
-  it('renders pinned expanded sidebar by default with all sections and brand mark', () => {
+  it('renders collapsed rail (72px) by default with centered icons and brand logo', () => {
     const { container } = render(
       <BentoAppShell user={testUser} sections={sections}>
         <div>Main Content</div>
@@ -89,39 +91,53 @@ describe('BentoAppShell Hybrid Animated Sidebar', () => {
     const wrapper = container.querySelector('.ps-wrapper');
     const aside = container.querySelector('.ps');
 
-    expect(wrapper).toHaveAttribute('data-pinned', 'true');
-    expect(aside).toHaveAttribute('data-mode', 'expanded');
-    expect(screen.getByText('AgencyOS')).toBeInTheDocument();
-    expect(screen.getAllByText('Workspace').length).toBeGreaterThan(0);
-    expect(screen.getByText('Main Content')).toBeInTheDocument();
-  });
-
-  it('allows unpinning sidebar into compact collapsed rail', async () => {
-    const { container } = render(
-      <BentoAppShell user={testUser} sections={sections}>
-        <div>Main Content</div>
-      </BentoAppShell>
-    );
-
-    const unpinButton = screen.getByRole('button', { name: /Unpin sidebar/i });
-    expect(unpinButton).toBeInTheDocument();
-
-    await act(async () => {
-      fireEvent.click(unpinButton);
-    });
-
-    const wrapper = container.querySelector('.ps-wrapper');
-    const aside = container.querySelector('.ps');
-
-    expect(wrapper).toHaveAttribute('data-pinned', 'false');
+    expect(wrapper).toBeInTheDocument();
     expect(aside).toHaveAttribute('data-mode', 'compact');
-    expect(window.localStorage.getItem('agencyos:sidebar:pinned')).toBe('false');
+    expect(screen.getByText('Main Content')).toBeInTheDocument();
+
+    // Verify pin/unpin button is NOT present
+    expect(screen.queryByRole('button', { name: /pin/i })).toBeNull();
+
+    // Verify no decorative horizontal separator lines exist
+    expect(container.querySelector('.ps-section__divider')).toBeNull();
   });
 
-  it('expands smoothly on hover when unpinned without shifting main canvas', async () => {
-    vi.useFakeTimers();
+  it('includes Settings in the normal navigation list instead of fixed footer', () => {
+    const { container } = render(
+      <BentoAppShell user={testUser} sections={sections}>
+        <div>Main Content</div>
+      </BentoAppShell>
+    );
 
-    window.localStorage.setItem('agencyos:sidebar:pinned', 'false');
+    const nav = container.querySelector('.ps-nav')!;
+    const foot = container.querySelector('.ps-foot')!;
+
+    // Settings link should be located inside nav, NOT inside foot
+    const navSettingsLink = nav.querySelector('a[href="/settings"]');
+    const footSettingsLink = foot.querySelector('a[href="/settings"]');
+
+    expect(navSettingsLink).toBeInTheDocument();
+    expect(footSettingsLink).toBeNull();
+  });
+
+  it('keeps ONLY user avatar and popover trigger in the fixed bottom footer', () => {
+    const { container } = render(
+      <BentoAppShell user={testUser} sections={sections}>
+        <div>Main Content</div>
+      </BentoAppShell>
+    );
+
+    const foot = container.querySelector('.ps-foot')!;
+    const userBtn = foot.querySelector('.ps-user-btn');
+    expect(userBtn).toBeInTheDocument();
+
+    // Footer should not contain extraneous links outside of the account trigger
+    const footLinks = foot.querySelectorAll('a');
+    expect(footLinks.length).toBe(0);
+  });
+
+  it('expands smoothly on hover without shifting main canvas content', async () => {
+    vi.useFakeTimers();
 
     const { container } = render(
       <BentoAppShell user={testUser} sections={sections}>
@@ -132,18 +148,17 @@ describe('BentoAppShell Hybrid Animated Sidebar', () => {
     const wrapper = container.querySelector('.ps-wrapper')!;
     const aside = container.querySelector('.ps')!;
 
-    expect(wrapper).toHaveAttribute('data-pinned', 'false');
     expect(aside).toHaveAttribute('data-mode', 'compact');
 
     // Trigger mouse enter
     fireEvent.mouseEnter(wrapper);
 
-    // Fast-forward debounce
+    // Advance past debounce
     act(() => {
       vi.advanceTimersByTime(100);
     });
 
-    // Sidebar expands to floating overlay while wrapper width remains unchanged (72px)
+    // Sidebar expands to floating overlay
     expect(aside).toHaveAttribute('data-mode', 'expanded');
     expect(aside).toHaveAttribute('data-floating', 'true');
     expect(container.querySelector('.ps-floating-scrim')).toBeInTheDocument();
@@ -161,9 +176,8 @@ describe('BentoAppShell Hybrid Animated Sidebar', () => {
     vi.useRealTimers();
   });
 
-  it('closes hover-expansion on Escape key press', () => {
+  it('closes hover-expansion immediately when Escape key is pressed', () => {
     vi.useFakeTimers();
-    window.localStorage.setItem('agencyos:sidebar:pinned', 'false');
 
     const { container } = render(
       <BentoAppShell user={testUser} sections={sections}>
@@ -188,7 +202,8 @@ describe('BentoAppShell Hybrid Animated Sidebar', () => {
     vi.useRealTimers();
   });
 
-  it('handles animated nested submenus for Pipeline and Projects', async () => {
+  it('handles animated nested submenus for Pipeline and preserves active route state', async () => {
+    vi.useFakeTimers();
     currentPathname = '/crm/opportunities';
 
     const { container } = render(
@@ -197,8 +212,15 @@ describe('BentoAppShell Hybrid Animated Sidebar', () => {
       </BentoAppShell>
     );
 
-    // Pipeline link in sidebar should be present
+    const wrapper = container.querySelector('.ps-wrapper')!;
     const aside = container.querySelector('.ps')!;
+
+    // Hover expand with timer advance
+    fireEvent.mouseEnter(wrapper);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
     const pipelineLabels = aside.querySelectorAll('.ps-item__label');
     const pipelineItem = Array.from(pipelineLabels).find((el) => el.textContent === 'Pipeline');
     expect(pipelineItem).toBeDefined();
@@ -213,7 +235,7 @@ describe('BentoAppShell Hybrid Animated Sidebar', () => {
     const toggleButtons = screen.getAllByRole('button', { name: /Collapse Pipeline/i });
     expect(toggleButtons.length).toBeGreaterThan(0);
 
-    await act(async () => {
+    act(() => {
       fireEvent.click(toggleButtons[0]);
     });
 
@@ -221,11 +243,11 @@ describe('BentoAppShell Hybrid Animated Sidebar', () => {
       '.ps-subnav-container:not(.ps-subnav-container--open)'
     );
     expect(closedSubnav).toBeInTheDocument();
+
+    vi.useRealTimers();
   });
 
-  it('renders centered avatar and opens accessible popover menu in compact mode', async () => {
-    window.localStorage.setItem('agencyos:sidebar:pinned', 'false');
-
+  it('opens and closes accessible popover menu from footer avatar', async () => {
     render(
       <BentoAppShell user={testUser} sections={sections}>
         <div>Main Content</div>
@@ -254,7 +276,7 @@ describe('BentoAppShell Hybrid Animated Sidebar', () => {
     expect(screen.queryByRole('menu', { name: /User account menu/i })).toBeNull();
   });
 
-  it('provides mobile drawer with touch accessibility and focus trap', async () => {
+  it('supports mobile drawer with touch accessibility and focus trap', async () => {
     render(
       <BentoAppShell user={testUser} sections={sections}>
         <div>Main Content</div>
