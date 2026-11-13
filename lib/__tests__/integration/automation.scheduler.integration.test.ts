@@ -232,14 +232,16 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
   });
 
   it('reports partial execution failure and does not replay successful actions on the next invocation', async () => {
+    const partialAdmin = await createBootstrappedAccount('workflow-scheduler-partial-failure');
+    createdOrganizations.push(partialAdmin.organizationId);
     const restricted = await createMemberWithPermissions(
-      admin.organizationId,
+      partialAdmin.organizationId,
       'scheduler-partial-failure',
       ['workflow.create', 'workflow.execute', 'project.read', 'notification.update']
     );
     const project = await prisma.project.create({
       data: {
-        organizationId: admin.organizationId,
+        organizationId: partialAdmin.organizationId,
         name: `Partial failure ${randomUUID()}`,
         status: 'active',
         endDate: yesterdayUtc(),
@@ -281,7 +283,7 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
     expect(
       await prisma.workflowExecution.count({
         where: {
-          organizationId: admin.organizationId,
+          organizationId: partialAdmin.organizationId,
           ruleId: rule.id,
           recordType: 'Project',
           recordId: project.id,
@@ -292,7 +294,7 @@ describeIfDb('automation scheduler (PostgreSQL and HTTP)', () => {
     expect(
       await prisma.notification.count({
         where: {
-          organizationId: admin.organizationId,
+          organizationId: partialAdmin.organizationId,
           userId: restricted.userId,
           type: 'workflow',
           payload: { path: ['recordId'], equals: project.id },
