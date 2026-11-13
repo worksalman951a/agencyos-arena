@@ -25,6 +25,15 @@ export const WORKFLOW_TRIGGERS = [
   'record.created',
   'record.updated',
   'record.status_changed',
+  'task.overdue',
+  'project.overdue',
+  'invoice.overdue',
+] as const;
+
+export const SCHEDULED_OVERDUE_TRIGGERS = [
+  'task.overdue',
+  'project.overdue',
+  'invoice.overdue',
 ] as const;
 
 export type WorkflowTrigger = (typeof WORKFLOW_TRIGGERS)[number];
@@ -208,6 +217,8 @@ export interface WorkflowEvent {
   previousStatus?: string | null;
   /** Stable fingerprint of the persisted record version that produced this event. */
   eventVersion?: string;
+  /** Trusted producer channel; set only by internal scheduler dispatch. */
+  source?: 'scheduler';
 }
 
 /** Read a dot path such as `owner.id` from a record. */

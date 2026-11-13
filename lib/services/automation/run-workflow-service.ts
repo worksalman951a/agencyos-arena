@@ -36,6 +36,13 @@ import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 
 import {
+  isEligibleOverdueRecord,
+  isScheduledOverdueTrigger,
+  scheduledEventVersion,
+  scheduledRecordType,
+  utcSchedulerDayStart,
+} from '@/lib/automation/workflow-scheduler';
+import {
   matchesWorkflowRule,
   resolveActionValue,
   workflowActionsSchema,
@@ -104,7 +111,9 @@ const EVENT_RECORDS: Record<WorkflowRecordType, WorkflowRecordDescriptor> = {
     updatePermissions: ['project.update'],
     canSetStatus: true,
     include: {
-      project: { select: { id: true, name: true, organizationId: true, deletedAt: true } },
+      project: {
+        select: { id: true, name: true, organizationId: true, status: true, deletedAt: true },
+      },
     },
   },
   Estimate: {
@@ -188,6 +197,46 @@ const STATUS_TRANSITIONS: Partial<Record<WorkflowRecordType, Record<string, read
 
 function codedError(message: string, statusCode: number) {
   return Object.assign(new Error(message), { statusCode });
+}
+
+async function markScheduledInvoiceOverdue(
+  organizationId: string,
+  invoiceId: string,
+  actorId: string,
+  actorEmail: string,
+  dayStart: Date
+): Promise<void> {
+  await prisma.$transaction(async (tx: unknown) => {
+    const database = tx as {
+      invoice: { updateMany(args: unknown): Promise<{ count: number }> };
+      auditLog: { create(args: unknown): Promise<unknown> };
+    };
+    const changed = await database.invoice.updateMany({
+      where: {
+        id: invoiceId,
+        organizationId,
+        deletedAt: null,
+        status: 'sent',
+        dueDate: { lt: dayStart },
+      },
+      data: { status: 'overdue' },
+    });
+    if (changed.count !== 1) return;
+
+    await database.auditLog.create({
+      data: {
+        actorId,
+        actorName: actorEmail || null,
+        action: 'invoice.mark_overdue',
+        entityType: 'Invoice',
+        entityId: invoiceId,
+        before: { status: 'sent' },
+        after: { status: 'overdue' },
+        metadata: { source: 'workflow_scheduler' },
+        organizationId,
+      },
+    });
+  });
 }
 
 async function getAuthorizedUser(): Promise<AuthorizedUser> {
@@ -720,7 +769,7 @@ function eventMetadata(event: WorkflowEvent, actor: AuthorizedUser) {
     eventType: event.type,
     eventVersion: event.eventVersion ?? null,
     previousStatus: event.previousStatus ?? null,
-    source: 'business-service',
+    source: event.source ?? 'business-service',
     actorId: actor.userId,
   };
 }
@@ -760,10 +809,16 @@ async function persistExecutionResult({
 
 async function dispatchWorkflowEvent(
   event: WorkflowEvent,
-  actor: AuthorizedUser
+  actor: AuthorizedUser,
+  onlyRuleId?: string
 ): Promise<WorkflowEventResult> {
   const rules = await prisma.workflowRule.findMany({
-    where: { organizationId: actor.organizationId, enabled: true, trigger: event.type },
+    where: {
+      organizationId: actor.organizationId,
+      enabled: true,
+      trigger: event.type,
+      ...(onlyRuleId ? { id: onlyRuleId } : {}),
+    },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -862,16 +917,49 @@ async function dispatchWorkflowEvent(
     }
 
     const status = failure ? 'failed' : 'succeeded';
+    const finalResultLog = {
+      ...eventMetadata(event, actor),
+      actionDefinitions: parsedActions.success ? parsedActions.data : rule.actions,
+      actions: outcomes,
+      ...(failure ? { error: failure } : {}),
+    };
     const updated = await persistExecutionResult({
       executionId,
       status,
-      resultLog: {
-        ...eventMetadata(event, actor),
-        actionDefinitions: parsedActions.success ? parsedActions.data : rule.actions,
-        actions: outcomes,
-        ...(failure ? { error: failure } : {}),
-      },
+      resultLog: finalResultLog,
     });
+
+    if (event.source === 'scheduler') {
+      try {
+        await prisma.auditLog.create({
+          data: {
+            actorId: actor.userId,
+            actorName: actor.email,
+            action: 'workflow.scheduled_execution',
+            entityType: 'WorkflowExecution',
+            entityId: executionId,
+            before: { status: 'running' },
+            after: { status: updated.status },
+            metadata: {
+              ruleId: rule.id,
+              eventType: event.type,
+              recordType: event.recordType,
+              recordId: event.recordId,
+              eventVersion: event.eventVersion ?? null,
+              actions: outcomes,
+            },
+            organizationId: actor.organizationId,
+          },
+        });
+      } catch (error) {
+        console.error('[automation] could not persist scheduled execution audit', {
+          organizationId: actor.organizationId,
+          ruleId: rule.id,
+          executionId,
+          errorCode: (error as { code?: string } | null)?.code,
+        });
+      }
+    }
 
     if (updated.status === 'failed') result.failed += 1;
     else result.executed += 1;
@@ -935,6 +1023,105 @@ function logEventEmissionFailure(
   });
 }
 
+function skippedScheduledResult(
+  type: WorkflowTrigger,
+  recordType: WorkflowRecordType,
+  recordId: string
+): WorkflowEventResult {
+  return {
+    eventType: type,
+    recordType,
+    recordId,
+    matched: 0,
+    executed: 0,
+    skipped: 1,
+    failed: 0,
+    executions: [],
+  };
+}
+
+/** Internal scheduler path: owner-authorized, tenant-scoped, overdue-only dispatch. */
+export async function emitScheduledWorkflowEvent(
+  ruleId: string,
+  organizationId: string,
+  recordId: string,
+  trigger: WorkflowTrigger,
+  scheduledAt: Date
+): Promise<WorkflowEventResult> {
+  if (!isScheduledOverdueTrigger(trigger)) {
+    throw codedError('Unsupported scheduled workflow trigger', 400);
+  }
+  const type = trigger;
+  const recordType = scheduledRecordType(type);
+  const rule = await prisma.workflowRule.findFirst({
+    where: { id: ruleId, organizationId, trigger: type, enabled: true },
+    select: { id: true, createdBy: true },
+  });
+  if (!rule || !rule.createdBy) {
+    return skippedScheduledResult(type, recordType, recordId);
+  }
+  const membership = await prisma.user.findFirst({
+    where: {
+      id: rule.createdBy,
+      organizationId,
+      status: 'active',
+      userType: 'internal',
+    },
+    select: { id: true, email: true, role: true },
+  });
+  if (!membership) return skippedScheduledResult(type, recordType, recordId);
+
+  const { organizationId: activeOrganizationId } = await requireOrganization(membership.id);
+  if (activeOrganizationId !== organizationId) {
+    return skippedScheduledResult(type, recordType, recordId);
+  }
+  await requirePermission(membership.id, organizationId, 'workflow.execute');
+  await requirePermission(membership.id, organizationId, EVENT_RECORDS[recordType].readPermission);
+  if (recordType === 'Invoice') {
+    await requirePermission(membership.id, organizationId, 'invoice.update');
+  }
+
+  let record = await loadWorkflowRecord(recordType, recordId, organizationId);
+  if (!record) return skippedScheduledResult(type, recordType, recordId);
+  const dayStart = utcSchedulerDayStart(scheduledAt);
+  if (!isEligibleOverdueRecord(type, record, dayStart)) {
+    return skippedScheduledResult(type, recordType, recordId);
+  }
+  if (type === 'invoice.overdue') {
+    await markScheduledInvoiceOverdue(
+      organizationId,
+      recordId,
+      membership.id,
+      membership.email ?? '',
+      dayStart
+    );
+    record = await loadWorkflowRecord(recordType, recordId, organizationId);
+    if (!record || !isEligibleOverdueRecord(type, record, dayStart)) {
+      return skippedScheduledResult(type, recordType, recordId);
+    }
+  }
+
+  const dueDate = new Date(String(type === 'project.overdue' ? record.endDate : record.dueDate));
+  const event: WorkflowEvent = {
+    type,
+    recordType,
+    recordId,
+    record,
+    eventVersion: scheduledEventVersion(dueDate, scheduledAt),
+    source: 'scheduler',
+  };
+  return dispatchWorkflowEvent(
+    event,
+    {
+      userId: membership.id,
+      organizationId,
+      email: membership.email ?? '',
+      role: membership.role ?? 'employee',
+    },
+    rule.id
+  );
+}
+
 export async function emitWorkflowEvents(inputs: unknown): Promise<WorkflowEventResult[]> {
   const parsed = workflowProducerEventSchema.array().min(1).max(2).safeParse(inputs);
   if (!parsed.success) {
@@ -943,6 +1130,9 @@ export async function emitWorkflowEvents(inputs: unknown): Promise<WorkflowEvent
     };
     error.issues = parsed.error.issues;
     throw error;
+  }
+  if (parsed.data.some((event) => isScheduledOverdueTrigger(event.type))) {
+    throw codedError('Overdue triggers are emitted only by the trusted scheduler', 400);
   }
 
   const [{ recordType, recordId }] = parsed.data;

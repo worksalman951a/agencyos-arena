@@ -133,7 +133,13 @@ export function NewWorkflowRuleForm() {
           >
             {WORKFLOW_TRIGGERS.map((trigger) => (
               <option key={trigger} value={trigger}>
-                {trigger}
+                {trigger === 'task.overdue'
+                  ? 'Task overdue (daily UTC)'
+                  : trigger === 'project.overdue'
+                    ? 'Project overdue (daily UTC)'
+                    : trigger === 'invoice.overdue'
+                      ? 'Invoice overdue (daily UTC)'
+                      : trigger}
               </option>
             ))}
           </select>

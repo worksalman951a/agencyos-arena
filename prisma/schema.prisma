@@ -50,6 +50,7 @@ model User {
   updatedQuotations       Quotation[]              @relation("UpdatedQuotation")
   createdInvoices         Invoice[]                @relation("CreatedInvoice")
   updatedInvoices         Invoice[]                @relation("UpdatedInvoice")
+  createdWorkflowRules    WorkflowRule[]           @relation("WorkflowRuleCreator")
   createdProjects         Project[]                @relation("CreatedProject")
   updatedProjects         Project[]                @relation("UpdatedProject")
   createdPayments         Payment[]                @relation("CreatedPayment")
@@ -773,6 +774,7 @@ model ChangeOrder {
 model WorkflowRule {
   id             String   @id @default(cuid())
   organizationId String
+  createdBy      String?
   name           String
   trigger        String
   conditions     Json     @default("{}")
@@ -782,7 +784,11 @@ model WorkflowRule {
   updatedAt      DateTime @updatedAt
 
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator      User?               @relation("WorkflowRuleCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   executions   WorkflowExecution[]
+
+  @@index([organizationId, trigger, enabled])
+  @@index([createdBy])
 }
 
 /// Execution history for a workflow rule.
