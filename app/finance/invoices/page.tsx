@@ -7,8 +7,15 @@
  *
  * Authorization outcomes are rendered as explicit notices, so a permission
  * failure or a database error can never be mistaken for "no invoices yet".
+ *
+ * All loading, authorization and tenant scoping stays here on the server. The
+ * client renders what it is given and, for search/status filters, only
+ * navigates to a new query string - it never fetches or filters invoices itself.
+ * It is wrapped in <Suspense> because it reads the query string with
+ * `useSearchParams` (see the Next.js useSearchParams docs).
  */
 
+import { Suspense } from 'react';
 import Link from 'next/link';
 
 import { listInvoices, type InvoiceResponse } from '@/lib/services/crm/invoice-service';
@@ -108,19 +115,25 @@ export default async function InvoicesListPage({
           <span>No invoices yet.</span>
         </form>
       </span>
-      <InvoicesClient
-        invoices={invoices}
-        total={total}
-        totalPages={totalPages}
-        page={page}
-        searchVal={search}
-        statusFilter={status}
-        projectIdFilter={projectId}
-        sortBy={sortBy}
-        sortOrder={sortOrder}
-        onSearchChange={() => {}}
-        onStatusFilterChange={() => {}}
-      />
+      <Suspense
+        fallback={
+          <div className="p-6 text-sm text-muted-foreground" role="status">
+            Loading invoices…
+          </div>
+        }
+      >
+        <InvoicesClient
+          invoices={invoices}
+          total={total}
+          totalPages={totalPages}
+          page={page}
+          searchVal={search}
+          statusFilter={status}
+          projectIdFilter={projectId}
+          sortBy={sortBy}
+          sortOrder={sortOrder}
+        />
+      </Suspense>
     </div>
   );
 }
