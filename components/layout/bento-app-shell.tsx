@@ -13,6 +13,7 @@ import {
   Moon,
   Settings,
   Bell,
+  User,
   X,
 } from 'lucide-react';
 import { Toaster as SonnerToaster } from 'sonner';
@@ -43,6 +44,29 @@ interface BentoAppShellProps {
 export function BentoAppShell({ children, user, sections, branding }: BentoAppShellProps) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = React.useState(false);
+  const profileMenuRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Close profile dropdown when clicking outside or pressing Escape
+  React.useEffect(() => {
+    if (!profileMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setProfileMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [profileMenuOpen]);
   const { theme, resolvedTheme, mounted, setTheme } = useTheme();
   const [unreadCount, setUnreadCount] = React.useState<number>(0);
   const pathname = usePathname();
@@ -230,12 +254,14 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
             {/* Collapse toggle (desktop only) */}
             <button
               type="button"
-              className="p-1 rounded text-muted-foreground hover:text-foreground hidden md:flex items-center justify-center"
+              className={`p-1 rounded text-muted-foreground hover:text-foreground hidden md:flex items-center justify-center ${
+                collapsed ? 'ps-brand__collapse-btn' : ''
+              }`}
               onClick={() => setCollapsed(!collapsed)}
               aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             >
-              {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+              {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={16} />}
             </button>
           </div>
 
@@ -332,7 +358,7 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
           </nav>
 
           {/* Fixed Sidebar Footer: Settings & User Account Menu */}
-          <div className="ps-foot">
+          <div className="ps-foot" ref={profileMenuRef}>
             <NextLink
               href="/settings"
               className="ps-item"
@@ -348,30 +374,96 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
               {(!collapsed || mobileOpen) && <span className="ps-item__label">Settings</span>}
             </NextLink>
 
-            <div className="flex items-center justify-between pt-1 border-t border-border/50">
-              <div className="ps-user">
-                <Avatar name={user.name ?? user.email ?? 'Member'} size="sm" />
-                {(!collapsed || mobileOpen) && (
+            {/* User Profile / Account Footer */}
+            {collapsed && !mobileOpen ? (
+              /* Collapsed rail: Only centered avatar button triggering accessible account menu */
+              <div className="relative flex justify-center py-1">
+                <button
+                  type="button"
+                  className="ps-user-btn"
+                  onClick={() => setProfileMenuOpen(!profileMenuOpen)}
+                  aria-label="User account menu"
+                  aria-expanded={profileMenuOpen}
+                  aria-haspopup="true"
+                  title={user.name ?? user.email ?? 'User account'}
+                >
+                  <Avatar
+                    name={(user.name || user.email || 'M').charAt(0).toUpperCase()}
+                    size="sm"
+                  />
+                </button>
+
+                {profileMenuOpen && (
+                  <div className="ps-profile-popover" role="menu" aria-label="User account menu">
+                    <div className="px-3 py-2 border-b border-border/60">
+                      <div className="text-xs font-semibold text-foreground truncate">
+                        {user.name ?? 'Member'}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground truncate">
+                        {user.email ?? ''}
+                      </div>
+                    </div>
+                    <div className="p-1 space-y-0.5">
+                      <NextLink
+                        href="/settings#profile"
+                        role="menuitem"
+                        className="ps-profile-menuitem"
+                        onClick={() => setProfileMenuOpen(false)}
+                      >
+                        <User className="w-3.5 h-3.5" />
+                        <span>My Profile</span>
+                      </NextLink>
+                      <NextLink
+                        href="/settings"
+                        role="menuitem"
+                        className="ps-profile-menuitem"
+                        onClick={() => setProfileMenuOpen(false)}
+                      >
+                        <Settings className="w-3.5 h-3.5" />
+                        <span>Settings</span>
+                      </NextLink>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="ps-profile-menuitem ps-profile-menuitem--danger"
+                        onClick={async () => {
+                          setProfileMenuOpen(false);
+                          await signOut();
+                          router.push('/login');
+                        }}
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Sign Out</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Expanded rail: Full user info with inline sign-out */
+              <div className="flex items-center justify-between pt-1 border-t border-border/50">
+                <div className="ps-user">
+                  <Avatar name={user.name ?? user.email ?? 'Member'} size="sm" />
                   <div className="ps-user__info">
                     <span className="ps-user__name">{user.name ?? 'Member'}</span>
                     <span className="ps-user__email">{user.email ?? ''}</span>
                   </div>
-                )}
-              </div>
+                </div>
 
-              <button
-                type="button"
-                className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-danger flex items-center justify-center shrink-0"
-                onClick={async () => {
-                  await signOut();
-                  router.push('/login');
-                }}
-                aria-label="Sign out"
-                title="Sign out of workspace"
-              >
-                <LogOut size={15} />
-              </button>
-            </div>
+                <button
+                  type="button"
+                  className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-danger flex items-center justify-center shrink-0"
+                  onClick={async () => {
+                    await signOut();
+                    router.push('/login');
+                  }}
+                  aria-label="Sign out"
+                  title="Sign out of workspace"
+                >
+                  <LogOut size={15} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </aside>
@@ -402,10 +494,6 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
             </div>
 
             <div className="pm-topbar__right flex items-center gap-2.5">
-              <div className="text-xs text-muted-foreground hidden sm:block mr-1">
-                ⌘K Quick Jump
-              </div>
-
               {/* Global Header Notifications Bell */}
               <NextLink
                 href="/automation/notifications"

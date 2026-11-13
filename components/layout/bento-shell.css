@@ -410,3 +410,194 @@
   background: var(--pm-card, #1e293b);
   border-color: var(--pm-border, #334155);
 }
+
+/* ── Collapsed / Compact Mode Refinements (Phase 13E-1) ───────────────── */
+
+.ps[data-mode=compact] .ps-brand {
+  padding: 0;
+  justify-content: center;
+  position: relative;
+}
+
+.ps[data-mode=compact] .ps-brand__meta {
+  width: 100%;
+  justify-content: center;
+}
+
+.ps[data-mode=compact] .ps-brand__collapse-btn {
+  position: absolute;
+  top: 50%;
+  right: -11px;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  background: var(--pm-tile, #ffffff);
+  border: 1px solid var(--pm-line, #e2e8f0);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 60;
+  color: var(--pm-ink-3, #64748b);
+  transition: all 150ms ease;
+}
+
+.ps[data-mode=compact] .ps-brand__collapse-btn:hover {
+  color: var(--pm-ink, #0f172a);
+  background: var(--pm-inset, #f8fafc);
+  border-color: var(--pm-accent, #0f766e);
+}
+
+.ps[data-mode=compact] .ps-nav {
+  padding: 12px 0;
+  align-items: center;
+}
+
+.ps[data-mode=compact] .ps-section {
+  align-items: center;
+  width: 100%;
+}
+
+.ps[data-mode=compact] .ps-section > div {
+  align-items: center;
+  width: 100%;
+}
+
+.ps[data-mode=compact] .ps-item {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  margin: 0 auto;
+  justify-content: center;
+  align-items: center;
+  border-radius: var(--pm-r-md, 8px);
+}
+
+.ps[data-mode=compact] .ps-item__icon {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+.ps[data-mode=compact] .ps-item[aria-current=page],
+.ps[data-mode=compact] .ps-item[data-active=true] {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+}
+
+.ps[data-mode=compact] .ps-foot {
+  padding: 10px 0;
+  align-items: center;
+}
+
+.ps-user-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--pm-r-md, 8px);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 120ms ease;
+  padding: 0;
+}
+
+.ps-user-btn:hover,
+.ps-user-btn[aria-expanded=true] {
+  background: var(--pm-inset, #f8fafc);
+  border-color: var(--pm-line, #e2e8f0);
+}
+
+.ps-user-btn:focus-visible {
+  outline: 2px solid var(--pm-accent, #0f766e);
+  outline-offset: 1px;
+}
+
+.ps-profile-popover {
+  position: absolute;
+  left: calc(100% + 14px);
+  bottom: 0;
+  width: 200px;
+  background: var(--pm-tile, #ffffff);
+  border: 1px solid var(--pm-line, #e2e8f0);
+  border-radius: 10px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+  z-index: 100;
+  animation: pmFadeIn 120ms ease-out;
+}
+
+@keyframes pmFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ps-profile-menuitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--pm-ink-2, #334155);
+  text-decoration: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.ps-profile-menuitem:hover {
+  background: var(--pm-inset, #f8fafc);
+  color: var(--pm-ink, #0f172a);
+}
+
+.ps-profile-menuitem:focus-visible {
+  outline: 2px solid var(--pm-accent, #0f766e);
+  outline-offset: -1px;
+}
+
+.ps-profile-menuitem--danger {
+  color: #dc2626;
+}
+
+.ps-profile-menuitem--danger:hover {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+[data-theme=dark] .ps[data-mode=compact] .ps-brand__collapse-btn,
+.dark .ps[data-mode=compact] .ps-brand__collapse-btn {
+  background: var(--pm-card, #1e293b);
+  border-color: var(--pm-border, #334155);
+  color: var(--pm-ink-3, #94a3b8);
+}
+
+[data-theme=dark] .ps-profile-popover,
+.dark .ps-profile-popover {
+  background: var(--pm-card, #1e293b);
+  border-color: var(--pm-border, #334155);
+}
+
+[data-theme=dark] .ps-profile-menuitem:hover,
+.dark .ps-profile-menuitem:hover {
+  background: var(--pm-inset, #0f172a);
+}
+
+[data-theme=dark] .ps-profile-menuitem--danger:hover,
+.dark .ps-profile-menuitem--danger:hover {
+  background: rgba(220, 38, 38, 0.15);
+  color: #f87171;
+}
