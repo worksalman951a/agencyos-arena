@@ -19,7 +19,11 @@ type TestDb = {
     create(args: unknown): Promise<{ id: string }>;
     findMany(args: unknown): Promise<Array<{ id: string; amount: { toString(): string } }>>;
   };
-  workflowExecution: { count(args: unknown): Promise<number> };
+  workflowExecution: {
+    count(args: unknown): Promise<number>;
+    create(args: unknown): Promise<{ id: string; attempts: number }>;
+    findUniqueOrThrow(args: unknown): Promise<Record<string, unknown>>;
+  };
   auditLog: { count(args: unknown): Promise<number> };
   $disconnect(): Promise<void>;
 };
@@ -60,7 +64,12 @@ test.describe('workflow scheduler', () => {
           name: `E2E invoice overdue ${randomUUID()}`,
           trigger: 'invoice.overdue',
           conditions: {},
-          actions: { list: [{ type: 'log', message: 'daily invoice overdue trigger' }] },
+          actions: {
+            list: [
+              { type: 'log', message: 'already completed' },
+              { type: 'log', message: 'safe retry' },
+            ],
+          },
           enabled: true,
         },
       });
@@ -115,6 +124,27 @@ test.describe('workflow scheduler', () => {
       const [first, concurrent] = await Promise.all([invoke(), invoke()]);
       expect(first.status(), await first.text()).toBe(200);
       expect(concurrent.status(), await concurrent.text()).toBe(200);
+      const operational = (await first.json()) as {
+        monitoring: { pending: number; running: number; failed: number; terminal: number };
+        recovery: {
+          scanned: number;
+          retried: number;
+          quarantined: number;
+          terminal: number;
+          failed: number;
+        };
+      };
+      expect(operational.monitoring).toEqual(
+        expect.objectContaining({
+          pending: expect.any(Number),
+          running: expect.any(Number),
+          failed: expect.any(Number),
+          terminal: expect.any(Number),
+        })
+      );
+      expect(operational.recovery).toEqual(
+        expect.objectContaining({ scanned: expect.any(Number) })
+      );
 
       const historyResponse = await api.get(`/api/v1/automation/workflows/${rule.id}/executions`, {
         headers: authHeaders(account),
@@ -161,6 +191,49 @@ test.describe('workflow scheduler', () => {
           })
         ).map((payment) => ({ id: payment.id, amount: payment.amount.toString() }))
       ).toEqual(paymentsBefore);
+
+      const staleExecution = await db.workflowExecution.create({
+        data: {
+          organizationId: user!.organizationId,
+          ruleId: rule.id,
+          recordType: 'Invoice',
+          recordId: invoice.id,
+          status: 'running',
+          dedupeKey: `e2e-stale-${randomUUID()}`,
+          attempts: 1,
+          lastAttemptAt: new Date(Date.now() - 20 * 60_000),
+          claimToken: 'expired-e2e-worker',
+          resultLog: {
+            actorId: user!.id,
+            source: 'scheduler',
+            eventType: 'invoice.overdue',
+            eventVersion: 'e2e-stale-recovery',
+            actionDefinitions: {
+              list: [
+                { type: 'log', message: 'already completed' },
+                { type: 'log', message: 'safe retry' },
+              ],
+            },
+            actions: [{ index: 0, type: 'log', status: 'ok', detail: 'already persisted' }],
+          },
+        },
+      });
+      const recoveryResponse = await invoke();
+      expect(recoveryResponse.status(), await recoveryResponse.text()).toBe(200);
+      const recovered = await db.workflowExecution.findUniqueOrThrow({
+        where: { id: staleExecution.id },
+      });
+      expect(recovered).toMatchObject({
+        status: 'succeeded',
+        attempts: 2,
+        claimToken: null,
+        resultLog: {
+          actions: [
+            { index: 0, status: 'ok', detail: 'already completed' },
+            { index: 1, status: 'ok' },
+          ],
+        },
+      });
     } finally {
       await db.$disconnect();
     }

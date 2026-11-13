@@ -28,6 +28,8 @@ function publicResult(result: WorkflowSchedulerResult) {
     executed: result.executed,
     skipped: result.skipped,
     failed: result.failed,
+    recovery: result.recovery,
+    monitoring: result.monitoring,
   };
 }
 

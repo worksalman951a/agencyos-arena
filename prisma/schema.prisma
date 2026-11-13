@@ -780,6 +780,7 @@ model WorkflowRule {
   conditions     Json     @default("{}")
   actions        Json     @default("{}")
   enabled        Boolean  @default(true)
+  deletedAt      DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -811,6 +812,14 @@ model WorkflowExecution {
   attempts       Int       @default(0)
   /// When the last attempt ran.
   lastAttemptAt  DateTime?
+  /// Earliest time a bounded retry may claim this execution.
+  nextAttemptAt  DateTime?
+  /// Set for terminal failures or quarantined executions.
+  terminalAt     DateTime?
+  /// Sanitized operational category, never an exception message.
+  errorCategory  String?
+  /// Fences a worker that lost its stale lease from finalizing a newer attempt.
+  claimToken     String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @default(now()) @updatedAt
 
@@ -819,6 +828,9 @@ model WorkflowExecution {
 
   @@unique([ruleId, recordType, recordId, dedupeKey])
   @@index([organizationId, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([status, lastAttemptAt])
+  @@index([status, errorCategory, updatedAt])
 }
 
 model Notification {

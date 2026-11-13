@@ -21,6 +21,8 @@ const completedResult: WorkflowSchedulerResult = {
   executed: 5,
   skipped: 0,
   failed: 0,
+  recovery: { scanned: 0, retried: 0, quarantined: 0, terminal: 0, failed: 0 },
+  monitoring: { pending: 0, running: 0, failed: 0, terminal: 0 },
 };
 
 function schedulerRequest() {
@@ -77,6 +79,8 @@ describe('POST /api/internal/automation/scheduler', () => {
       executed: 3,
       skipped: 0,
       failed: 2,
+      recovery: { scanned: 0, retried: 0, quarantined: 0, terminal: 0, failed: 0 },
+      monitoring: { pending: 0, running: 0, failed: 0, terminal: 0 },
     });
     expect(JSON.stringify(body)).not.toContain('tenant-private-id');
     expect(JSON.stringify(body)).not.toContain('sensitive internal error');

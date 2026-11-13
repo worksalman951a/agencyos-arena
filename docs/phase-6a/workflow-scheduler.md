@@ -18,7 +18,7 @@ The form exposes these three triggers. Existing declarative conditions and suppo
 
 The event version is the UTC run day plus the record's due date. The existing unique `WorkflowExecution(ruleId, recordType, recordId, dedupeKey)` constraint claims a scheduled event before actions run; a concurrent scheduler invocation loses the insert race and does not execute actions. Notification actions also use their existing unique dedupe key. Scheduled events can run at most once per rule, record and UTC day; an edited due date forms a distinct event version. Execution outcomes are persisted in workflow history and an audit log entry is written for each claimed scheduled execution.
 
-Disabled rules are excluded from enumeration and rechecked by the event dispatcher; deleted rules are absent. A rule disabled/deleted after a workflow execution has already claimed its event is considered in flight and may finish. The overdue scan only changes a sent invoice's status from `sent` to `overdue`; payment rows and invoice amounts, totals, currency, and due date are read-only.
+Disabled rules are excluded from enumeration and rechecked by the event dispatcher. Deletion is soft: deleted rules are hidden and disabled while retained execution history remains available in organization-wide history. A rule disabled/deleted after a workflow execution has already claimed its event is considered in flight and may finish. The overdue scan only changes a sent invoice's status from `sent` to `overdue`; payment rows and invoice amounts, totals, currency, and due date are read-only.
 
 ## HTTP outcomes and monitoring
 
@@ -44,4 +44,22 @@ Do not put the secret in a URL, command-line history, or logs. Remove the platfo
 
 ## Phase 6B boundary
 
-This is polling execution, not a durable queue/outbox. A process crash after claiming an execution can leave it in `running`; automated stale-claim recovery, backoff/retries, dead-letter handling, dashboards, and alerting remain Phase 6B. External scheduler invocations should record HTTP failures and alert on non-2xx responses. High-volume partitioning is also not included.
+This remains polling execution, not a durable queue/outbox. Phase 6B adds bounded stale-claim recovery and retry/backoff through this same protected scheduler, plus aggregate monitoring. It does not add dashboards, alert delivery, high-volume partitioning, or a general-purpose dead-letter processing interface. External scheduler invocations should still alert on non-2xx responses.
+
+## Phase 6B recovery and monitoring
+
+The protected scheduler remains the only scheduler entry point. Recovery is bounded to 100 rows per invocation and does not add a queue or separate automation engine.
+
+- A random claim token fences each attempt. Checkpoints and finalization compare both tenant and token, preventing a stale worker from finalizing after another worker has taken over.
+- Failed executions retry with exponential backoff beginning at one minute, doubling to a one-hour cap. Five total attempts (initial plus four recovery attempts) are allowed; after that the state becomes `terminal_failed`.
+- `running` executions whose last attempt is at least 15 minutes old are eligible for recovery.
+- The worker uses the saved action and event snapshot, not a mutable current rule definition. It requires the same-tenant rule to still exist, remain enabled and owned by the original creator; that creator must remain an active internal member with current workflow and record-read permissions.
+- Only schema-valid `log`, deduplicated notification, and existing compare-and-set record mutation actions are automatically retryable. Unknown or invalid action types are quarantined. Potentially partial unsafe actions are never automatically replayed and require manual reconciliation.
+- `set_status` and `assign_record_owner` lock and verify the current execution claim in the same PostgreSQL transaction as the record write, audit row, and durable per-action success evidence. A later checkpoint cannot overwrite that success evidence.
+- Newly versioned execution snapshots can safely retry these transactional mutation actions. Older executions without evidence that a mutation committed are quarantined as `uncertain_action` rather than replayed.
+- Successful action outcomes remain in the audit snapshot and are skipped on subsequent attempts. Notification dedupe keys and record mutation guards remain safeguards against duplicate effects.
+- Persisted errors use stable non-sensitive categories, never exception text. Scheduler responses now include aggregate retry/quarantine/terminal totals and non-sensitive pending/running/failed/terminal counts.
+
+Migration `0027_workflow_execution_recovery` adds retry scheduling, terminal timestamps, sanitized error categories, claim fencing tokens, and status-oriented indexes. Existing failed executions are made eligible one minute after their previous attempt/update; execution history and successful records are preserved. No invoice/payment mutation or database reset is performed.
+
+Quarantined executions need human reconciliation; this phase adds no dashboard or alert delivery. Backlogs drain over repeated scheduler invocations. A database outage during side effects can still leave an ambiguous outcome; action idempotency and fencing mitigate duplicates, while unsupported third-party effects are intentionally not auto-replayed.
