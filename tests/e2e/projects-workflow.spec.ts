@@ -110,7 +110,29 @@ test.describe('Projects end-to-end workflows', () => {
     // Reload to verify persistence
     await page.reload();
     await expect(page.getByRole('heading', { name: projectName, level: 1 })).toBeVisible();
-    await expect(page.getByText(templateName).first()).toBeVisible();
+    await expect(page.getByText('Budget Allocated')).toBeVisible();
+    await expect(page.getByText('$15,000.00', { exact: true })).toBeVisible();
+    await expect(
+      page.getByText('Template description for E2E launch', { exact: true })
+    ).toBeVisible();
+
+    // The template name is not rendered on the detail page, so verify the binding through
+    // Edit Project — its Project Template select is the one place the selection is shown.
+    await page.getByRole('link', { name: 'Edit Project' }).click();
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/edit$`));
+
+    // The select only mounts once the template list has loaded, and the option list can
+    // populate before the selection is applied — so wait for the select, then assert the
+    // selected option's text, not merely that the name appears among the options.
+    const templateField = page.getByLabel('Project Template');
+    await expect(templateField).toBeVisible({ timeout: 15000 });
+    await expect(templateField).toHaveValue(/\S+/);
+    await expect(templateField.locator('option:checked')).toHaveText(templateName);
+
+    // Return to the same project detail page without saving.
+    await page.goto(projectUrl);
+    await expect(page.getByRole('heading', { name: projectName, level: 1 })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe(projectPath);
 
     // 3. Add a Milestone
     await page.getByLabel('Milestone name').fill('Design Phase');
