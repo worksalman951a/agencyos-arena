@@ -130,23 +130,31 @@ describe('module layouts', () => {
 });
 
 describe('Sidebar', () => {
-  it('renders grouped navigation and marks the active route', () => {
-    const allPermissions = new Set(
-      NAV_SECTIONS.flatMap((section) => section.items)
-        .map((item) => item.permission)
-        .filter((code): code is string => Boolean(code))
-    );
+  const allPermissions = new Set(
+    NAV_SECTIONS.flatMap((section) => [
+      section.items.map((item) => item.permission),
+      section.items.flatMap((item) => item.subItems?.map((sub) => sub.permission) ?? []),
+    ])
+      .flat()
+      .filter((code): code is string => Boolean(code))
+  );
+
+  it('renders the approved menu and marks the active group', () => {
     const sections = filterNavigation(NAV_SECTIONS, allPermissions);
 
     render(<Sidebar sections={sections} isCollapsed={false} setIsCollapsed={() => {}} />);
 
-    expect(screen.getByText('Finance')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Today' })).toHaveAttribute('href', '/dashboard');
+    expect(screen.getByRole('link', { name: 'Today' })).toHaveAttribute('data-variant', 'emerald');
 
-    const active = screen.getByRole('link', { name: 'Invoices' });
+    // /finance/invoices/abc123 belongs to Billing & Invoices -> Invoices.
+    const active = screen.getByRole('link', { name: 'Billing & Invoices' });
     expect(active).toHaveAttribute('aria-current', 'page');
+    expect(active).toHaveAttribute('href', '/finance/invoices');
 
-    const inactive = screen.getByRole('link', { name: 'Contacts' });
+    const inactive = screen.getByRole('link', { name: 'Clients & Contacts' });
     expect(inactive).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('separator', { hidden: true })).toBeInTheDocument();
 
     cleanup();
   });
@@ -156,9 +164,10 @@ describe('Sidebar', () => {
 
     render(<Sidebar sections={sections} isCollapsed={false} setIsCollapsed={() => {}} />);
 
-    expect(screen.getByRole('link', { name: 'Invoices' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Users' })).toBeNull();
-    expect(screen.queryByText('Administration')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Billing & Invoices' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Reports' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Clients & Contacts' })).toBeNull();
 
     cleanup();
   });

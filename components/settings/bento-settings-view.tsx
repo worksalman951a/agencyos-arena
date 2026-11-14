@@ -21,8 +21,7 @@ import {
   Activity,
   Bell,
   KeyRound,
-  Database,
-  Sliders,
+  Mail,
   ExternalLink,
 } from 'lucide-react';
 
@@ -32,6 +31,7 @@ import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { BRAND_SWATCHES } from '@/lib/branding-constants';
 import { contrastRatio, readableForeground, resolveBrandTheme } from '@/lib/branding';
 import { useTheme } from '@/components/providers/theme-provider';
+import { HASH_NAVIGATION_EVENT, hashFromEvent } from '@/lib/hash-navigation';
 
 export interface OrganizationSettings {
   brandName?: string | null;
@@ -81,6 +81,28 @@ export interface UserProfileResponse {
 
 export type SectionKey =
   'organization' | 'branding' | 'appearance' | 'currency' | 'invoice' | 'proposal' | 'profile';
+
+/**
+ * Sidebar deep links (e.g. Agency Settings -> Workspace Branding) land on
+ * `/settings#<fragment>`; map the fragment to the panel it should open.
+ */
+const SECTION_HASHES: Record<string, SectionKey> = {
+  organization: 'organization',
+  'organization-profile': 'organization',
+  branding: 'branding',
+  'workspace-branding': 'branding',
+  appearance: 'appearance',
+  'theme-display': 'appearance',
+  currency: 'currency',
+  'currency-dates': 'currency',
+  invoice: 'invoice',
+  'invoice-numbering': 'invoice',
+  'invoice-preferences': 'invoice',
+  proposal: 'proposal',
+  'proposal-preferences': 'proposal',
+  profile: 'profile',
+  'my-profile': 'profile',
+};
 
 export interface SaveState {
   status: 'idle' | 'saving' | 'success' | 'error';
@@ -220,6 +242,28 @@ export function BentoSettingsView({
   const [activeSection, setActiveSection] = React.useState<SectionKey>('organization');
   const { theme: appTheme, setTheme: setAppTheme, resolvedTheme } = useTheme();
 
+  // Open the panel referenced by a deep link (#branding, #invoice-numbering, ...)
+  // on direct load, reload, browser back/forward and sidebar-triggered navigation.
+  React.useEffect(() => {
+    const applyHash = (nextHash?: string) => {
+      const fragment = (nextHash ?? window.location.hash).replace(/^#/, '').trim();
+      if (!fragment) return;
+      const section = SECTION_HASHES[fragment];
+      if (section) setActiveSection(section);
+    };
+    const onNativeHashChange = () => applyHash();
+    const onHashNavigation = (event: Event) => applyHash(hashFromEvent(event));
+    applyHash();
+    window.addEventListener('hashchange', onNativeHashChange);
+    window.addEventListener('popstate', onNativeHashChange);
+    window.addEventListener(HASH_NAVIGATION_EVENT, onHashNavigation);
+    return () => {
+      window.removeEventListener('hashchange', onNativeHashChange);
+      window.removeEventListener('popstate', onNativeHashChange);
+      window.removeEventListener(HASH_NAVIGATION_EVENT, onHashNavigation);
+    };
+  }, []);
+
   // Preview calculations for Brand & Theme
   const resolvedBrand = React.useMemo(() => {
     const color = brandColor.trim() || '#047857';
@@ -252,31 +296,26 @@ export function BentoSettingsView({
 
   const settingsCategories: SettingsCategory[] = [
     {
-      category: 'Account',
+      category: 'My Account',
       items: [
         {
           id: 'profile',
           label: 'My Profile',
           icon: User,
-          note: 'Personal credentials & avatar',
+          note: 'Your name, avatar & contact identity',
+        },
+        {
+          label: 'Password',
+          icon: KeyRound,
+          note: 'Password & sign-in security',
+          disabledBadge: 'Coming Soon',
         },
         {
           label: 'Notifications',
           icon: Bell,
-          note: 'Delivery alerts & preferences',
+          note: 'Personal delivery & alert preferences',
           href: '/automation/preferences',
         },
-        {
-          label: 'Security',
-          icon: KeyRound,
-          note: 'Password & sessions',
-          disabledBadge: 'Coming Soon',
-        },
-      ],
-    },
-    {
-      category: 'Appearance',
-      items: [
         {
           id: 'appearance',
           label: 'Theme & Display',
@@ -292,43 +331,54 @@ export function BentoSettingsView({
           id: 'organization',
           label: 'Organization Profile',
           icon: Building2,
-          note: 'Company name & address',
+          note: 'Agency name, address & contacts',
         },
         {
           id: 'branding',
           label: 'Branding',
           icon: Palette,
-          note: 'Logos, colors & brand name',
+          note: 'Logo, colors & brand name',
         },
         {
           id: 'currency',
           label: 'Currency & Dates',
           icon: CreditCard,
-          note: 'Currency, dates & tax rules',
-        },
-        {
-          id: 'invoice',
-          label: 'Invoice Preferences',
-          icon: FileText,
-          note: 'Prefixes & sequences',
+          note: 'Workspace currency, dates & tax defaults',
         },
         {
           id: 'proposal',
           label: 'Proposal Preferences',
           icon: Sparkles,
-          note: 'Prefixes & validity',
+          note: 'Proposal numbering & validity',
         },
       ],
     },
     {
-      category: 'Administration',
+      category: 'Billing',
+      items: [
+        {
+          id: 'invoice',
+          label: 'Invoice Preferences',
+          icon: FileText,
+          note: 'Invoice numbering, defaults & tax rules',
+        },
+      ],
+    },
+    {
+      category: 'Team & Permissions',
       adminOnly: true,
       items: [
         {
-          label: 'Users & Invitations',
+          label: 'Team Members',
           icon: Users,
-          note: 'Team access management',
+          note: 'Member accounts & workspace access',
           href: '/admin/users',
+        },
+        {
+          label: 'Invitations',
+          icon: Mail,
+          note: 'Pending & accepted invitations',
+          href: '/admin/invitations',
         },
         {
           label: 'Roles & Permissions',
@@ -348,33 +398,35 @@ export function BentoSettingsView({
           note: 'Beta features & toggles',
           href: '/admin/feature-flags',
         },
-      ],
-    },
-    {
-      category: 'System',
-      adminOnly: true,
-      items: [
         {
           label: 'System Health',
           icon: Activity,
           note: 'Database & operational metrics',
           href: '/admin/health',
         },
-        {
-          label: 'Backup & Data',
-          icon: Database,
-          note: 'Snapshots & export',
-          disabledBadge: 'Coming Soon',
-        },
-        {
-          label: 'Integrations',
-          icon: Sliders,
-          note: 'External services & webhooks',
-          disabledBadge: 'Coming Soon',
-        },
       ],
     },
   ];
+
+  // Canonical fragment for each panel. Selecting a panel keeps the URL shareable
+  // so /settings#branding and /settings#invoice-numbering survive refresh and
+  // back/forward, matching the existing deep-link contract.
+  const sectionHash: Partial<Record<SectionKey, string>> = {
+    profile: '#profile',
+    appearance: '#theme-display',
+    organization: '#organization',
+    branding: '#branding',
+    currency: '#currency',
+    invoice: '#invoice-numbering',
+    proposal: '#proposal',
+  };
+
+  const selectSection = (section: SectionKey) => {
+    setActiveSection(section);
+    if (typeof window !== 'undefined' && sectionHash[section]) {
+      window.history.replaceState(null, '', sectionHash[section]);
+    }
+  };
 
   return (
     <div className="bento-crm space-y-6">
@@ -501,7 +553,7 @@ export function BentoSettingsView({
                           <button
                             key={idx}
                             type="button"
-                            onClick={() => item.id && setActiveSection(item.id)}
+                            onClick={() => item.id && selectSection(item.id)}
                             className={`w-full text-left px-3 py-2 rounded-md text-xs font-medium transition-colors flex items-start gap-2.5 ${
                               isActive
                                 ? 'bg-accent text-accent-foreground font-semibold shadow-xs'

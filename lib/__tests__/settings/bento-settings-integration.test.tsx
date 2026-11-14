@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import {
@@ -390,5 +390,177 @@ describe('Phase 8B Bento Settings & Administration Integration', () => {
     expect(screen.getByText('Monitor database, queue, and storage health.')).toBeInTheDocument();
     expect(screen.getByText('● Healthy')).toBeInTheDocument();
     expect(screen.getByText('22ms')).toBeInTheDocument();
+  });
+});
+
+describe('Bento Settings Center sections, permissions and deep links', () => {
+  function renderSettings({
+    org = mockOrg,
+    readOnly = false,
+  }: { org?: OrganizationResponse; readOnly?: boolean } = {}) {
+    const idle = { status: 'idle' as const };
+    return render(
+      <BentoSettingsView
+        org={org}
+        user={mockUser}
+        saves={{
+          organization: idle,
+          branding: idle,
+          appearance: idle,
+          currency: idle,
+          invoice: idle,
+          proposal: idle,
+          profile: idle,
+        }}
+        readOnly={readOnly}
+        orgName={org.name}
+        setOrgName={vi.fn()}
+        contactEmail="contact@acme.test"
+        setContactEmail={vi.fn()}
+        contactPhone=""
+        setContactPhone={vi.fn()}
+        address=""
+        setAddress={vi.fn()}
+        city=""
+        setCity={vi.fn()}
+        country=""
+        setCountry={vi.fn()}
+        postalCode=""
+        setPostalCode={vi.fn()}
+        brandName="Acme Brand"
+        setBrandName={vi.fn()}
+        brandColor="#047857"
+        setBrandColor={vi.fn()}
+        logoUrl=""
+        setLogoUrl={vi.fn()}
+        defaultCurrency="USD"
+        setDefaultCurrency={vi.fn()}
+        dateFormat="MM/DD/YYYY"
+        setDateFormat={vi.fn()}
+        currencyOptions={[{ value: 'USD', label: 'USD — US Dollar' }]}
+        dateFormats={[{ value: 'MM/DD/YYYY', label: 'MM/DD/YYYY (US)' }]}
+        invoicePrefix="INV"
+        setInvoicePrefix={vi.fn()}
+        invoiceNextNumber="101"
+        setInvoiceNextNumber={vi.fn()}
+        invoiceTaxDefault="0"
+        setInvoiceTaxDefault={vi.fn()}
+        proposalPrefix="PRP"
+        setProposalPrefix={vi.fn()}
+        proposalNextNumber="50"
+        setProposalNextNumber={vi.fn()}
+        proposalValidDays="30"
+        setProposalValidDays={vi.fn()}
+        displayName="Test Administrator"
+        setDisplayName={vi.fn()}
+        avatarUrl=""
+        setAvatarUrl={vi.fn()}
+        onOrganizationSave={vi.fn()}
+        onBrandingSave={vi.fn()}
+        onCurrencySave={vi.fn()}
+        onInvoiceSave={vi.fn()}
+        onProposalSave={vi.fn()}
+        onProfileSave={vi.fn()}
+      />
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.history.replaceState(null, '', '/settings');
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, '', '/settings');
+  });
+
+  it('groups the Settings Center into My Account, Workspace, Billing and Team & Permissions', () => {
+    renderSettings();
+
+    expect(screen.getByText('My Account')).toBeInTheDocument();
+    expect(screen.getByText('Billing')).toBeInTheDocument();
+    expect(screen.getByText('Team & Permissions')).toBeInTheDocument();
+    expect(screen.getAllByText('Workspace').length).toBeGreaterThan(0);
+
+    // Retired labels and unavailable features are not rendered as destinations.
+    expect(screen.queryByText('Manage Team')).toBeNull();
+    expect(screen.queryByText('Agency Settings')).toBeNull();
+    expect(screen.queryByText('Integrations')).toBeNull();
+  });
+
+  it('keeps personal actions in My Account and links existing pages', () => {
+    renderSettings();
+
+    expect(screen.getByText('Password')).toBeInTheDocument();
+    expect(screen.getByText('Coming Soon')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Notifications' })).toHaveAttribute(
+      'href',
+      '/automation/preferences'
+    );
+  });
+
+  it('links team administration pages from Team & Permissions', () => {
+    renderSettings();
+
+    expect(screen.getByRole('link', { name: 'Team Members' })).toHaveAttribute(
+      'href',
+      '/admin/users'
+    );
+    expect(screen.getByRole('link', { name: 'Invitations' })).toHaveAttribute(
+      'href',
+      '/admin/invitations'
+    );
+    expect(screen.getByRole('link', { name: 'Roles & Permissions' })).toHaveAttribute(
+      'href',
+      '/admin/roles'
+    );
+  });
+
+  it('hides Team & Permissions from members without administration access', () => {
+    renderSettings({ org: { ...mockOrg, isAdmin: false }, readOnly: true });
+
+    expect(screen.queryByText('Team & Permissions')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Team Members' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Roles & Permissions' })).toBeNull();
+    // Read-only members still get their account and workspace panels.
+    expect(screen.getByText('My Account')).toBeInTheDocument();
+    expect(screen.getByText('Billing')).toBeInTheDocument();
+  });
+
+  it('opens Workspace Branding from /settings#branding on direct load', () => {
+    window.history.replaceState(null, '', '/settings#branding');
+    renderSettings();
+
+    expect(screen.getByText('Brand & Visual Identity')).toBeInTheDocument();
+  });
+
+  it('opens Invoice Numbering from /settings#invoice-numbering on direct load', () => {
+    window.history.replaceState(null, '', '/settings#invoice-numbering');
+    renderSettings();
+
+    expect(screen.getByText('Invoice Numbering & Tax Rules')).toBeInTheDocument();
+  });
+
+  it('follows fragment changes after mount (hashchange and popstate)', () => {
+    renderSettings();
+    expect(screen.getByText('Organisation Profile')).toBeInTheDocument();
+
+    window.history.replaceState(null, '', '/settings#invoice-numbering');
+    fireEvent(window, new Event('popstate'));
+    expect(screen.getByText('Invoice Numbering & Tax Rules')).toBeInTheDocument();
+
+    window.history.replaceState(null, '', '/settings#branding');
+    fireEvent(window, new HashChangeEvent('hashchange'));
+    expect(screen.getByText('Brand & Visual Identity')).toBeInTheDocument();
+  });
+
+  it('keeps the URL shareable when a section is selected', () => {
+    renderSettings();
+
+    fireEvent.click(screen.getByText('Branding'));
+    expect(window.location.hash).toBe('#branding');
+
+    fireEvent.click(screen.getByText('Invoice Preferences'));
+    expect(window.location.hash).toBe('#invoice-numbering');
   });
 });

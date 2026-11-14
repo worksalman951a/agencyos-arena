@@ -53,8 +53,18 @@ test.describe('authenticated shell and dashboard', () => {
 
     await expect(page.getByRole('heading', { name: 'Dashboard', level: 1 })).toBeVisible();
     // Shared navigation comes from the single ModuleShell implementation.
-    await expect(page.getByRole('link', { name: 'Contacts', exact: true }).first()).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Settings', exact: true }).first()).toBeVisible();
+    const nav = page.getByRole('complementary', { name: 'Main navigation' });
+    await expect(nav.getByRole('link', { name: 'Clients & Contacts', exact: true })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toBeVisible();
+    // Today is the guided entry point and carries the emerald active pill.
+    await expect(nav.getByRole('link', { name: 'Today', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+    await expect(nav.getByRole('link', { name: 'Today', exact: true })).toHaveAttribute(
+      'data-variant',
+      'emerald'
+    );
 
     // Real financial section instead of the old placeholder figures.
     await expect(page.getByText('Total Invoiced').first()).toBeVisible();
@@ -137,8 +147,24 @@ test.describe('finance invoices', () => {
     expect(invoice.number).toMatch(/^[A-Z]+-\d{4}-\d{4,}$/);
 
     const main = page.locator('#main-content');
-    await page.goto('/finance/invoices');
+    // Reach the register through the sidebar: Billing & Invoices -> Invoices.
+    await page.goto('/dashboard');
+    const nav = page.getByRole('complementary', { name: 'Main navigation' });
+    await nav.getByRole('button', { name: 'Expand Billing & Invoices submenu' }).click();
+    await nav.getByRole('link', { name: 'Invoices', exact: true }).click();
+    await expect(page).toHaveURL(/\/finance\/invoices$/);
     await expect(main.getByRole('heading', { name: 'Invoices', level: 1 })).toBeVisible();
+    // The parent group stays highlighted and expanded around the active sub-item.
+    await expect(
+      nav.getByRole('link', { name: 'Billing & Invoices', exact: true })
+    ).toHaveAttribute('data-active', 'true');
+    await expect(
+      nav.getByRole('button', { name: 'Collapse Billing & Invoices submenu' })
+    ).toHaveAttribute('aria-expanded', 'true');
+    await expect(nav.getByRole('link', { name: 'Invoices', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
 
     // Bento renders the register as button rows with an inspector rail.
     const row = bentoPanel(page, /^Invoices Register/)
@@ -254,6 +280,42 @@ test.describe('settings', () => {
 
     await page.reload();
     await expect(main.locator('#bento-org-name')).toHaveValue(savedName);
+  });
+
+  test('opens Workspace Branding and Invoice Numbering from their deep links', async ({
+    authedPage: page,
+  }) => {
+    const main = page.locator('#main-content');
+    const nav = page.getByRole('complementary', { name: 'Main navigation' });
+
+    // Direct load of the preserved deep link.
+    await page.goto('/settings#branding');
+    await expect(bentoPanel(page, 'Brand & Visual Identity')).toBeVisible();
+
+    // Refresh keeps the same panel open.
+    await page.reload();
+    await expect(bentoPanel(page, 'Brand & Visual Identity')).toBeVisible();
+
+    // The other preserved deep link.
+    await page.goto('/settings#invoice-numbering');
+    await expect(bentoPanel(page, 'Invoice Numbering & Tax Rules')).toBeVisible();
+
+    // Browser back/forward between the two fragments.
+    await page.goBack();
+    await expect(page).toHaveURL(/\/settings#branding$/);
+    await expect(bentoPanel(page, 'Brand & Visual Identity')).toBeVisible();
+    await page.goForward();
+    await expect(page).toHaveURL(/\/settings#invoice-numbering$/);
+    await expect(bentoPanel(page, 'Invoice Numbering & Tax Rules')).toBeVisible();
+
+    // The rail has exactly one Settings entry and it is active here.
+    await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+    await expect(nav.getByRole('link', { name: 'Manage Team' })).toHaveCount(0);
+    await expect(nav.getByRole('link', { name: 'Agency Settings' })).toHaveCount(0);
+    await expect(main).toBeVisible();
   });
 });
 
