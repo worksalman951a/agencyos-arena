@@ -15,6 +15,12 @@ import { sumDecimalAmounts, formatDecimalMoney } from '@/lib/finance/decimal-uti
 import type { InvoiceResponse } from '@/lib/services/crm/invoice-service';
 import '@/components/crm/bento-contacts.css';
 
+interface BentoInvoiceProjectOption {
+  id: string;
+  name: string;
+  archived: boolean;
+}
+
 interface BentoInvoicesViewProps {
   invoices: InvoiceResponse[];
   total: number;
@@ -22,10 +28,13 @@ interface BentoInvoicesViewProps {
   page: number;
   searchVal: string;
   statusFilter: string;
+  projectIdFilter?: string;
+  projectOptions?: BentoInvoiceProjectOption[];
   sortBy: string;
   sortOrder: string;
   onSearchChange: (search: string) => void;
   onStatusFilterChange: (status: string) => void;
+  onProjectFilterChange: (projectId: string) => void;
 }
 
 const STATUS_FILTERS = [
@@ -44,8 +53,11 @@ export function BentoInvoicesView({
   page,
   searchVal,
   statusFilter,
+  projectIdFilter = '',
+  projectOptions = [],
   onSearchChange,
   onStatusFilterChange,
+  onProjectFilterChange,
 }: BentoInvoicesViewProps) {
   const [selectedIdx, setSelectedIdx] = React.useState(0);
   const [searchInput, setSearchInput] = React.useState(searchVal);
@@ -190,6 +202,45 @@ export function BentoInvoicesView({
           )}
         </form>
 
+        {/*
+          Project filter. The options are authorized and tenant-scoped on the
+          server (`listProjectOptions` requires `project.read`, filters by
+          organizationId and excludes soft-deleted projects), so this control can
+          only ever offer the caller's own projects. Selecting or clearing is a
+          navigation to a new query string - the server re-queries with it.
+        */}
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor="invoice-project-filter"
+            className="text-xs font-medium text-muted-foreground whitespace-nowrap"
+          >
+            Filter by project
+          </label>
+          <select
+            id="invoice-project-filter"
+            aria-label="Filter by project"
+            value={projectIdFilter}
+            onChange={(e) => onProjectFilterChange(e.target.value)}
+            className="h-9 border border-input rounded-md px-3 text-xs bg-background max-w-[220px]"
+          >
+            <option value="">All Projects</option>
+            {projectOptions.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.archived ? `${project.name} (archived)` : project.name}
+              </option>
+            ))}
+            {/*
+              The URL can name a project this caller is not offered (deleted,
+              another tenant's, or one beyond the option limit). The list is
+              still filtered by it, so the control must say so - otherwise a
+              filtered result would appear to have no filter applied.
+            */}
+            {projectIdFilter && !projectOptions.some((p) => p.id === projectIdFilter) && (
+              <option value={projectIdFilter}>Unavailable project</option>
+            )}
+          </select>
+        </div>
+
         <div className="bento-status-pills" role="tablist" aria-label="Filter invoices by status">
           {STATUS_FILTERS.map((f) => {
             const isActive = statusFilter === f.value;
@@ -214,9 +265,15 @@ export function BentoInvoicesView({
         <Panel pad>
           <EmptyState
             title={
-              searchVal || statusFilter ? 'No invoices match those filters' : 'No invoices found'
+              searchVal || statusFilter || projectIdFilter
+                ? 'No invoices match those filters'
+                : 'No invoices found'
             }
-            sub="Create your first client invoice using the billing builder."
+            sub={
+              projectIdFilter
+                ? 'This project has no invoices matching the current filters. Clear the project filter to see all invoices.'
+                : 'Create your first client invoice using the billing builder.'
+            }
             action={{
               label: 'Create Invoice',
               onClick: () => {

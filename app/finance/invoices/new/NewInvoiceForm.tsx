@@ -159,6 +159,9 @@ export function NewInvoiceForm({
         clientId={clientId}
         setClientId={setClientId}
         contacts={contacts}
+        projects={projects}
+        projectId={projectId}
+        setProjectId={setProjectId}
         title={title}
         setTitle={setTitle}
         status={status}

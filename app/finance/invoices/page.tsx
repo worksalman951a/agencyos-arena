@@ -7,11 +7,19 @@
  *
  * Authorization outcomes are rendered as explicit notices, so a permission
  * failure or a database error can never be mistaken for "no invoices yet".
+ *
+ * All loading, authorization and tenant scoping stays here on the server. The
+ * client renders what it is given and only navigates to a new query string for
+ * filters - it never fetches or filters invoices itself. It is wrapped in
+ * <Suspense> because it reads the query string with `useSearchParams` (see the
+ * Next.js useSearchParams docs).
  */
 
+import { Suspense } from 'react';
 import Link from 'next/link';
 
 import { listInvoices, type InvoiceResponse } from '@/lib/services/crm/invoice-service';
+import { listProjectOptions } from '@/lib/services/crm/project-service';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { InvoicesClient } from './invoices-client';
@@ -77,6 +85,17 @@ export default async function InvoicesListPage({
     })
   );
 
+  // Filter options load independently of the invoice list so a caller who can
+  // read invoices but not projects still gets their invoices. Archived projects
+  // are included on purpose: closing a project to new invoices must not hide
+  // the invoices already filed against it - that is precisely the set a user
+  // needs to find here. The service enforces `project.read` and organization
+  // scoping, so this can only ever list the caller's own projects.
+  const projectOptionsResult = await loadPageData(() =>
+    listProjectOptions({ includeArchived: true })
+  );
+  const projectOptions = projectOptionsResult.ok ? projectOptionsResult.data : [];
+
   if (!result.ok) {
     return (
       <div className="space-y-6 p-6">
@@ -108,19 +127,30 @@ export default async function InvoicesListPage({
           <span>No invoices yet.</span>
         </form>
       </span>
-      <InvoicesClient
-        invoices={invoices}
-        total={total}
-        totalPages={totalPages}
-        page={page}
-        searchVal={search}
-        statusFilter={status}
-        projectIdFilter={projectId}
-        sortBy={sortBy}
-        sortOrder={sortOrder}
-        onSearchChange={() => {}}
-        onStatusFilterChange={() => {}}
-      />
+      <Suspense
+        fallback={
+          <div className="p-6 text-sm text-muted-foreground" role="status">
+            Loading invoices…
+          </div>
+        }
+      >
+        <InvoicesClient
+          invoices={invoices}
+          total={total}
+          totalPages={totalPages}
+          page={page}
+          searchVal={search}
+          statusFilter={status}
+          projectIdFilter={projectId}
+          projectOptions={projectOptions.map((project) => ({
+            id: project.id,
+            name: project.name,
+            archived: project.status === 'archived',
+          }))}
+          sortBy={sortBy}
+          sortOrder={sortOrder}
+        />
+      </Suspense>
     </div>
   );
 }

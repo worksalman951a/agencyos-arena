@@ -140,6 +140,12 @@ jobs:
           BETTER_AUTH_URL: "http://localhost:3001"
           TEST_SERVER_URL: "http://localhost:3001"
           NODE_ENV: "test"
+          # No ClamAV daemon runs in CI, so the file-upload path has no scanner to
+          # talk to. Enable the offline inspection engine (EICAR signature check
+          # still applies, dangerous types are still rejected, and anything that
+          # fails inspection still fails closed) for this test server only.
+          # Production must leave this unset.
+          MALWARE_SCANNER_ALLOW_OFFLINE_CLEAN: "true"
           PORT: "3001"
       - uses: actions/upload-artifact@v4
         if: failure()

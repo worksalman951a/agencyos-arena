@@ -141,6 +141,7 @@ describe('Bento Phase 5A Integration: Invoices Directory', () => {
         sortOrder="desc"
         onSearchChange={vi.fn()}
         onStatusFilterChange={vi.fn()}
+        onProjectFilterChange={vi.fn()}
       />
     );
 
@@ -165,6 +166,7 @@ describe('Bento Phase 5A Integration: Invoices Directory', () => {
         sortOrder="desc"
         onSearchChange={onSearchChange}
         onStatusFilterChange={vi.fn()}
+        onProjectFilterChange={vi.fn()}
       />
     );
 
