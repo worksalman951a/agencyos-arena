@@ -137,10 +137,19 @@ test.describe('finance invoices', () => {
     expect(invoice.number).toMatch(/^[A-Z]+-\d{4}-\d{4,}$/);
 
     const main = page.locator('#main-content');
-    await page.goto('/finance/invoices');
+    // Enter through the visible Bento navigation rather than deep-linking past
+    // the shell. Bootstrap enables bento_shell for this isolated organization.
+    await page.goto('/dashboard');
+    const sidebar = page.getByRole('complementary', { name: 'Main navigation' });
+    await expect(sidebar).toBeVisible();
+    const invoicesLink = sidebar.getByRole('link', { name: 'Invoices', exact: true });
+    await expect(invoicesLink).toBeVisible();
+    await invoicesLink.click();
+    await expect(page).toHaveURL(/\/finance\/invoices$/);
     await expect(main.getByRole('heading', { name: 'Invoices', level: 1 })).toBeVisible();
 
-    // Bento renders the register as button rows with an inspector rail.
+    // Bento renders the register as button rows with an inspector rail. Select
+    // the seeded invoice by its generated number, never an unrelated row.
     const row = bentoPanel(page, /^Invoices Register/)
       .getByRole('button')
       .filter({ hasText: invoice.number });
@@ -149,7 +158,9 @@ test.describe('finance invoices', () => {
 
     const inspector = bentoPanel(page, 'Invoice Inspector');
     await expect(inspector).toContainText(invoice.number);
-    await inspector.getByRole('link', { name: 'Open Detail' }).click();
+    const openDetail = inspector.getByRole('link', { name: 'Open Detail' });
+    await expect(openDetail).toHaveAttribute('href', `/finance/invoices/${invoice.id}`);
+    await openDetail.click();
     await expect(page).toHaveURL(new RegExp(`/finance/invoices/${invoice.id}$`));
     await expect(main.getByRole('heading', { level: 1 })).toContainText(invoice.number);
     await expect(main.getByText('E2E audit invoice').first()).toBeVisible();
