@@ -22,7 +22,15 @@ import { signOut } from '@/lib/auth-client';
 import { useTheme } from '@/components/providers/theme-provider';
 import { NAV_ICONS } from '@/components/layout/nav-icons';
 import { Avatar } from '@/components/ui/premium/primitives';
-import { allNavItems, resolveActiveHref, type NavSection, type NavItem } from '@/lib/navigation';
+import {
+  allNavItems,
+  isHrefActive,
+  navPath,
+  primaryNavHref,
+  resolveActiveHref,
+  type NavSection,
+  type NavItem,
+} from '@/lib/navigation';
 import type { BrandContext } from '@/lib/services/settings/branding-service';
 import '@/components/ui/premium/tokens.css';
 import '@/components/ui/premium/primitives.css';
@@ -98,37 +106,54 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
   const toggleButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const closeButtonRef = React.useRef<HTMLButtonElement | null>(null);
 
+  // Fragments select a panel inside a page (e.g. /settings#branding) and must
+  // participate in active-link resolution, so listen for hash changes.
+  const [hash, setHash] = React.useState('');
+  React.useEffect(() => {
+    const syncHash = () => setHash(window.location.hash);
+    syncHash();
+    window.addEventListener('hashchange', syncHash);
+    return () => window.removeEventListener('hashchange', syncHash);
+  }, [pathname]);
+
   const flatItems = React.useMemo(() => allNavItems(sections), [sections]);
-  const activeHref = resolveActiveHref(pathname ?? '', flatItems);
+  const activeHref = resolveActiveHref(`${pathname ?? ''}${hash}`, flatItems);
+  // Pathname-only variant used for sub-item highlighting (fragment links match exactly).
+  const activePath = navPath(activeHref ?? pathname ?? '');
 
-  // Track manually toggled items; active parents are dynamically computed
-  const [userToggledParents, setUserToggledParents] = React.useState<Record<string, boolean>>({});
+  // Manual expand/collapse state, scoped to the route it was made on. A new
+  // navigation starts from the active group again instead of carrying stale
+  // open/closed state across pages.
+  const [userToggles, setUserToggles] = React.useState<{
+    pathname: string;
+    parents: Record<string, boolean>;
+  }>({ pathname: '', parents: {} });
 
-  // Auto-expand any group or parent containing the active sub-item
+  // Auto-expand any group containing the active sub-item
   const activeParentMap = React.useMemo(() => {
     const map: Record<string, boolean> = {};
     if (!pathname) return map;
     for (const sec of sections) {
       for (const item of sec.items) {
-        if (
-          item.subItems?.some((sub) => sub.href === activeHref || pathname.startsWith(sub.href))
-        ) {
+        if (item.subItems?.some((sub) => isHrefActive(pathname, sub.href))) {
           map[item.name] = true;
         }
       }
     }
     return map;
-  }, [sections, activeHref, pathname]);
+  }, [sections, pathname]);
+
+  const currentPath = pathname ?? '';
 
   const isParentExpanded = React.useCallback(
     (itemName: string) => {
-      // If user explicitly toggled it, respect user choice; otherwise default to active parent status
-      if (typeof userToggledParents[itemName] === 'boolean') {
-        return userToggledParents[itemName];
-      }
+      const toggled =
+        userToggles.pathname === currentPath ? userToggles.parents[itemName] : undefined;
+      if (typeof toggled === 'boolean') return toggled;
+      // Parents of the active route are always expanded on arrival.
       return Boolean(activeParentMap[itemName]);
     },
-    [userToggledParents, activeParentMap]
+    [userToggles, currentPath, activeParentMap]
   );
 
   // Focus trap and keyboard handling for mobile navigation drawer
@@ -193,17 +218,15 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
   };
 
-  const toggleSubmenu = (itemName: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setUserToggledParents((prev) => {
-      const current =
-        typeof prev[itemName] === 'boolean' ? prev[itemName] : Boolean(activeParentMap[itemName]);
-      return {
-        ...prev,
-        [itemName]: !current,
-      };
+  const setParentExpanded = (itemName: string, expanded: boolean) => {
+    setUserToggles((prev) => {
+      const parents = prev.pathname === currentPath ? prev.parents : {};
+      return { pathname: currentPath, parents: { ...parents, [itemName]: expanded } };
     });
+  };
+
+  const toggleSubmenu = (itemName: string) => {
+    setParentExpanded(itemName, !isParentExpanded(itemName));
   };
 
   return (
@@ -269,7 +292,7 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
           <nav className="ps-nav" aria-label="Sections">
             {sections.map((section) => (
               <div key={section.id} className="ps-section">
-                {(!collapsed || mobileOpen) && (
+                {section.label && (!collapsed || mobileOpen) && (
                   <div className="ps-section__label">{section.label}</div>
                 )}
                 <div className="flex flex-col gap-1">
@@ -277,62 +300,78 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
                     const Icon = NAV_ICONS[item.icon];
                     const expanded = isParentExpanded(item.name);
                     const hasSubItems = Boolean(item.subItems && item.subItems.length > 0);
-                    const isDirectActive = activeHref === item.href;
-                    const isSubActive = Boolean(item.subItems?.some((s) => s.href === activeHref));
+                    const labelsVisible = !collapsed || mobileOpen;
+                    const href = primaryNavHref(item);
+                    const onLanding = activePath === navPath(href);
+                    const isDirectActive = !hasSubItems && onLanding;
+                    const isSubActive = Boolean(
+                      item.subItems?.some(
+                        (sub) =>
+                          activeHref === sub.href ||
+                          (!sub.href.includes('#') && isHrefActive(activePath, sub.href))
+                      )
+                    );
+                    const subnavId = `ps-subnav-${section.id}-${item.name
+                      .toLowerCase()
+                      .replace(/[^a-z0-9]+/g, '-')}`;
 
                     return (
                       <div key={item.name} className="flex flex-col">
-                        <div className="flex items-center">
+                        {item.dividerBefore && (
+                          <div className="ps-divider" role="separator" aria-hidden="true" />
+                        )}
+                        <div className="ps-item-row">
                           <NextLink
-                            href={item.href}
+                            href={href}
                             className="ps-item"
                             aria-current={isDirectActive ? 'page' : undefined}
-                            data-active={isSubActive || isDirectActive ? 'true' : undefined}
+                            data-active={isSubActive || onLanding ? 'true' : undefined}
+                            data-variant={item.accent}
                             title={item.name}
                             onClick={() => {
                               if (mobileOpen) closeMobileDrawer();
-                              if (hasSubItems && !collapsed) {
-                                setUserToggledParents((prev) => ({
-                                  ...prev,
-                                  [item.name]: true,
-                                }));
+                              if (hasSubItems && labelsVisible) {
+                                setParentExpanded(item.name, true);
                               }
                             }}
                           >
                             <span className="ps-item__icon" aria-hidden="true">
                               <Icon className="w-4 h-4" />
                             </span>
-                            {(!collapsed || mobileOpen) && (
-                              <span className="ps-item__label">{item.name}</span>
-                            )}
-                            {hasSubItems && (!collapsed || mobileOpen) && (
-                              <button
-                                type="button"
-                                className="ps-item__toggle"
-                                onClick={(e) => toggleSubmenu(item.name, e)}
-                                aria-label={expanded ? 'Collapse submenu' : 'Expand submenu'}
-                                tabIndex={-1}
-                              >
-                                <ChevronDown
-                                  size={13}
-                                  className={`transition-transform duration-150 ${
-                                    expanded ? 'rotate-180' : ''
-                                  }`}
-                                />
-                              </button>
-                            )}
+                            {labelsVisible && <span className="ps-item__label">{item.name}</span>}
                           </NextLink>
+                          {hasSubItems && labelsVisible && (
+                            <button
+                              type="button"
+                              className="ps-item__toggle"
+                              onClick={() => toggleSubmenu(item.name)}
+                              aria-expanded={expanded}
+                              aria-controls={subnavId}
+                              aria-label={`${expanded ? 'Collapse' : 'Expand'} ${item.name} submenu`}
+                              title={`${expanded ? 'Collapse' : 'Expand'} ${item.name}`}
+                            >
+                              <ChevronDown
+                                size={13}
+                                className={`transition-transform duration-150 ${
+                                  expanded ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </button>
+                          )}
                         </div>
 
                         {/* Collapsible Sub-Items */}
-                        {hasSubItems && expanded && (!collapsed || mobileOpen) && (
+                        {hasSubItems && expanded && labelsVisible && (
                           <div
                             className="ps-subnav"
+                            id={subnavId}
                             role="group"
                             aria-label={`${item.name} sub-items`}
                           >
                             {item.subItems!.map((sub) => {
-                              const isSubItemActive = activeHref === sub.href;
+                              const isSubItemActive =
+                                activeHref === sub.href ||
+                                (!sub.href.includes('#') && isHrefActive(activePath, sub.href));
                               return (
                                 <NextLink
                                   key={sub.href}

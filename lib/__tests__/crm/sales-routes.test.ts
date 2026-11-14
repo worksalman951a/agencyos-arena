@@ -19,7 +19,7 @@ vi.mock('@/lib/db', () => ({
 }));
 
 import { describe, it, expect, vi } from 'vitest';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 import { NAV_SECTIONS, allNavItems } from '@/lib/navigation';
@@ -87,20 +87,25 @@ describe('Sales layout uses the shared application shell', () => {
   });
 });
 
-describe('Sidebar navigation includes Proposals and Quotations', () => {
+describe('Approved sidebar surfaces Sales Documents', () => {
+  const flat = allNavItems(NAV_SECTIONS);
   const navItems = NAV_SECTIONS.flatMap((section) => section.items);
 
-  it('Sidebar has Proposals nav item pointing to /sales/proposals', () => {
-    expect(navItems).toContainEqual({
-      name: 'Proposals',
-      href: '/sales/proposals',
-      icon: 'proposals',
-      permission: 'proposal.read',
-    });
+  it('keeps Proposals out of the active sidebar but readable by route', () => {
+    expect(navItems.map((item) => item.name)).not.toContain('Proposals');
+    expect(flat.map((item) => item.href)).not.toContain('/sales/proposals');
+    // Historical/authorized access is preserved: the route still exists.
+    expect(existsSync(join(process.cwd(), 'app/sales/proposals/page.tsx'))).toBe(true);
   });
 
-  it('Sidebar has Quotations nav item pointing to /sales/quotations', () => {
-    expect(navItems).toContainEqual({
+  it('lists Quotations under Sales Documents', () => {
+    const salesDocuments = navItems.find((item) => item.name === 'Sales Documents');
+    expect(salesDocuments?.subItems).toContainEqual({
+      name: 'Quotations',
+      href: '/sales/quotations',
+      permission: 'quotation.read',
+    });
+    expect(flat).toContainEqual({
       name: 'Quotations',
       href: '/sales/quotations',
       icon: 'quotations',
@@ -108,21 +113,28 @@ describe('Sidebar navigation includes Proposals and Quotations', () => {
     });
   });
 
-  it('All CRM and Sales modules are accessible from sidebar', () => {
-    const flat = allNavItems(NAV_SECTIONS);
+  it('advertises the approved CRM and Sales destinations', () => {
     const hrefs = flat.map((item) => item.href);
     const expected = [
       '/dashboard',
       '/crm/contacts',
-      '/crm/accounts',
       '/crm/leads',
       '/crm/opportunities',
-      '/crm/pipeline-stages',
-      '/sales/proposals',
       '/sales/quotations',
+      '/documents/contracts',
+      '/documents/templates',
     ];
     for (const href of expected) {
       expect(hrefs).toContain(href);
+    }
+  });
+
+  it('keeps de-listed CRM modules reachable without advertising them', () => {
+    const hrefs = flat.map((item) => item.href);
+    const delisted = ['/crm/accounts', '/crm/pipeline-stages', '/sales/proposals'];
+    for (const href of delisted) {
+      expect(hrefs).not.toContain(href);
+      expect(existsSync(join(process.cwd(), 'app', href, 'page.tsx'))).toBe(true);
     }
   });
 });
@@ -444,16 +456,20 @@ it('Sidebar navigation remains intact with all modules listed', () => {
   const expected = [
     '/dashboard',
     '/crm/contacts',
-    '/crm/accounts',
     '/crm/leads',
     '/crm/opportunities',
-    '/sales/proposals',
     '/sales/quotations',
-    '/finance/invoices',
-    '/projects',
-    '/projects/time-entries',
     '/documents/contracts',
+    '/documents/templates',
+    '/projects',
+    '/projects/approvals',
+    '/finance/invoices',
+    '/finance/reports',
     '/automation/rules',
+    '/automation/notifications',
+    '/admin/users',
+    '/admin/roles',
+    '/settings',
   ];
   for (const href of expected) {
     expect(hrefs).toContain(href);

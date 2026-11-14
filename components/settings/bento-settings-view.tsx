@@ -82,6 +82,28 @@ export interface UserProfileResponse {
 export type SectionKey =
   'organization' | 'branding' | 'appearance' | 'currency' | 'invoice' | 'proposal' | 'profile';
 
+/**
+ * Sidebar deep links (e.g. Agency Settings -> Workspace Branding) land on
+ * `/settings#<fragment>`; map the fragment to the panel it should open.
+ */
+const SECTION_HASHES: Record<string, SectionKey> = {
+  organization: 'organization',
+  'organization-profile': 'organization',
+  branding: 'branding',
+  'workspace-branding': 'branding',
+  appearance: 'appearance',
+  'theme-display': 'appearance',
+  currency: 'currency',
+  'currency-dates': 'currency',
+  invoice: 'invoice',
+  'invoice-numbering': 'invoice',
+  'invoice-preferences': 'invoice',
+  proposal: 'proposal',
+  'proposal-preferences': 'proposal',
+  profile: 'profile',
+  'my-profile': 'profile',
+};
+
 export interface SaveState {
   status: 'idle' | 'saving' | 'success' | 'error';
   message?: string;
@@ -219,6 +241,19 @@ export function BentoSettingsView({
 }: BentoSettingsViewProps) {
   const [activeSection, setActiveSection] = React.useState<SectionKey>('organization');
   const { theme: appTheme, setTheme: setAppTheme, resolvedTheme } = useTheme();
+
+  // Open the panel referenced by the sidebar deep link (#branding, #invoice-numbering, ...).
+  React.useEffect(() => {
+    const applyHash = () => {
+      const fragment = window.location.hash.replace(/^#/, '').trim();
+      if (!fragment) return;
+      const section = SECTION_HASHES[fragment];
+      if (section) setActiveSection(section);
+    };
+    applyHash();
+    window.addEventListener('hashchange', applyHash);
+    return () => window.removeEventListener('hashchange', applyHash);
+  }, []);
 
   // Preview calculations for Brand & Theme
   const resolvedBrand = React.useMemo(() => {

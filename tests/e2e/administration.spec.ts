@@ -605,7 +605,7 @@ test.describe('administration', () => {
     await expect(main.getByRole('heading', { name: 'Team Invitations', level: 1 })).toBeVisible();
 
     // Workflow access remains permission-filtered in the Automations submenu.
-    await nav.getByRole('link', { name: 'Automations Expand submenu' }).click();
+    await nav.getByRole('button', { name: 'Expand Automations submenu' }).click();
     const workflows = nav.getByRole('group', { name: 'Automations sub-items' });
     await expect(
       workflows.getByRole('link', { name: 'Workflow Rules', exact: true })

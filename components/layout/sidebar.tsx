@@ -15,7 +15,14 @@ import NextLink from 'next/link';
 import { usePathname } from 'next/navigation';
 import { classNames } from '@/lib/utils';
 import { BrandMark } from '@/components/brand/brand-mark';
-import { allNavItems, resolveActiveHref, type NavIconKey, type NavSection } from '@/lib/navigation';
+import {
+  allNavItems,
+  navPath,
+  primaryNavHref,
+  resolveActiveHref,
+  type NavIconKey,
+  type NavSection,
+} from '@/lib/navigation';
 import {
   Activity,
   BarChart3,
@@ -179,7 +186,7 @@ export function Sidebar({
         <nav className="flex-1 overflow-y-auto p-2 space-y-4">
           {sections.map((section) => (
             <div key={section.id}>
-              {expanded && (
+              {expanded && section.label && (
                 <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   {section.label}
                 </p>
@@ -187,13 +194,18 @@ export function Sidebar({
               <ul className="space-y-1">
                 {section.items.map((item) => {
                   const Icon = SIDEBAR_ICONS[item.icon];
-                  const isActive = activeHref === item.href;
+                  const href = primaryNavHref(item);
+                  const isActive = activeHref !== null && navPath(activeHref) === navPath(href);
                   return (
-                    <li key={item.href}>
+                    <li key={item.name}>
+                      {item.dividerBefore && (
+                        <div className="my-2 h-px bg-border" role="separator" aria-hidden="true" />
+                      )}
                       <NextLink
-                        href={item.href}
+                        href={href}
                         onClick={() => setIsOpen?.(false)}
                         aria-current={isActive ? 'page' : undefined}
+                        data-variant={item.accent}
                         title={expanded ? undefined : item.name}
                         className={classNames(
                           'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',

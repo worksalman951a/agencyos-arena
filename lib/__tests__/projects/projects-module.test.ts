@@ -92,7 +92,7 @@ vi.mock('@/lib/auth-server', () => ({
 }));
 vi.mock('next/headers', () => ({ cookies: mocks.cookies }));
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -204,18 +204,22 @@ describe('Migration 0013 Projects permission parity', () => {
     }
   });
 
-  it('uses project.template.read on the Templates sidebar navigation item', () => {
+  it('keeps Project Templates out of the sidebar while preserving authorized access', () => {
+    // The approved Bento menu lists All Projects and Reviews & Handovers only.
+    // Templates are reached from the Projects page and stay permission-gated.
     const href = '/projects/templates';
-    expect(allNavItems(NAV_SECTIONS).find((item) => item.href === href)?.permission).toBe(
-      'project.template.read'
+    expect(allNavItems(NAV_SECTIONS).some((item) => item.href === href)).toBe(false);
+
+    expect(existsSync(path.join(process.cwd(), 'app/projects/templates/page.tsx'))).toBe(true);
+    expect(existsSync(path.join(process.cwd(), 'app/api/v1/projects/templates/route.ts'))).toBe(
+      true
     );
 
+    // A project-only member cannot see template navigation, and nothing leaks
+    // through the approved menu.
     const visibleItems = (permissions: string[]) =>
       allNavItems(filterNavigation(NAV_SECTIONS, new Set(permissions)));
     expect(visibleItems(['project.read']).some((item) => item.href === href)).toBe(false);
-    expect(
-      visibleItems(['project.read', 'project.template.read']).some((item) => item.href === href)
-    ).toBe(true);
   });
 });
 
