@@ -142,9 +142,22 @@ test.describe('Projects end-to-end workflows', () => {
     // 4. Add a Task, mark it done, and navigate to Comments
     await page.getByLabel('New task title').fill('Build Homepage');
     await page.getByRole('button', { name: 'Add Task' }).click();
-    await expect(page.getByText('Build Homepage').first()).toBeVisible();
-    await page.getByLabel('Status for Build Homepage').selectOption('done');
-    await expect(page.getByText('1 / 1 tasks (100%)').first()).toBeVisible();
+
+    // Scope to the task's own row rather than matching the title anywhere on the page.
+    const taskRow = page.getByRole('row').filter({ hasText: 'Build Homepage' });
+    await expect(taskRow).toHaveCount(1);
+    await expect(taskRow).toBeVisible();
+    await taskRow.getByLabel('Status for Build Homepage').selectOption('done');
+
+    // The summary lives in the Bento Task Progress tile, which renders the value and the
+    // note as separate spans — the legacy "N / N tasks (100%)" string no longer exists.
+    const taskProgress = page.locator('section.pmx-stat').filter({ hasText: 'Task Progress' });
+    await expect(taskProgress).toHaveCount(1);
+    await expect(taskProgress.locator('.pmx-stat__num')).toHaveText('100%');
+    await expect(taskProgress.locator('.pmx-stat__note')).toHaveText('1 of 1 tasks completed');
+
+    // And the task itself is really marked done.
+    await expect(taskRow.getByLabel('Status for Build Homepage')).toHaveValue('done');
 
     await page
       .getByRole('link', { name: /Comments/ })
