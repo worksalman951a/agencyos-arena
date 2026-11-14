@@ -85,6 +85,27 @@ export interface ClientPortalContext {
   };
 }
 
+/** Read a contact's portal access state for the current organization administrator. */
+export async function getContactPortalAccess(contactId: string) {
+  const { organizationId, role } = await getAuthorizedAgencyUser();
+  if (role !== 'admin' && role !== 'owner') {
+    throw codedError('Only organization administrators can view client portal access', 403);
+  }
+
+  return prisma.clientPortalAccess.findUnique({
+    where: { organizationId_contactId: { organizationId, contactId } },
+    select: {
+      id: true,
+      email: true,
+      status: true,
+      invitedAt: true,
+      activatedAt: true,
+      revokedAt: true,
+      lastLoginAt: true,
+    },
+  });
+}
+
 /**
  * Invite a CRM contact to the Client Portal (Organization Owner or Admin only).
  *

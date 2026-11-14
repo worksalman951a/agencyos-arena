@@ -16,6 +16,12 @@
  * - Audit logging: all scheduled batch executions record structured audit logs.
  */
 
+import 'server-only';
+
+import { timingSafeEqual } from 'node:crypto';
+import { cookies } from 'next/headers';
+import { auth } from '@/lib/auth-server';
+import { requireOrganization, requirePermission } from '@/lib/permissions';
 import { prisma } from '@/lib/db';
 import { isNotificationAllowed } from '@/lib/services/automation/notification-service';
 import { emailTransport } from '@/lib/services/automation/email-service';
@@ -367,12 +373,34 @@ export async function processPendingApprovals(
   return result;
 }
 
-/**
- * Execute all scheduled workflows in one coordinated batch.
- */
+async function authorizeScheduledRun(authorization: string | null): Promise<string | undefined> {
+  const secret = process.env.CRON_SECRET?.trim();
+  if (secret && secret.length >= 16 && authorization?.startsWith('Bearer ')) {
+    const provided = Buffer.from(authorization.slice(7));
+    const expected = Buffer.from(secret);
+    if (provided.length === expected.length && timingSafeEqual(provided, expected)) {
+      return undefined; // Only a verified cron caller can run across organizations.
+    }
+  }
+
+  const cookieStore = await cookies();
+  const session = await auth.api.getSession({ headers: { cookie: cookieStore.toString() } });
+  if (!session?.session || !session.user) {
+    throw Object.assign(new Error('Unauthorized: invalid cron secret or session'), {
+      statusCode: 401,
+    });
+  }
+
+  const { organizationId } = await requireOrganization(session.user.id);
+  await requirePermission(session.user.id, organizationId, 'workflow.update');
+  return organizationId;
+}
+
+/** Execute all scheduled workflows after authorizing the caller. */
 export async function runScheduledAutomation(
-  organizationId?: string
+  authorization: string | null
 ): Promise<ScheduledRunSummary> {
+  const organizationId = await authorizeScheduledRun(authorization);
   const startTime = Date.now();
   const timestamp = new Date();
 

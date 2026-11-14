@@ -9,6 +9,16 @@ import { emailTransport } from '@/lib/services/automation/email-service';
 import { prisma } from '@/lib/db';
 import { isNotificationAllowed } from '@/lib/services/automation/notification-service';
 
+import { auth } from '@/lib/auth-server';
+import { requireOrganization, requirePermission } from '@/lib/permissions';
+
+vi.mock('@/lib/auth-server', () => ({ auth: { api: { getSession: vi.fn() } } }));
+vi.mock('next/headers', () => ({ cookies: vi.fn(() => ({ toString: () => 'session-cookie' })) }));
+vi.mock('@/lib/permissions', () => ({
+  requireOrganization: vi.fn(),
+  requirePermission: vi.fn(),
+}));
+
 vi.mock('@/lib/db', () => ({
   prisma: {
     invoice: {
@@ -218,14 +228,70 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
   });
 
   describe('Batch Runner & Mutex Locking', () => {
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue({
+        session: { id: 'session-1', userId: 'user-1' },
+        user: { id: 'user-1' },
+      } as unknown as Awaited<ReturnType<typeof auth.api.getSession>>);
+      vi.mocked(requireOrganization).mockResolvedValue({ organizationId: 'org-1' });
+      vi.mocked(requirePermission).mockResolvedValue(undefined);
+    });
+
+    it('rejects callers without a valid cron credential or user session before reading invoices', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValueOnce(null);
+
+      await expect(runScheduledAutomation(null)).rejects.toMatchObject({ statusCode: 401 });
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects signed-in callers without workflow.update before running any workflows', async () => {
+      vi.mocked(requirePermission).mockRejectedValueOnce(
+        Object.assign(new Error('Forbidden'), { statusCode: 403 })
+      );
+
+      await expect(runScheduledAutomation(null)).rejects.toMatchObject({ statusCode: 403 });
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+    });
+
+    it('only accepts the configured cron credential for a system-wide run', async () => {
+      vi.stubEnv('CRON_SECRET', 'test-scheduler-secret');
+      vi.mocked(auth.api.getSession).mockResolvedValueOnce(null);
+      vi.mocked(prisma.invoice.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.task.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.projectApproval.findMany).mockResolvedValue([]);
+
+      try {
+        await expect(runScheduledAutomation('Bearer wrong-scheduler-key')).rejects.toMatchObject({
+          statusCode: 401,
+        });
+        expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+
+        await expect(runScheduledAutomation('Bearer test-scheduler-secret')).resolves.toMatchObject(
+          {
+            workflows: expect.any(Array),
+          }
+        );
+        expect(auth.api.getSession).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(prisma.invoice.findMany).mock.calls[0]?.[0]?.where).not.toHaveProperty(
+          'organizationId'
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it('executes workflows in coordinated batch and produces run summary', async () => {
       vi.mocked(prisma.invoice.findMany).mockResolvedValue([]);
       vi.mocked(prisma.task.findMany).mockResolvedValue([]);
       vi.mocked(prisma.projectApproval.findMany).mockResolvedValue([]);
 
-      const summary = await runScheduledAutomation('org-1');
+      const summary = await runScheduledAutomation(null);
 
       expect(summary.workflows.length).toBe(3);
+      expect(requirePermission).toHaveBeenCalledWith('user-1', 'org-1', 'workflow.update');
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ organizationId: 'org-1' }) })
+      );
       expect(prisma.auditLog.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -247,10 +313,10 @@ describe('Phase 11F: Scheduled Automation & Operational Reliability', () => {
         slowPromise as unknown as ReturnType<typeof prisma.invoice.findMany>
       );
 
-      const firstRunPromise = runScheduledAutomation('org-1');
+      const firstRunPromise = runScheduledAutomation(null);
 
       // Attempt second run while first is in progress
-      await expect(runScheduledAutomation('org-1')).rejects.toThrow(
+      await expect(runScheduledAutomation(null)).rejects.toThrow(
         'Scheduler run already in progress. Concurrent worker invocation prevented.'
       );
 

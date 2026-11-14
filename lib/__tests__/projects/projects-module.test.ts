@@ -98,7 +98,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-import { NAV_SECTIONS } from '@/lib/navigation';
+import { allNavItems, filterNavigation, NAV_SECTIONS } from '@/lib/navigation';
 import {
   projectCreateSchema,
   projectUpdateSchema,
@@ -205,9 +205,17 @@ describe('Migration 0013 Projects permission parity', () => {
   });
 
   it('uses project.template.read on the Templates sidebar navigation item', () => {
-    const projectsSection = NAV_SECTIONS.find((s) => s.label === 'Projects');
-    const templatesItem = projectsSection?.items.find((i) => i.href === '/projects/templates');
-    expect(templatesItem?.permission).toBe('project.template.read');
+    const href = '/projects/templates';
+    expect(allNavItems(NAV_SECTIONS).find((item) => item.href === href)?.permission).toBe(
+      'project.template.read'
+    );
+
+    const visibleItems = (permissions: string[]) =>
+      allNavItems(filterNavigation(NAV_SECTIONS, new Set(permissions)));
+    expect(visibleItems(['project.read']).some((item) => item.href === href)).toBe(false);
+    expect(
+      visibleItems(['project.read', 'project.template.read']).some((item) => item.href === href)
+    ).toBe(true);
   });
 });
 
