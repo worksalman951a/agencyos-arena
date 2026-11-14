@@ -76,12 +76,36 @@ test.describe('Projects end-to-end workflows', () => {
     await page.getByLabel('Budget').fill('15000');
     await page.getByLabel('Start Date').fill('2026-05-01');
     await page.getByLabel('End Date').fill('2026-06-15');
-    await page.getByRole('button', { name: 'Create Project' }).click();
 
-    await expect(page).toHaveURL(/\/projects\/(?!new)[^/?]+$/);
+    // The template must be bound and its description inherited before submitting —
+    // the description is copied from the template asynchronously once templates load.
+    const templateSelect = page.getByLabel('Project Template');
+    await expect(templateSelect).toHaveValue(/\S+/);
+    await expect(templateSelect.locator('option:checked')).toHaveText(templateName);
+    await expect(page.getByLabel('Project Description & Key Deliverables')).toHaveValue(
+      'Template description for E2E launch'
+    );
+
+    // Same shape as the template form: a header shortcut (type="button") plus the
+    // form's own submit. Use the native submit inside Project Parameters & Scope.
+    const projectForm = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'Project Parameters & Scope' }) });
+    const submitProject = projectForm.getByRole('button', { name: 'Create Project' });
+    await expect(submitProject).toHaveCount(1);
+    await submitProject.click();
+
+    await expect(page).toHaveURL(/\/projects\/(?!new$)[^/?]+$/);
     await expect(page.getByRole('heading', { name: projectName, level: 1 })).toBeVisible();
+
+    // Prove the URL is a real project detail route, not the creation form.
     const projectUrl = page.url();
-    const projectId = projectUrl.split('/').pop()!;
+    const projectPath = new URL(projectUrl).pathname;
+    expect(projectPath, 'must not still be on the creation form').toMatch(/^\/projects\/[^/]+$/);
+    expect(projectPath).not.toBe('/projects/new');
+    const projectId = projectPath.split('/').pop()!;
+    expect(projectId, 'the detail route must carry a project id').not.toBe('new');
+    expect(projectId.length).toBeGreaterThan(10);
 
     // Reload to verify persistence
     await page.reload();
