@@ -16,6 +16,11 @@ interface ContactOption {
   label: string;
 }
 
+interface ProjectOption {
+  id: string;
+  label: string;
+}
+
 interface LineItem {
   description: string;
   quantity: string;
@@ -37,6 +42,16 @@ interface BentoInvoiceFormViewProps {
   clientId: string;
   setClientId: (val: string) => void;
   contacts: ContactOption[];
+  /**
+   * Project linking. The new-invoice form passes a real selector (the handoff
+   * from a project workspace preselects through `projectId`); the edit form
+   * renders it read-only when the invoice may no longer change projects.
+   */
+  projects?: ProjectOption[];
+  projectId?: string;
+  setProjectId?: (val: string) => void;
+  projectSelectorDisabled?: boolean;
+  projectHint?: string;
   title: string;
   setTitle: (val: string) => void;
   status: string;
@@ -66,6 +81,11 @@ export function BentoInvoiceFormView({
   clientId,
   setClientId,
   contacts,
+  projects = [],
+  projectId = '',
+  setProjectId,
+  projectSelectorDisabled = false,
+  projectHint,
   title,
   setTitle,
   status,
@@ -238,6 +258,32 @@ export function BentoInvoiceFormView({
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium" htmlFor="projectId">
+                    Project
+                  </label>
+                  <select
+                    id="projectId"
+                    value={projectId}
+                    onChange={(e) => setProjectId?.(e.target.value)}
+                    disabled={projectSelectorDisabled}
+                    className="w-full h-9 border border-input rounded-md px-3 text-xs bg-background disabled:opacity-60"
+                  >
+                    <option value="">No project</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    {projectHint ??
+                      (projects.length === 0
+                        ? 'No projects are available to link (none are open, or your role cannot read projects). The invoice can be created without one.'
+                        : 'Optional. Linked invoices appear in the project workspace.')}
+                  </p>
                 </div>
 
                 <div className="space-y-1.5">

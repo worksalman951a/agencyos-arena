@@ -71,20 +71,21 @@ export default async function ExpensesPage({
     filters.q || filters.category || filters.billable || filters.from || filters.to
   );
 
-  const pageHref = (p: number) => {
-    const next = new URLSearchParams();
-    if (filters.q) next.set('q', filters.q);
-    if (filters.category) next.set('category', filters.category);
-    if (filters.billable) next.set('billable', filters.billable);
-    if (filters.from) next.set('from', filters.from);
-    if (filters.to) next.set('to', filters.to);
-    if (filters.sort) next.set('sort', filters.sort);
-    if (filters.pageSize && filters.pageSize !== '20') next.set('pageSize', filters.pageSize);
-    if (p > 1) next.set('page', String(p));
-    const qs = next.toString();
-    return qs ? `/finance/expenses?${qs}` : '/finance/expenses';
-  };
-
+  /*
+   * Nothing in this file is a function prop any more.
+   *
+   * Pagination URLs are derived inside `ExpensesClient` / `BentoExpensesView`
+   * from the plain `filters` values below. Passing a `pageHref` callback from
+   * this Server Component threw
+   *
+   *   Error: Functions cannot be passed directly to Client Components unless
+   *   you explicitly expose it by marking it with "use server".
+   *
+   * on every request, so `/finance/expenses` returned a 500 for every signed-in
+   * user. Loading, authorization and tenant scoping stay here on the server
+   * (`searchExpenses` validates the session, requires `expense.read` and scopes
+   * to the caller's organization).
+   */
   return (
     <div className="space-y-6 p-6">
       {/* Anchor for test suites looking for link or form elements */}
@@ -107,7 +108,6 @@ export default async function ExpensesPage({
         }}
         filters={filters}
         isFiltered={isFiltered}
-        pageHref={pageHref}
       />
     </div>
   );

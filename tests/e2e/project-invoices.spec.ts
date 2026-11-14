@@ -91,11 +91,13 @@ test.describe('project invoices', () => {
     await expect(page).toHaveURL(new RegExp(`/finance/invoices/new\\?projectId=${project.id}$`));
     await expect(page.getByTestId('invoice-project-handoff')).toContainText(project.name);
     await expect(page.locator('#projectId')).toHaveValue(project.id);
-    await expect(page.locator('#clientId')).toHaveValue(contact.id);
+    // Bento orgs render the shell form view, whose client select is #invoice-client
+    // (the legacy #clientId belongs to the non-Bento markup).
+    await expect(page.locator('#invoice-client')).toHaveValue(contact.id);
 
     // 3. Create the invoice through the regular form.
     const invoiceTitle = `E2E Project Invoice ${suffix}`;
-    await page.locator('#title').fill(invoiceTitle);
+    await page.locator('#invoice-title').fill(invoiceTitle);
     await page.getByLabel('Line 1 description').fill('Discovery workshop');
     await page.getByLabel('Line 1 quantity').fill('2');
     await page.getByLabel('Line 1 unit price').fill('150.00');
@@ -120,14 +122,23 @@ test.describe('project invoices', () => {
     // 6. "View all" opens the invoice list filtered by the project.
     await projectInvoices.getByRole('link', { name: 'View all' }).click();
     await expect(page).toHaveURL(new RegExp(`/finance/invoices\\?projectId=${project.id}$`));
-    await expect(page.getByLabel('Filter by project')).toHaveValue(project.id);
-    await expect(page.getByRole('row', { name: new RegExp(invoiceTitle) })).toBeVisible();
-    await expect(page.getByRole('row', { name: new RegExp(unrelatedTitle) })).toHaveCount(0);
 
-    // Without the filter both invoices are listed again.
-    await page.getByRole('link', { name: 'Clear' }).click();
+    // The filter control reports the project the workspace handed over.
+    // Scoped to the rendered shell: the same control also exists in React's
+    // hidden streamed staging node until the Suspense boundary hydrates.
+    const projectFilter = page.locator('#main-content').getByLabel('Filter by project');
+    await expect(projectFilter).toHaveValue(project.id);
+
+    // The register is scoped by the server: the linked invoice is listed and the
+    // unrelated one is not. (The Bento register renders rows as buttons, so this
+    // matches on text rather than a table row role.)
+    await expect(page.getByText(invoiceTitle).first()).toBeVisible();
+    await expect(page.getByText(unrelatedTitle)).toHaveCount(0);
+
+    // Clearing the project filter restores the unfiltered list, server-side.
+    await projectFilter.selectOption('');
     await expect(page).toHaveURL(/\/finance\/invoices$/);
-    await expect(page.getByRole('row', { name: new RegExp(unrelatedTitle) })).toBeVisible();
+    await expect(page.getByText(unrelatedTitle).first()).toBeVisible();
   });
 
   test('does not preselect an archived project in the invoice form', async ({

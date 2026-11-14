@@ -11,12 +11,22 @@ import {
   type QuotationDetailData,
 } from '@/components/sales/bento-quotation-record-view';
 import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import {
+  ESTIMATE_HANDOFF_LABEL,
+  canHandoffQuotationToEstimate,
+  estimateHandoffHref,
+} from '@/lib/sales/document-handoffs';
 
 interface QuotationDetailClientProps {
   quotation: QuotationDetailData;
+  /** Server-resolved `estimate.create` capability for this actor. */
+  canCreateEstimate?: boolean;
 }
 
-export function QuotationDetailClient({ quotation }: QuotationDetailClientProps) {
+export function QuotationDetailClient({
+  quotation,
+  canCreateEstimate,
+}: QuotationDetailClientProps) {
   const isBento = useBentoShell();
   const EDITABLE_STATUSES = ['draft', 'sent'];
   const contactName = quotation.contact
@@ -29,6 +39,7 @@ export function QuotationDetailClient({ quotation }: QuotationDetailClientProps)
       <BentoQuotationRecordView
         quotation={quotation}
         actionsNode={<QuotationActions quotationId={quotation.id} status={quotation.status} />}
+        canCreateEstimate={canCreateEstimate}
       />
     );
   }
@@ -82,6 +93,11 @@ export function QuotationDetailClient({ quotation }: QuotationDetailClientProps)
             </Button>
           )}
           <QuotationActions quotationId={quotation.id} status={quotation.status} />
+          {canHandoffQuotationToEstimate(quotation.status, canCreateEstimate) && (
+            <Button asChild variant="outline">
+              <Link href={estimateHandoffHref(quotation)}>{ESTIMATE_HANDOFF_LABEL}</Link>
+            </Button>
+          )}
           <Button asChild variant="outline">
             <Link href="/sales/quotations">Back</Link>
           </Button>

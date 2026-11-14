@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Panel, EmptyState, KeyValueRow, StatStrip } from '@/components/ui/premium/primitives';
 import { Button } from '@/components/ui/button';
 import type { AuditLogResponse } from '@/lib/services/admin/audit-log-service';
+import { buildAuditLogPageHref } from '@/lib/admin/audit-log-links';
 import '@/components/crm/bento-contacts.css';
 
 interface BentoAuditLogsViewProps {
@@ -15,7 +16,6 @@ interface BentoAuditLogsViewProps {
   actions: string[];
   currentAction?: string;
   currentEntityType?: string;
-  hrefBuilder: (page: number) => string;
 }
 
 export function BentoAuditLogsView({
@@ -26,8 +26,9 @@ export function BentoAuditLogsView({
   actions,
   currentAction,
   currentEntityType,
-  hrefBuilder,
 }: BentoAuditLogsViewProps) {
+  const pageHref = (nextPage: number) =>
+    buildAuditLogPageHref(nextPage, { action: currentAction, entityType: currentEntityType });
   const [selectedIdx, setSelectedIdx] = React.useState(0);
   const activeLog = logs[Math.min(selectedIdx, Math.max(0, logs.length - 1))] ?? null;
 
@@ -209,12 +210,12 @@ export function BentoAuditLogsView({
                   <div className="flex gap-2">
                     {currentPage > 1 && (
                       <Button asChild variant="outline" size="sm" className="h-7 text-xs">
-                        <Link href={hrefBuilder(currentPage - 1)}>Previous</Link>
+                        <Link href={pageHref(currentPage - 1)}>Previous</Link>
                       </Button>
                     )}
                     {currentPage < totalPages && (
                       <Button asChild variant="outline" size="sm" className="h-7 text-xs">
-                        <Link href={hrefBuilder(currentPage + 1)}>Next</Link>
+                        <Link href={pageHref(currentPage + 1)}>Next</Link>
                       </Button>
                     )}
                   </div>

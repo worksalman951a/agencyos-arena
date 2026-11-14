@@ -10,7 +10,7 @@
  * skipped when DATABASE_URL / BETTER_AUTH_SECRET are not configured.
  */
 
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
 
 import { createAccount, expect, requireDatabase, test } from './fixtures';
 import type { TestAccount } from './fixtures';
@@ -20,6 +20,14 @@ requireDatabase();
 const authHeader = (account: TestAccount) => ({
   Cookie: `better-auth.session_token=${account.sessionToken}`,
 });
+
+/** A Bento panel, scoped to the rendered shell so hidden copies cannot match. */
+function bentoPanel(page: Page, name: string | RegExp): Locator {
+  return page
+    .locator('#main-content')
+    .locator('section')
+    .filter({ has: page.getByRole('heading', { name }) });
+}
 
 /** Create a contact through the public API, so the UI is tested against real data. */
 async function createContact(
@@ -64,32 +72,44 @@ test.describe('CRM contacts', () => {
     account,
   }) => {
     const contact = await createContact(api, account, `Audit${Date.now()}`);
+    const main = page.locator('#main-content');
 
     await page.goto('/crm/contacts');
-    await expect(page.getByRole('heading', { name: 'Contacts', level: 1 })).toBeVisible();
+    await expect(main.getByRole('heading', { name: 'Contacts', level: 1 })).toBeVisible();
 
-    const row = page.getByRole('link', { name: new RegExp(contact.lastName) }).first();
-    await expect(row).toBeVisible();
-
+    // Bento lists contacts as selectable rows that drive an overview rail; the
+    // record itself is opened from that rail, not from a link in the row.
+    const directory = main.getByRole('table', { name: 'Contacts list' });
+    const row = directory.getByRole('row').filter({ hasText: contact.lastName });
+    await expect(row).toHaveCount(1);
     await row.click();
+
+    const overview = bentoPanel(page, 'Contact Overview');
+    await expect(overview.getByRole('heading', { name: `E2E ${contact.lastName}` })).toBeVisible();
+    await overview.getByRole('link', { name: 'Full Profile' }).click();
     await expect(page).toHaveURL(new RegExp(`/crm/contacts/${contact.id}`));
-    await expect(page.getByRole('heading', { level: 1 })).toContainText(contact.lastName);
+    await expect(main.getByRole('heading', { level: 1 })).toContainText(contact.lastName);
 
     // Persistence: a full reload of the detail page still serves the record.
     await page.reload();
-    await expect(page.getByRole('heading', { level: 1 })).toContainText(contact.lastName);
+    await expect(main.getByRole('heading', { level: 1 })).toContainText(contact.lastName);
 
     // Search finds it, and a query with no matches shows the empty state.
     await page.goto('/crm/contacts');
-    await page.getByPlaceholder('Search contacts...').fill(contact.lastName);
-    await page.getByRole('button', { name: 'Search' }).click();
+    const search = main.getByRole('textbox', { name: 'Search contacts' });
+    await search.fill(contact.lastName);
+    // The Bento toolbar submits the search form; there is no separate button.
+    await search.press('Enter');
     await expect(page).toHaveURL(new RegExp(`search=${contact.lastName}`));
     await expect(
-      page.getByRole('link', { name: new RegExp(contact.lastName) }).first()
-    ).toBeVisible();
+      main.getByRole('table', { name: 'Contacts list' }).getByRole('row').filter({
+        hasText: contact.lastName,
+      })
+    ).toHaveCount(1);
 
     await page.goto('/crm/contacts?search=no-such-contact-4f2b1c');
-    await expect(page.getByText('No contacts found.').first()).toBeVisible();
+    await expect(main.getByRole('status')).toContainText('No contacts match');
+    await expect(main.getByRole('status')).toContainText('no-such-contact-4f2b1c');
   });
 });
 
@@ -116,50 +136,124 @@ test.describe('finance invoices', () => {
     const invoice = (await created.json()) as { id: string; number: string };
     expect(invoice.number).toMatch(/^[A-Z]+-\d{4}-\d{4,}$/);
 
+    const main = page.locator('#main-content');
     await page.goto('/finance/invoices');
-    await expect(page.getByRole('heading', { name: 'Invoices', level: 1 })).toBeVisible();
-    await expect(page.getByRole('link', { name: invoice.number }).first()).toBeVisible();
+    await expect(main.getByRole('heading', { name: 'Invoices', level: 1 })).toBeVisible();
 
-    await page.goto(`/finance/invoices/${invoice.id}`);
-    await expect(page.getByRole('heading', { level: 1 })).toContainText(invoice.number);
-    await expect(page.getByText('E2E audit invoice').first()).toBeVisible();
+    // Bento renders the register as button rows with an inspector rail.
+    const row = bentoPanel(page, /^Invoices Register/)
+      .getByRole('button')
+      .filter({ hasText: invoice.number });
+    await expect(row).toHaveCount(1);
+    await row.click();
+
+    const inspector = bentoPanel(page, 'Invoice Inspector');
+    await expect(inspector).toContainText(invoice.number);
+    await inspector.getByRole('link', { name: 'Open Detail' }).click();
+    await expect(page).toHaveURL(new RegExp(`/finance/invoices/${invoice.id}$`));
+    await expect(main.getByRole('heading', { level: 1 })).toContainText(invoice.number);
+    await expect(main.getByText('E2E audit invoice').first()).toBeVisible();
   });
 });
 
 test.describe('settings', () => {
   test('saves organization details and keeps them after a reload', async ({ authedPage: page }) => {
+    const main = page.locator('#main-content');
     await page.goto('/settings');
-    await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
-    await expect(page.getByText('Organization Information').first()).toBeVisible();
+    await expect(
+      main.getByRole('heading', { name: 'Settings & Branding', level: 1 })
+    ).toBeVisible();
 
-    const nameInput = page.locator('#org-name');
+    // Bento replaces the long scroll of sections with a Settings Center rail.
+    await bentoPanel(page, 'Settings Center')
+      .getByRole('button', { name: /Organization Profile/ })
+      .click();
+    const organization = bentoPanel(page, 'Organisation Profile');
+    await expect(organization).toBeVisible();
+
+    const nameInput = organization.locator('#bento-org-name');
     await expect(nameInput).toBeVisible();
 
     const updatedName = `Renamed ${Date.now()}`;
     await nameInput.fill(updatedName);
-    await page.getByRole('button', { name: 'Save organization information' }).click();
+    const [saved] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith('/api/v1/settings/organization') &&
+          response.request().method() === 'PUT'
+      ),
+      organization.getByRole('button', { name: 'Save Organization' }).click(),
+    ]);
+    expect(saved.status(), `organization save failed: ${await saved.text()}`).toBe(200);
 
-    await expect(page.getByText('Organization information saved.').first()).toBeVisible();
+    await expect(organization.getByText('Organization information saved.')).toBeVisible();
 
     await page.reload();
-    await expect(page.locator('#org-name')).toHaveValue(updatedName);
+    await expect(main.locator('#bento-org-name')).toHaveValue(updatedName);
   });
 
   test('rejects an empty organization name with a field error instead of saving', async ({
     authedPage: page,
   }) => {
+    const main = page.locator('#main-content');
     await page.goto('/settings');
-    const nameInput = page.locator('#org-name');
+    const organization = bentoPanel(page, 'Organisation Profile');
+    const nameInput = organization.locator('#bento-org-name');
     await expect(nameInput).toBeVisible();
+    const savedName = await nameInput.inputValue();
+    expect(savedName, 'the workspace starts with a name to protect').not.toBe('');
+
+    const saveRequests: string[] = [];
+    const recordSave = (request: { url: () => string; method: () => string }) => {
+      if (request.url().endsWith('/api/v1/settings/organization') && request.method() === 'PUT') {
+        saveRequests.push(request.url());
+      }
+    };
+    page.on('request', recordSave);
 
     await nameInput.fill('');
-    await page.getByRole('button', { name: 'Save organization information' }).click();
+    await organization.getByRole('button', { name: 'Save Organization' }).click();
 
-    // The API answers 400 with fieldErrors and the section renders them inline.
-    await expect(page.getByRole('alert').first()).toBeVisible();
+    // The Bento field is `required`, so the browser reports the field error on
+    // the input and blocks the submit before any write can reach the API.
+    await expect(nameInput).toHaveAttribute('required', '');
+    expect(await nameInput.evaluate((input: HTMLInputElement) => input.validity.valueMissing)).toBe(
+      true
+    );
+    expect(
+      await nameInput.evaluate((input: HTMLInputElement) => input.validationMessage),
+      'the empty field must explain itself to the user'
+    ).not.toBe('');
+    expect(saveRequests, 'an empty name must never reach the save endpoint').toHaveLength(0);
+    page.off('request', recordSave);
 
     await page.reload();
-    await expect(page.locator('#org-name')).not.toHaveValue('');
+    await expect(main.locator('#bento-org-name')).not.toHaveValue('');
+    await expect(main.locator('#bento-org-name')).toHaveValue(savedName);
+
+    // A blank name that does reach the API (whitespace passes `required`) is
+    // still refused with 400 + fieldErrors, rendered inline by the section.
+    await main.locator('#bento-org-name').fill('   ');
+    const [rejected] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith('/api/v1/settings/organization') &&
+          response.request().method() === 'PUT'
+      ),
+      bentoPanel(page, 'Organisation Profile')
+        .getByRole('button', { name: 'Save Organization' })
+        .click(),
+    ]);
+    expect(rejected.status(), 'the API must refuse a blank organization name').toBe(400);
+    expect((await rejected.json()) as { fieldErrors?: Record<string, string> }).toMatchObject({
+      fieldErrors: { name: expect.any(String) },
+    });
+    await expect(
+      bentoPanel(page, 'Organisation Profile').getByText('Organization name is required')
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(main.locator('#bento-org-name')).toHaveValue(savedName);
   });
 });
 

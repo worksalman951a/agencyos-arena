@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { formatMinorUnitsAsCurrency } from '@/lib/currencies';
 import type { ExpenseResponse } from '@/lib/services/crm/expense-service';
+import { expenseListHref, type ExpenseListFilters } from '@/lib/finance/expense-list-url';
 import '@/components/crm/bento-contacts.css';
 
 interface BentoExpensesViewProps {
@@ -30,16 +31,7 @@ interface BentoExpensesViewProps {
     total: number;
     totalPages: number;
   };
-  filters: {
-    q: string;
-    category: string;
-    billable: string;
-    from: string;
-    to: string;
-    sort: string;
-    page: string;
-    pageSize: string;
-  };
+  filters: ExpenseListFilters;
   isFiltered: boolean;
 }
 
@@ -199,8 +191,13 @@ export function BentoExpensesView({
           <option value="category_asc">Category A–Z</option>
         </select>
 
-        <Button type="submit" size="sm" className="h-8 text-xs bg-accent text-accent-foreground">
-          Apply
+        <Button
+          type="submit"
+          size="sm"
+          className="h-8 text-xs bg-accent text-accent-foreground"
+          aria-label="Apply filters"
+        >
+          Apply filters
         </Button>
 
         {isFiltered && (
@@ -230,16 +227,7 @@ export function BentoExpensesView({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           {/* Main Table (2 Cols) */}
           <div className="lg:col-span-2 min-w-0">
-            <Panel
-              title={`Expense Register (${expenses.length})`}
-              action={
-                pagination.totalPages > 1 ? (
-                  <span className="text-xs text-muted-foreground">
-                    Page {pagination.page} of {pagination.totalPages}
-                  </span>
-                ) : null
-              }
-            >
+            <Panel title={`Expense Register (${expenses.length})`}>
               <div className="bento-sales-table-head">
                 <span>Category</span>
                 <span>Project</span>
@@ -305,6 +293,43 @@ export function BentoExpensesView({
                     </button>
                   );
                 })}
+              </div>
+
+              {/*
+                Pagination is links, not client state: each href carries the
+                active filters, so following one re-runs the Server Component
+                with the same result set and a different page.
+              */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-3 mt-1 border-t border-border text-[11px] text-muted-foreground">
+                <span>
+                  Showing{' '}
+                  {expenses.length === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1}–
+                  {Math.min(pagination.page * pagination.pageSize, pagination.total)} of{' '}
+                  {pagination.total}
+                </span>
+                {pagination.totalPages > 1 && (
+                  <div className="flex items-center gap-2">
+                    {pagination.page > 1 ? (
+                      <Link
+                        href={expenseListHref(filters, pagination.page - 1)}
+                        className="px-3 py-1 rounded border border-input text-[11px] hover:bg-muted"
+                      >
+                        Previous
+                      </Link>
+                    ) : null}
+                    <span>
+                      Page {pagination.page} of {pagination.totalPages}
+                    </span>
+                    {pagination.page < pagination.totalPages ? (
+                      <Link
+                        href={expenseListHref(filters, pagination.page + 1)}
+                        className="px-3 py-1 rounded border border-input text-[11px] hover:bg-muted"
+                      >
+                        Next
+                      </Link>
+                    ) : null}
+                  </div>
+                )}
               </div>
             </Panel>
           </div>

@@ -1,4 +1,5 @@
 import { getQuotation } from '@/lib/services/crm/quotation-service';
+import { getCurrentPermissions } from '@/lib/current-user';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { DocumentBrandHeader } from '@/components/documents/document-brand-header';
@@ -19,6 +20,10 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
   }
 
   const quotation = result.data;
+
+  // The estimate handoff is offered only to actors the create API would accept.
+  const permissions = await getCurrentPermissions();
+  const canCreateEstimate = permissions.has('estimate.create');
 
   const formattedQuotation = {
     id: quotation.id,
@@ -54,7 +59,7 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
   return (
     <div className="space-y-6 p-6">
       <DocumentBrandHeader />
-      <QuotationDetailClient quotation={formattedQuotation} />
+      <QuotationDetailClient quotation={formattedQuotation} canCreateEstimate={canCreateEstimate} />
     </div>
   );
 }

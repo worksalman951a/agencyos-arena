@@ -41,15 +41,9 @@ export default async function AuditLogsPage({
   const { logs, total, page: currentPage, totalPages, actions } = result.data;
   const isFiltered = Boolean(action || entityType);
 
-  const href = (nextPage: number) => {
-    const query = new URLSearchParams();
-    if (action) query.set('action', action);
-    if (entityType) query.set('entityType', entityType);
-    if (nextPage > 1) query.set('page', String(nextPage));
-    const qs = query.toString();
-    return qs ? `/admin/audit-logs?${qs}` : '/admin/audit-logs';
-  };
-
+  // Pagination links are rebuilt inside the Client Component from these plain
+  // strings. A `hrefBuilder` closure cannot cross the Server/Client boundary -
+  // React refuses to serialise functions and the page 500s.
   return (
     <AuditLogsClient
       logs={logs}
@@ -60,7 +54,6 @@ export default async function AuditLogsPage({
       currentAction={action}
       currentEntityType={entityType}
       isFiltered={isFiltered}
-      hrefBuilder={href}
     />
   );
 }

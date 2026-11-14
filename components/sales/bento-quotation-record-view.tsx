@@ -7,6 +7,11 @@ import { Panel, KeyValueRow, StatusPill, StatStrip } from '@/components/ui/premi
 import { Button } from '@/components/ui/button';
 import { ExportDocumentPdfButton } from '@/components/documents/export-document-pdf-button';
 import { ShareDocumentButton } from '@/components/documents/share-document-button';
+import {
+  ESTIMATE_HANDOFF_LABEL,
+  canHandoffQuotationToEstimate,
+  estimateHandoffHref,
+} from '@/lib/sales/document-handoffs';
 import '@/components/crm/bento-contacts.css';
 
 export interface QuotationDetailData {
@@ -49,11 +54,14 @@ export interface QuotationDetailData {
 interface BentoQuotationRecordViewProps {
   quotation: QuotationDetailData;
   actionsNode?: React.ReactNode;
+  /** Server-resolved `estimate.create` capability for this actor. */
+  canCreateEstimate?: boolean;
 }
 
 export function BentoQuotationRecordView({
   quotation,
   actionsNode,
+  canCreateEstimate,
 }: BentoQuotationRecordViewProps) {
   const getStatusTone = (status: string): 'ok' | 'warn' | 'idle' | 'neutral' => {
     switch (status.toLowerCase()) {
@@ -348,6 +356,17 @@ export function BentoQuotationRecordView({
                 <span>Generate Full Scope Proposal</span>
                 <ExternalLink size={13} className="text-muted-foreground" />
               </Link>
+              {/* Accepted quotations convert into a billing estimate, prefilled
+                  from this quotation by the estimates route. */}
+              {canHandoffQuotationToEstimate(quotation.status, canCreateEstimate) && (
+                <Link
+                  href={estimateHandoffHref(quotation)}
+                  className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition font-medium"
+                >
+                  <span>{ESTIMATE_HANDOFF_LABEL}</span>
+                  <ArrowUpRight size={13} className="text-muted-foreground" />
+                </Link>
+              )}
             </div>
           </Panel>
         </div>
