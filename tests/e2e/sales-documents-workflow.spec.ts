@@ -8,9 +8,21 @@
  *  - Public Client Share Link (/share/[token]) in an unauthenticated browser context
  */
 
+import { readFile } from 'node:fs/promises';
+
+import type { Locator, Page } from '@playwright/test';
+
 import { expect, requireDatabase, test } from './fixtures';
 
 requireDatabase();
+
+/** A Bento panel, scoped to the rendered shell so hidden copies cannot match. */
+function bentoPanel(page: Page, name: string | RegExp): Locator {
+  return page
+    .locator('#main-content')
+    .locator('section')
+    .filter({ has: page.getByRole('heading', { name }) });
+}
 
 test.describe('Phase 3B sales, documents, builder, and public sharing workflows', () => {
   test('drives CRM -> Proposal -> Project & Contract, Quotation -> Estimate -> Invoice -> Payment -> Reports, Templates, and Public Share Link', async ({
@@ -39,7 +51,11 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
     const contact = (await contactRes.json()) as { id: string };
 
     await page.goto(`/crm/contacts/${contact.id}`);
-    await expect(page.getByRole('heading', { name: /Elena Rostova/i })).toBeVisible();
+    // Bento shows the name twice: the page header and the identity panel. The
+    // workflow is about the record page, so assert its visible level-1 heading.
+    await expect(
+      page.locator('#main-content').getByRole('heading', { name: /Elena Rostova/i, level: 1 })
+    ).toBeVisible();
 
     // 2. Launch Proposal Live Builder directly from Contact Detail (+ New Proposal)
     await page.getByRole('link', { name: '+ New Proposal' }).click();
@@ -73,17 +89,23 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
     ).toBeVisible();
     await expect(page.getByRole('link', { name: 'Elena Rostova' })).toBeVisible();
 
-    // Verify branded client-side PDF generation downloads a real .pdf file
+    // Verify the branded PDF export downloads a real .pdf file. Bento serves
+    // the authoritative document endpoint, which names the file after the
+    // document number instead of the old client-side `proposal-…` slug.
     const [pdfDownload] = await Promise.all([
       page.waitForEvent('download'),
       page.getByTestId('export-pdf-button').click(),
     ]);
-    expect(pdfDownload.suggestedFilename()).toMatch(/^proposal-.*\.pdf$/i);
+    expect(pdfDownload.suggestedFilename()).toMatch(/^Proposal_.+\.pdf$/i);
+    const pdfPath = await pdfDownload.path();
+    expect(pdfPath, 'the download must be written to disk').toBeTruthy();
+    expect((await readFile(pdfPath!)).subarray(0, 5).toString()).toBe('%PDF-');
 
     // Save a version snapshot (v1) and verify Version History renders
     await page.getByRole('button', { name: 'Save Snapshot' }).click();
-    await expect(page.getByRole('heading', { name: 'Version History' })).toBeVisible();
-    await expect(page.getByRole('cell', { name: 'v1' })).toBeVisible();
+    const versions = bentoPanel(page, /^Version History/);
+    await expect(versions).toBeVisible();
+    await expect(versions.getByText('Version 1', { exact: true })).toBeVisible();
 
     // Mark as Sent -> Accept Proposal -> Edit button disappears (immutable)
     await page.getByRole('button', { name: 'Mark as Sent' }).click();
@@ -120,19 +142,30 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
     await page.goto(proposalUrl);
     await page.getByRole('link', { name: 'Create Project' }).click();
     await expect(page).toHaveURL(/\/projects\/new/);
-    await expect(page.locator('#project-name')).toHaveValue('Enterprise Brand Refresh Proposal');
-    await expect(page.locator('#project-budget')).toHaveValue(/^3300(\.00)?$/);
-    await page.getByRole('button', { name: 'Create Project' }).click();
+    await expect(page.locator('#bento-project-name')).toHaveValue(
+      'Enterprise Brand Refresh Proposal'
+    );
+    await expect(page.locator('#bento-project-budget')).toHaveValue(/^3300(\.00)?$/);
+    // Bento repeats the submit action in the page header and the form footer.
+    await bentoPanel(page, 'Project Parameters & Scope')
+      .getByRole('button', { name: 'Create Project' })
+      .click();
     await expect(page).toHaveURL(/\/projects\/[a-z0-9-]+$/i);
-    await expect(page.getByRole('heading', { name: /Contracts \(0\)/ })).toBeVisible();
+    await expect(bentoPanel(page, 'Associated Contracts')).toContainText(
+      'No active contracts linked to this project.'
+    );
 
     // 5. Sales -> Contract -> Authorized Signature & Audit Trail
     await page.goto(proposalUrl);
     await page.getByRole('link', { name: 'Create Contract' }).click();
     await expect(page).toHaveURL(/\/documents\/contracts\/new/);
-    await expect(page.locator('#contract-title')).toHaveValue('Enterprise Brand Refresh Proposal');
+    await expect(page.locator('#bento-contract-title')).toHaveValue(
+      'Enterprise Brand Refresh Proposal'
+    );
 
-    await page.getByRole('button', { name: 'Create Contract' }).click();
+    await bentoPanel(page, 'Contract Parameters & Scope')
+      .getByRole('button', { name: 'Create Contract' })
+      .click();
     await expect(page).toHaveURL(/\/documents\/contracts\/[a-z0-9-]+$/i);
 
     await page.getByRole('button', { name: 'Sign Contract' }).click();
@@ -141,7 +174,7 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
     await page.getByRole('button', { name: 'Confirm Signature' }).click();
 
     await expect(page.getByRole('heading', { name: 'Signature Audit Trail' })).toBeVisible();
-    await expect(page.getByText('elena@client.invalid')).toBeVisible();
+    await expect(bentoPanel(page, /^Signature Audit Trail/)).toContainText('elena@client.invalid');
     await expect(page.getByRole('link', { name: 'Edit', exact: true })).toHaveCount(0);
 
     // 6. Proposal -> Quotation -> Estimate -> Invoice -> Payment -> Financial Reports
@@ -162,16 +195,18 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
     await expect(page).toHaveURL(/\/finance\/estimates\/new/);
     await expect(page.locator('#estimate-total')).toHaveValue(/^3300(\.00)?$/);
 
-    await page.getByRole('button', { name: 'Create Estimate' }).click();
+    await bentoPanel(page, 'Estimate Details & Prospect Association')
+      .getByRole('button', { name: 'Create Estimate' })
+      .click();
     await expect(page).toHaveURL(/\/finance\/estimates\/[a-z0-9-]+$/i);
 
     await page.getByRole('button', { name: 'Accept Estimate' }).click();
     await page.getByRole('link', { name: 'Convert to Invoice' }).first().click();
     await expect(page).toHaveURL(/\/finance\/estimates\/[a-z0-9-]+\/convert$/i);
-    await page.locator('input[type="text"]').first().fill('Brand Refresh Milestone 1 Invoice');
+    await page.locator('#convert-invoice-title').fill('Brand Refresh Milestone 1 Invoice');
     await page.getByRole('button', { name: 'Convert to Invoice' }).click();
-    await expect(page.getByRole('heading', { name: 'Invoice created' })).toBeVisible();
-    await page.getByRole('link', { name: 'Open invoice' }).click();
+    await expect(bentoPanel(page, 'Invoice Generated Successfully')).toBeVisible();
+    await page.getByRole('link', { name: 'Open Generated Invoice' }).click();
     await expect(page).toHaveURL(/\/finance\/invoices\/[a-z0-9-]+$/i);
 
     const invoiceId = page.url().split('/').pop()!;
@@ -191,12 +226,14 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
 
     // 7. Create a reusable Document Template and verify Template Detail renders merge variables
     await page.goto('/documents/templates/new');
-    await page.locator('#template-name').fill('Standard Retainer SOW');
-    await page.locator('#template-variables').fill('client_name, retainer_hours');
+    await page.locator('#bento-doc-tpl-name').fill('Standard Retainer SOW');
+    await page.locator('#bento-doc-tpl-vars').fill('client_name, retainer_hours');
     await page
-      .locator('#template-content')
+      .locator('#bento-doc-tpl-content')
       .fill('Prepared for {{client_name}} covering {{retainer_hours}} monthly hours.');
-    await page.getByRole('button', { name: 'Create Template' }).click();
+    await bentoPanel(page, 'Template Specifications & Content')
+      .getByRole('button', { name: 'Create Template' })
+      .click();
 
     await expect(page).toHaveURL(/\/documents\/templates\/[a-z0-9-]+$/i);
     await expect(
