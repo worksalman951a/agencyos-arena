@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Plus, Search, Eye, Sparkles } from 'lucide-react';
+import { Search, Eye, Sparkles } from 'lucide-react';
 import {
   Panel,
   EmptyState,
@@ -111,15 +111,6 @@ export function BentoEstimatesView({ estimates }: BentoEstimatesViewProps) {
           <Button asChild variant="outline" size="sm">
             <Link href="/finance/invoices">Invoices</Link>
           </Button>
-          <Button
-            asChild
-            className="bg-accent text-accent-foreground hover:bg-accent/90 shadow-sm"
-            size="sm"
-          >
-            <Link href="/finance/estimates/new" className="flex items-center gap-1.5">
-              <Plus size={14} strokeWidth={2.4} /> New Estimate
-            </Link>
-          </Button>
         </div>
       </div>
 
@@ -205,15 +196,7 @@ export function BentoEstimatesView({ estimates }: BentoEstimatesViewProps) {
                 ? 'No estimates match those filters'
                 : 'No estimates found'
             }
-            sub="Create your first priced estimate for client review and conversion to invoice."
-            action={{
-              label: 'Create Estimate',
-              onClick: () => {
-                const link = document.createElement('a');
-                link.href = '/finance/estimates/new';
-                link.click();
-              },
-            }}
+            sub="New billing starts from an accepted quotation. Existing estimates remain available for history."
           />
         </Panel>
       ) : (

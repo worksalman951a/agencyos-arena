@@ -131,3 +131,31 @@ describe('navigation targets', () => {
     }
   });
 });
+
+describe('retired estimate entry points', () => {
+  it('keeps estimates out of the active navigation', () => {
+    const hrefs = allNavItems(NAV_SECTIONS).map((item) => item.href);
+    expect(hrefs.some((href) => href === '/finance/estimates')).toBe(false);
+    expect(hrefs.some((href) => href.startsWith('/finance/estimates'))).toBe(false);
+  });
+
+  it('no longer ships a new-estimate creation route', () => {
+    expect(
+      fs.existsSync(path.join(process.cwd(), 'app', 'finance/estimates/new', 'page.tsx'))
+    ).toBe(false);
+  });
+
+  it('still keeps existing estimate records readable', () => {
+    // Read access is preserved for historical records; only creation and
+    // navigation are retired.
+    expect(fs.existsSync(path.join(process.cwd(), 'app', 'finance/estimates', 'page.tsx'))).toBe(
+      true
+    );
+    expect(fs.existsSync(path.join(process.cwd(), 'app/finance/estimates/[id]', 'page.tsx'))).toBe(
+      true
+    );
+    expect(
+      fs.existsSync(path.join(process.cwd(), 'app/api/v1/finance/estimates', 'route.ts'))
+    ).toBe(true);
+  });
+});

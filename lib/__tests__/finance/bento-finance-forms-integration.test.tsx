@@ -5,7 +5,6 @@ import { render, screen } from '@testing-library/react';
 // Form and view components
 import { NewInvoiceForm } from '@/app/finance/invoices/new/NewInvoiceForm';
 import { EditInvoiceForm } from '@/app/finance/invoices/[id]/edit/EditInvoiceForm';
-import NewEstimatePage from '@/app/finance/estimates/new/page';
 import EditEstimatePage from '@/app/finance/estimates/[id]/edit/page';
 import NewExpensePage from '@/app/finance/expenses/new/page';
 import EditExpensePage from '@/app/finance/expenses/[id]/edit/page';
@@ -184,22 +183,10 @@ describe('Finance Forms Bento Integration and Fallback Parity', () => {
     });
   });
 
-  describe('Estimate Forms & Conversion', () => {
-    it('renders legacy estimate creation when Bento is disabled', () => {
-      mockUseBento = false;
-      render(<NewEstimatePage />);
-      expect(screen.getByRole('heading', { level: 1, name: 'New Estimate' })).toBeDefined();
-      expect(screen.getByRole('button', { name: 'Create Estimate' })).toBeDefined();
-    });
-
-    it('renders Bento estimate creation view when Bento is enabled', () => {
-      mockUseBento = true;
-      render(<NewEstimatePage />);
-      expect(screen.getByRole('heading', { level: 1, name: 'New Cost Estimate' })).toBeDefined();
-      expect(screen.getByText('Estimate Details & Prospect Association')).toBeDefined();
-      expect(screen.getByText('Estimate Lifecycle & Conversion')).toBeDefined();
-    });
-
+  // Estimate creation was retired from the active sales workflow: there is no
+  // new-estimate page, so only the legacy record views (edit/convert) remain
+  // covered here. New billing is created from an accepted quotation.
+  describe('Estimate legacy record views', () => {
     it('renders legacy estimate edit when Bento is disabled', async () => {
       mockUseBento = false;
       render(<EditEstimatePage params={Promise.resolve({ id: 'est-1' })} />);

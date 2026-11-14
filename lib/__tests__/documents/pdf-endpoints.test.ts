@@ -36,6 +36,8 @@ describe('Phase 11A: PDF Download API Endpoints', () => {
         clientId: 'client-1',
         projectId: null,
         project: null,
+        quotationId: null,
+        quotation: null,
         title: 'Development Project',
         status: 'sent',
         subtotal: '1000.00',

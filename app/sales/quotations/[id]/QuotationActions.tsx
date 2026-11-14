@@ -1,15 +1,46 @@
 'use client';
 
+/**
+ * Quotation lifecycle actions.
+ *
+ * On an accepted quotation this is also where the approved sales workflow
+ * starts:
+ *
+ *   Quotation ─────────────────────▶ Invoice        (Create Invoice)
+ *   Quotation ──▶ Agreement ───────▶ Invoice        (Create Agreement, optional)
+ *
+ * Both buttons call the server, which re-checks permissions and copies the
+ * source data from the accepted quotation. The UI only mirrors server-resolved
+ * capabilities (`invoice.create`, `contract.create`), so a role that cannot
+ * create a document is never offered the action.
+ */
+
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 interface QuotationActionsProps {
   quotationId: string;
   status: string;
+  /** Server-resolved `invoice.create` capability for this actor. */
+  canCreateInvoice?: boolean;
+  /** Server-resolved `contract.create` capability for this actor. */
+  canCreateAgreement?: boolean;
+  /** Server-resolved `contract.read` capability for this actor. */
+  canReadAgreement?: boolean;
+  /** Existing non-voided agreement for this quotation, if one was created. */
+  existingAgreementId?: string | null;
 }
 
-export function QuotationActions({ quotationId, status }: QuotationActionsProps) {
+export function QuotationActions({
+  quotationId,
+  status,
+  canCreateInvoice = false,
+  canCreateAgreement = false,
+  canReadAgreement = false,
+  existingAgreementId = null,
+}: QuotationActionsProps) {
   const router = useRouter();
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
@@ -35,6 +66,50 @@ export function QuotationActions({ quotationId, status }: QuotationActionsProps)
     }
   }
 
+  async function createInvoice() {
+    if (busyAction) return;
+    setBusyAction('invoice');
+    try {
+      const res = await fetch(`/api/v1/crm/quotations/${quotationId}/invoice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || 'Failed to create invoice');
+      }
+      const invoice = (await res.json()) as { id: string; number: string };
+      toast.success(`Invoice ${invoice.number} created from this quotation`);
+      router.push(`/finance/invoices/${invoice.id}`);
+    } catch (err) {
+      toast.error((err as Error).message);
+      setBusyAction(null);
+    }
+  }
+
+  async function createAgreement() {
+    if (busyAction) return;
+    setBusyAction('agreement');
+    try {
+      const res = await fetch(`/api/v1/crm/quotations/${quotationId}/agreement`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || 'Failed to create agreement');
+      }
+      const agreement = (await res.json()) as { id: string; title: string };
+      toast.success(`Agreement “${agreement.title}” created from this quotation`);
+      router.push(`/documents/contracts/${agreement.id}`);
+    } catch (err) {
+      toast.error((err as Error).message);
+      setBusyAction(null);
+    }
+  }
+
   async function handleDelete() {
     if (busyAction) return;
     setBusyAction('delete');
@@ -56,6 +131,38 @@ export function QuotationActions({ quotationId, status }: QuotationActionsProps)
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {status === 'accepted' && canCreateInvoice && (
+        <button
+          type="button"
+          disabled={Boolean(busyAction)}
+          onClick={createInvoice}
+          className="px-3 py-2 bg-accent text-accent-foreground rounded-md text-sm font-medium hover:bg-accent/90 disabled:opacity-50"
+        >
+          {busyAction === 'invoice' ? 'Creating Invoice…' : 'Create Invoice'}
+        </button>
+      )}
+
+      {status === 'accepted' &&
+        (existingAgreementId
+          ? canReadAgreement && (
+              <Link
+                href={`/documents/contracts/${existingAgreementId}`}
+                className="px-3 py-2 border border-border bg-background text-foreground rounded-md text-sm font-medium hover:bg-muted/80"
+              >
+                Open Agreement
+              </Link>
+            )
+          : canCreateAgreement && (
+              <button
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={createAgreement}
+                className="px-3 py-2 border border-border bg-background text-foreground rounded-md text-sm font-medium hover:bg-muted/80 disabled:opacity-50"
+              >
+                {busyAction === 'agreement' ? 'Creating Agreement…' : 'Create Agreement'}
+              </button>
+            ))}
+
       {status === 'draft' && (
         <>
           <button

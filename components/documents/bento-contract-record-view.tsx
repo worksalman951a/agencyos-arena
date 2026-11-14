@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   CheckCircle2,
   FileText,
+  ExternalLink,
   Lock,
 } from 'lucide-react';
 import { Panel, KeyValueRow, StatusPill, StatStrip } from '@/components/ui/premium/primitives';
@@ -24,6 +25,7 @@ export interface ContractDetailData {
   organizationId: string;
   proposalId: string | null;
   projectId: string | null;
+  quotationId?: string | null;
   title: string;
   status: string;
   signatureReference: string | null;
@@ -33,6 +35,7 @@ export interface ContractDetailData {
   updatedAt: Date | string;
   proposal: { id: string; number: string; title: string; status: string } | null;
   project: { id: string; name: string; status: string } | null;
+  quotation?: { id: string; number: string; title: string } | null;
   signer: { id: string; name: string | null; email: string | null } | null;
   signatures?: SignatureAuditEntry[];
 }
@@ -271,6 +274,24 @@ export function BentoContractRecordView({ contract, actionsNode }: BentoContract
                     </Link>
                   ) : (
                     'No proposal linked'
+                  )
+                }
+              />
+              <KeyValueRow
+                label="Source Quotation"
+                value={
+                  contract.quotation ? (
+                    <Link
+                      href={`/sales/quotations/${contract.quotation.id}`}
+                      className="text-accent hover:underline flex items-center gap-1 font-semibold"
+                    >
+                      <ExternalLink size={13} />
+                      <span>
+                        #{contract.quotation.number} — {contract.quotation.title}
+                      </span>
+                    </Link>
+                  ) : (
+                    'Not created from a quotation'
                   )
                 }
               />

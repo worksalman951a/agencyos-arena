@@ -491,6 +491,10 @@ model Invoice {
   title          String
   clientId       String?
   projectId      String?
+  // Optional source quotation (approved sales workflow). A quotation may
+  // produce several invoices (milestones), so this is not unique. The
+  // composite foreign key keeps the link inside one organization.
+  quotationId    String?
   status         String    @default("draft")
   subtotal       Decimal   @default(0)
   tax            Decimal   @default(0)
@@ -519,6 +523,11 @@ model Invoice {
   // financial record is never removed or silently detached by a project
   // deletion. See docs/phase-5a/project-invoice-linking.md.
   project      Project?      @relation(fields: [projectId, organizationId], references: [id, organizationId], onDelete: NoAction, onUpdate: NoAction)
+  // Source quotation link: composite for the same tenant-safety reason as the
+  // project link, and NoAction so a quotation that produced invoices or an
+  // agreement can never be hard-deleted out from under them. Quotations are
+  // soft-deleted, so the link survives retirement.
+  quotation    Quotation?    @relation("QuotationInvoices", fields: [quotationId, organizationId], references: [id, organizationId], onDelete: NoAction, onUpdate: NoAction)
 
   // Invoice numbers are unique per organization. The allocator already
   // serialises on the organization row; this index is the database guarantee
@@ -529,6 +538,8 @@ model Invoice {
   // Project workspace listing / project filter, and the referential check that
   // runs when a project row is deleted.
   @@index([organizationId, projectId])
+  // Quotation detail: "invoices created from this quotation".
+  @@index([organizationId, quotationId])
 }
 
 model InvoiceItem {
@@ -925,9 +936,14 @@ model Quotation {
   items        QuotationLineItem[]
   creator      User?               @relation("CreatedQuotation", fields: [createdBy], references: [id], onDelete: SetNull)
   updater      User?               @relation("UpdatedQuotation", fields: [updatedBy], references: [id], onDelete: SetNull)
+  // Documents produced from an accepted quotation (approved sales workflow).
+  invoices     Invoice[]           @relation("QuotationInvoices")
+  contracts    Contract[]          @relation("QuotationContracts")
 
   @@unique([organizationId, number])
   @@index([organizationId, status])
+  // Target of the composite source-quotation foreign keys on Invoice/Contract.
+  @@unique([id, organizationId])
 }
 
 model QuotationLineItem {
@@ -951,6 +967,8 @@ model Contract {
   organizationId     String
   proposalId         String?
   projectId          String?
+  // Optional source quotation (approved sales workflow).
+  quotationId        String?
   title              String
   status             String    @default("draft")
   signatureReference String?
@@ -962,8 +980,13 @@ model Contract {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   proposal     Proposal?    @relation(fields: [proposalId], references: [id], onDelete: SetNull)
   project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  // Source quotation link. Composite (id, organizationId) keeps the link inside
+  // one organization; NoAction preserves the agreement's provenance.
+  quotation    Quotation?    @relation("QuotationContracts", fields: [quotationId, organizationId], references: [id, organizationId], onDelete: NoAction, onUpdate: NoAction)
   signer       User?        @relation(fields: [signedBy], references: [id], onDelete: SetNull)
   signatures   Signature[]
+
+  @@index([organizationId, quotationId])
 }
 
 model Document {

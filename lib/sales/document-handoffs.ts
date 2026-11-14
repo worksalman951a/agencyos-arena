@@ -2,9 +2,16 @@
  * Sales document handoffs.
  *
  * Won work has to move forward: an accepted proposal seeds a project, a
- * contract or a quotation, and an accepted quotation seeds an estimate.
+ * contract or a quotation. Once the quotation is accepted, the sales workflow
+ * continues with the quotation actions themselves (Create Invoice, or the
+ * optional Create Agreement first) - those are API actions, not create-route
+ * links, so they live in the quotation action component rather than here.
  *
- * Every handoff is a plain link to the create route that already exists, with
+ * Estimates are retired from the active sales workflow: there is no estimate
+ * handoff, no estimate navigation and no new-estimate entry point. Existing
+ * estimate records remain readable.
+ *
+ * Every handoff here is a plain link to the create route that already exists, with
  * the prefill parameters that route already understands. Nothing here writes
  * data or resolves an organization: the destination page loads the source
  * through its own organization-scoped service and the create API still runs
@@ -34,17 +41,11 @@ export interface ProposalHandoffSource {
   total: number | string;
 }
 
-export interface QuotationHandoffSource {
-  id: string;
-}
-
 export const PROPOSAL_HANDOFF_LABELS: Record<ProposalHandoffKind, string> = {
   project: 'Create Project',
   contract: 'Create Contract',
   quotation: 'Create Quotation',
 };
-
-export const ESTIMATE_HANDOFF_LABEL = 'Create Estimate';
 
 const PROPOSAL_HANDOFF_ORDER: readonly ProposalHandoffKind[] = ['project', 'contract', 'quotation'];
 
@@ -55,14 +56,6 @@ export function visibleProposalHandoffs(
 ): ProposalHandoffKind[] {
   if (status !== HANDOFF_SOURCE_STATUS || !permissions) return [];
   return PROPOSAL_HANDOFF_ORDER.filter((kind) => permissions[kind]);
-}
-
-/** The estimate handoff is offered on an accepted quotation to permitted actors. */
-export function canHandoffQuotationToEstimate(
-  status: string,
-  canCreateEstimate?: boolean
-): boolean {
-  return status === HANDOFF_SOURCE_STATUS && Boolean(canCreateEstimate);
 }
 
 /**
@@ -96,10 +89,4 @@ export function proposalHandoffHref(
       return `/sales/quotations/builder?${params.toString()}`;
     }
   }
-}
-
-/** estimates/new copies contact, total, currency and notes from the quotation. */
-export function estimateHandoffHref(quotation: QuotationHandoffSource): string {
-  const params = new URLSearchParams({ fromQuotationId: quotation.id });
-  return `/finance/estimates/new?${params.toString()}`;
 }

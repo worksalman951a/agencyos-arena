@@ -63,6 +63,22 @@ export function InvoiceDetailClient({ invoice, canUpdate, isEditable }: InvoiceD
               </Link>
             )}
           </div>
+          {invoice.quotation && (
+            <div
+              className="rounded-md border bg-background p-4 mt-6"
+              data-testid="invoice-source-quotation"
+            >
+              <h2 className="text-lg font-semibold mb-2">Source quotation</h2>
+              <p className="text-sm">
+                <Link
+                  href={`/sales/quotations/${invoice.quotation.id}`}
+                  className="text-accent hover:underline font-medium"
+                >
+                  #{invoice.quotation.number} — {invoice.quotation.title}
+                </Link>
+              </p>
+            </div>
+          )}
           <div className="rounded-md border bg-background p-4 mt-6" data-testid="invoice-project">
             <h2 className="text-lg font-semibold mb-2">Project</h2>
             {invoice.project ? (

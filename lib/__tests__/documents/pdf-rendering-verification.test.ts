@@ -32,6 +32,8 @@ describe('Phase 11A: PDF Rendering Correctness & Structural Verification', () =>
     clientId: 'client-1',
     projectId: null,
     project: null,
+    quotationId: null,
+    quotation: null,
     title: 'Enterprise Architecture & Cloud Modernization',
     status: 'sent',
     subtotal: '10000.00',

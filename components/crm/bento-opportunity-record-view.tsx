@@ -419,15 +419,6 @@ export function BentoOpportunityRecordView({
                 <span>Create Quotation</span>
                 <ArrowUpRight size={13} className="text-muted-foreground" />
               </Link>
-              {opportunity.contact && (
-                <Link
-                  href={`/finance/estimates/new?clientId=${encodeURIComponent(opportunity.contact.id)}`}
-                  className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition font-medium"
-                >
-                  <span>Create Estimate</span>
-                  <ArrowUpRight size={13} className="text-muted-foreground" />
-                </Link>
-              )}
             </div>
           </Panel>
 

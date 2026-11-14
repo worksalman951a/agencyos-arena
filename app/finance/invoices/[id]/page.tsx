@@ -82,6 +82,25 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
               </Link>
             )}
           </div>
+          {invoice.quotation && (
+            <div
+              className="rounded-md border bg-background p-4 mt-6"
+              data-testid="invoice-source-quotation"
+            >
+              <h2 className="text-lg font-semibold mb-2">Source quotation</h2>
+              <p className="text-sm">
+                <Link
+                  href={`/sales/quotations/${invoice.quotation.id}`}
+                  className="text-accent hover:underline font-medium"
+                >
+                  #{invoice.quotation.number} — {invoice.quotation.title}
+                </Link>
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Client, line items, pricing and taxes were copied from this accepted quotation.
+              </p>
+            </div>
+          )}
           <div className="rounded-md border bg-background p-4 mt-6" data-testid="invoice-project">
             <h2 className="text-lg font-semibold mb-2">Project</h2>
             {invoice.project ? (

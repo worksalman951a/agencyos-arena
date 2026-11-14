@@ -1,8 +1,17 @@
 /**
- * AgencyOS Finance Estimates API
+ * AgencyOS Finance Estimates API (legacy, retained for existing records)
  *
  * GET    /api/v1/finance/estimates - List estimates
- * POST   /api/v1/finance/estimates - Create an estimate
+ * POST   /api/v1/finance/estimates - Create an estimate (legacy)
+ *
+ * Estimates are retired from the active sales workflow. The UI no longer
+ * navigates to estimates, quotations no longer offer "Create Estimate", and
+ * there is no new-estimate page. This endpoint stays so existing records remain
+ * fully readable and convertible, and so integrations that still hold estimate
+ * data keep working; it is not an entry point of the approved workflow.
+ * New billing starts from an accepted quotation:
+ *   POST /api/v1/crm/quotations/[id]/invoice
+ *   POST /api/v1/crm/quotations/[id]/agreement
  */
 
 import { NextResponse } from 'next/server';

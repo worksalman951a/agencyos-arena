@@ -2,7 +2,7 @@
  * Phase 3B End-to-End Browser Workflow Coverage:
  *  - Contact -> Proposal Live Preview Builder -> Branded PDF Download -> Version Snapshot -> Accept Proposal
  *  - Proposal -> Project handoff (name & budget prefill -> Project Detail Contracts panel)
- *  - Proposal -> Quotation Builder prefill -> Accept Quotation -> Estimate -> Invoice -> Payment -> Financial Reports
+ *  - Proposal -> Quotation Builder prefill -> Accept Quotation -> Invoice -> Payment -> Financial Reports
  *  - Proposal -> Contract -> Authorized Signature & Audit Trail
  *  - Reusable Document Templates (create, inspect variables & body)
  *  - Public Client Share Link (/share/[token]) in an unauthenticated browser context
@@ -25,7 +25,7 @@ function bentoPanel(page: Page, name: string | RegExp): Locator {
 }
 
 test.describe('Phase 3B sales, documents, builder, and public sharing workflows', () => {
-  test('drives CRM -> Proposal -> Project & Contract, Quotation -> Estimate -> Invoice -> Payment -> Reports, Templates, and Public Share Link', async ({
+  test('drives CRM -> Proposal -> Project & Contract, Quotation -> Invoice -> Payment -> Reports, Templates, and Public Share Link', async ({
     authedPage: page,
     browser,
     api,
@@ -76,7 +76,7 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
 
     // Live preview updates totals in real time (2 * 1500 = 3000 + 10% tax = 3300.00)
     await expect(page.getByText('Enterprise Brand Refresh Proposal').first()).toBeVisible();
-    await expect(page.getByText(/3,300\.00/).first()).toBeVisible();
+    await expect(page.getByText(/3,?300\.00/).first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Create Proposal' }).click();
     await expect(page).toHaveURL(/\/sales\/proposals\/builder\/[a-z0-9-]+$/i);
@@ -177,7 +177,7 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
     await expect(bentoPanel(page, /^Signature Audit Trail/)).toContainText('elena@client.invalid');
     await expect(page.getByRole('link', { name: 'Edit', exact: true })).toHaveCount(0);
 
-    // 6. Proposal -> Quotation -> Estimate -> Invoice -> Payment -> Financial Reports
+    // 6. Proposal -> Quotation -> Invoice (default path) -> Payment -> Financial Reports
     await page.goto(proposalUrl);
     await page.getByRole('link', { name: 'Create Quotation' }).click();
     await expect(page).toHaveURL(/\/sales\/quotations\/builder/);
@@ -191,25 +191,43 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
     await expect(page.getByRole('button', { name: 'Accept Quotation' })).toBeVisible();
     await page.getByRole('button', { name: 'Accept Quotation' }).click();
 
-    await page.getByRole('link', { name: 'Create Estimate' }).click();
-    await expect(page).toHaveURL(/\/finance\/estimates\/new/);
-    await expect(page.locator('#estimate-total')).toHaveValue(/^3300(\.00)?$/);
+    // Estimates are retired from the active sales workflow: an accepted
+    // quotation no longer offers an estimate handoff.
+    await expect(page.getByRole('link', { name: 'Create Estimate' })).toHaveCount(0);
 
-    await bentoPanel(page, 'Estimate Details & Prospect Association')
-      .getByRole('button', { name: 'Create Estimate' })
-      .click();
-    await expect(page).toHaveURL(/\/finance\/estimates\/[a-z0-9-]+$/i);
-
-    await page.getByRole('button', { name: 'Accept Estimate' }).click();
-    await page.getByRole('link', { name: 'Convert to Invoice' }).first().click();
-    await expect(page).toHaveURL(/\/finance\/estimates\/[a-z0-9-]+\/convert$/i);
-    await page.locator('#convert-invoice-title').fill('Brand Refresh Milestone 1 Invoice');
-    await page.getByRole('button', { name: 'Convert to Invoice' }).click();
-    await expect(bentoPanel(page, 'Invoice Generated Successfully')).toBeVisible();
-    await page.getByRole('link', { name: 'Open Generated Invoice' }).click();
+    // The default path is Quotation -> Invoice. No proposal or agreement is
+    // required, and the invoice is prefilled from the quotation server-side.
+    await page.getByRole('button', { name: 'Create Invoice' }).click();
     await expect(page).toHaveURL(/\/finance\/invoices\/[a-z0-9-]+$/i);
 
     const invoiceId = page.url().split('/').pop()!;
+    await expect(page.getByRole('heading', { name: 'Source quotation' })).toBeVisible();
+    await expect(page.locator('[data-testid="invoice-source-quotation"]')).toContainText(
+      /QOT-\d{4}-\d{4}/
+    );
+    await expect(page.getByText(/3,?300\.00/).first()).toBeVisible();
+
+    // The invoice carries the quotation's client, line items and pricing.
+    const invoiceRes = await api.get(`/api/v1/crm/invoices/${invoiceId}`, {
+      headers: authHeaders,
+    });
+    expect(invoiceRes.status()).toBe(200);
+    const invoice = (await invoiceRes.json()) as {
+      quotationId: string;
+      status: string;
+      total: string;
+      items: Array<{ description: string; unitPrice: string; taxRate: string; amount: string }>;
+    };
+    expect(invoice.quotationId).toBe(quotationId);
+    expect(invoice.status).toBe('draft');
+    expect(invoice.total).toBe('3300.00');
+    expect(invoice.items).toHaveLength(1);
+    expect(invoice.items[0]).toMatchObject({
+      description: 'Brand Strategy & Design System',
+      unitPrice: '1500.00',
+      taxRate: '10',
+      amount: '3000.00',
+    });
     const payRes = await api.post(`/api/v1/crm/invoices/${invoiceId}/payments`, {
       headers: authHeaders,
       data: {
@@ -222,7 +240,7 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
 
     await page.goto('/finance/reports');
     await expect(page.getByRole('heading', { name: /Financial Reports/i })).toBeVisible();
-    await expect(page.getByText(/3,300\.00/).first()).toBeVisible();
+    await expect(page.getByText(/3,?300\.00/).first()).toBeVisible();
 
     // 7. Create a reusable Document Template and verify Template Detail renders merge variables
     await page.goto('/documents/templates/new');
@@ -241,5 +259,131 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
     ).toBeVisible();
     await expect(page.getByText('{{client_name}}').first()).toBeVisible();
     await expect(page.getByText('{{retainer_hours}}').first()).toBeVisible();
+  });
+
+  /**
+   * The optional middle step: Quotation -> Agreement -> Invoice, starting from a
+   * quotation created directly (no proposal). Also pins that the estimate
+   * creation flow is gone and that the source quotation link survives on both
+   * produced documents.
+   */
+  test('drives a direct quotation -> agreement -> invoice without a proposal', async ({
+    authedPage: page,
+    api,
+    account,
+    appUrl,
+  }) => {
+    const authHeaders = {
+      Cookie: `better-auth.session_token=${account.sessionToken}`,
+      Origin: appUrl,
+    };
+
+    // 1. Seed a contact and create a quotation directly, without a proposal.
+    const contactRes = await api.post('/api/v1/crm/contacts', {
+      headers: authHeaders,
+      data: {
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        email: `grace-${Date.now()}@client.invalid`,
+        status: 'active',
+      },
+    });
+    expect(contactRes.status()).toBe(201);
+    const contact = (await contactRes.json()) as { id: string };
+
+    const quotationRes = await api.post('/api/v1/crm/quotations', {
+      headers: authHeaders,
+      data: {
+        contactId: contact.id,
+        title: 'Direct Retainer Quotation',
+        currency: 'USD',
+        notes: 'No proposal precedes this quotation.',
+        lineItems: [
+          {
+            description: 'Monthly Retainer',
+            quantity: '1',
+            unitPrice: '2400',
+            taxRate: '10',
+            sortOrder: 0,
+          },
+        ],
+      },
+    });
+    expect(quotationRes.status()).toBe(201);
+    const quotation = (await quotationRes.json()) as {
+      id: string;
+      number: string;
+      status: string;
+      total: string;
+    };
+    // Created without a proposal; server-calculated 2400 + 10% = 2640.
+    expect(quotation.status).toBe('draft');
+    expect(quotation.total).toBe('2640.00');
+
+    // 2. Accept it through the real lifecycle endpoints.
+    for (const status of ['sent', 'accepted']) {
+      const transition = await api.put(`/api/v1/crm/quotations/${quotation.id}`, {
+        headers: authHeaders,
+        data: { status },
+      });
+      expect(transition.status()).toBe(200);
+    }
+
+    await page.goto(`/sales/quotations/${quotation.id}`);
+    await expect(page.getByRole('button', { name: 'Create Agreement' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create Invoice' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Create Estimate' })).toHaveCount(0);
+
+    // 3. Create the agreement first (optional path). It keeps the source link.
+    await page.getByRole('button', { name: 'Create Agreement' }).click();
+    await expect(page).toHaveURL(/\/documents\/contracts\/[a-z0-9-]+$/i);
+    await expect(
+      page.getByRole('link', { name: new RegExp(`#${quotation.number}`) })
+    ).toBeVisible();
+
+    // 4. Back on the quotation, the agreement is now linked instead of offered
+    //    again, and the invoice can still be created from the same source.
+    await page.goto(`/sales/quotations/${quotation.id}`);
+    await expect(page.getByRole('link', { name: 'Open Agreement' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Create Invoice' }).click();
+    await expect(page).toHaveURL(/\/finance\/invoices\/[a-z0-9-]+$/i);
+    const invoiceId = page.url().split('/').pop()!;
+    await expect(page.locator('[data-testid="invoice-source-quotation"]')).toContainText(
+      quotation.number
+    );
+    await expect(page.getByText(/2,?640\.00/).first()).toBeVisible();
+
+    // 5. Source data is on the invoice, and both documents point at the
+    //    quotation they came from.
+    const invoiceRes = await api.get(`/api/v1/crm/invoices/${invoiceId}`, {
+      headers: authHeaders,
+    });
+    expect(invoiceRes.status()).toBe(200);
+    const invoice = (await invoiceRes.json()) as {
+      quotationId: string;
+      clientId: string;
+      total: string;
+      items: Array<{ description: string; unitPrice: string; taxRate: string; amount: string }>;
+    };
+    expect(invoice.quotationId).toBe(quotation.id);
+    expect(invoice.clientId).toBe(contact.id);
+    expect(invoice.total).toBe('2640.00');
+    expect(invoice.items[0]).toMatchObject({
+      description: 'Monthly Retainer',
+      unitPrice: '2400.00',
+      taxRate: '10',
+      amount: '2400.00',
+    });
+
+    const quotationAfter = await api.get(`/api/v1/crm/quotations/${quotation.id}`, {
+      headers: authHeaders,
+    });
+    const quotationBody = (await quotationAfter.json()) as {
+      invoices: Array<{ id: string }>;
+      contracts: Array<{ id: string }>;
+    };
+    expect(quotationBody.invoices.map((row) => row.id)).toContain(invoiceId);
+    expect(quotationBody.contracts.length).toBe(1);
   });
 });
