@@ -19,6 +19,9 @@
  *  - automation cannot write an Estimate either, because the workflow
  *    executor's writable-record allow-list no longer contains it.
  *
+ * This is a `'use server'` module, so it may only export async functions: the
+ * retired action vocabulary lives in `lib/sales/estimate-retirement.ts`.
+ *
  * New billing starts from an accepted quotation:
  *   POST /api/v1/crm/quotations/[id]/invoice
  *   POST /api/v1/crm/quotations/[id]/agreement
@@ -30,11 +33,7 @@ import { prisma } from '@/lib/db';
 import { requirePermission, requireOrganization, type AuthorizedUser } from '@/lib/permissions';
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
-import {
-  RETIRED_ESTIMATE_ACTIONS,
-  estimateRetiredError,
-  type RetiredEstimateAction,
-} from '@/lib/sales/estimate-retirement';
+import { estimateRetiredError, type RetiredEstimateAction } from '@/lib/sales/estimate-retirement';
 
 /** Error carrying the HTTP status the route should answer with. */
 function codedError(message: string, statusCode: number): Error & { statusCode: number } {
@@ -245,9 +244,3 @@ export async function deleteEstimate(): Promise<never> {
 export async function convertEstimateToInvoice(): Promise<never> {
   return refuseEstimateMutation('convert');
 }
-
-/**
- * Every retired action, exported for tests and callers that want to document
- * the full refusal surface in one place.
- */
-export { RETIRED_ESTIMATE_ACTIONS };
