@@ -133,7 +133,9 @@ export function BentoInvoicesView({
 
         <div className="flex items-center gap-2">
           <Button asChild variant="outline" size="sm">
-            <Link href="/finance/estimates">Estimates</Link>
+            <Link href="/finance/estimates" title="Historical estimates (read-only)">
+              Historical Estimates
+            </Link>
           </Button>
           <Button
             asChild

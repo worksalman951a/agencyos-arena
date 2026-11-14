@@ -102,8 +102,8 @@ export function BentoEstimatesView({ estimates }: BentoEstimatesViewProps) {
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground mt-1">Estimates</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {estimates.length} {estimates.length === 1 ? 'estimate' : 'estimates'} registered for
-            preliminary pricing and quotes
+            {estimates.length} historical {estimates.length === 1 ? 'estimate' : 'estimates'} —
+            read-only. New billing starts from an accepted quotation.
           </p>
         </div>
 
@@ -334,7 +334,7 @@ export function BentoEstimatesView({ estimates }: BentoEstimatesViewProps) {
                   <div className="border-t border-border pt-3">
                     <Button asChild className="w-full bg-accent text-accent-foreground" size="sm">
                       <Link href={`/finance/estimates/${activeEst.id}`}>
-                        Inspect Details & Convert
+                        Inspect Historical Record
                       </Link>
                     </Button>
                   </div>

@@ -386,4 +386,50 @@ test.describe('Phase 3B sales, documents, builder, and public sharing workflows'
     expect(quotationBody.invoices.map((row) => row.id)).toContain(invoiceId);
     expect(quotationBody.contracts.length).toBe(1);
   });
+
+  /**
+   * Estimates are historical and read-only.
+   *
+   * The record stays readable (and its PDF downloadable) for a caller who still
+   * has a link, but no mutation surface may be shipped and the API must refuse
+   * every verb. This is the browser-level twin of
+   * `lib/__tests__/sales/estimate-read-only.test.ts`.
+   */
+  test('shows historical estimates as read-only records with no mutation actions', async ({
+    authedPage: page,
+    api,
+    account,
+    appUrl,
+  }) => {
+    const authHeaders = {
+      Cookie: `better-auth.session_token=${account.sessionToken}`,
+      Origin: appUrl,
+    };
+
+    // Creation is refused, so the browser has no way to produce an estimate
+    // either; asserting the refusal here keeps the two layers in sync.
+    const createAttempt = await api.post('/api/v1/finance/estimates', {
+      headers: authHeaders,
+      data: {
+        clientId: '000000000000000000000000',
+        number: `EST-E2E-${Date.now()}`,
+        status: 'draft',
+        total: '100.00',
+        currency: 'USD',
+      },
+    });
+    expect(createAttempt.status()).toBe(403);
+    expect(await createAttempt.json()).toMatchObject({ code: 'estimate_read_only' });
+
+    // The register is still reachable (it is not in navigation, but a bookmark
+    // or an audit link must keep working) and offers no create/edit control.
+    await page.goto('/finance/estimates');
+    // The level-1 heading differs per shell ("Estimates" in the legacy shell,
+    // "Estimates" inside the Bento banner), so assert the page banner text the
+    // legend renders in both and the absence of mutation controls.
+    await expect(page.getByText(/Estimates are kept for history/i)).toBeVisible();
+    await expect(page.getByRole('link', { name: /New Estimate|Create Estimate/i })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Edit' })).toHaveCount(0);
+    await expect(page.getByText(/read-only/i).first()).toBeVisible();
+  });
 });

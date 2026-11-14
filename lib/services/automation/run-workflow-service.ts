@@ -37,16 +37,29 @@ import {
 } from '@/lib/automation/rules';
 import { isNotificationAllowed } from '@/lib/services/automation/notification-service';
 
-/** Records whose `status` column the `set_status` action may write. */
+/**
+ * Records whose `status` column the `set_status` action may write.
+ *
+ * `Estimate` is deliberately absent: estimates are historical and read-only, so
+ * no automation (existing rule, re-enabled rule or hand-written dispatch) may
+ * change one. A rule that names `Estimate` still loads and still runs — the
+ * action is reported as `skipped` with a clear detail instead of failing the
+ * whole workflow, which keeps every other action in that rule working.
+ */
 const STATUS_WRITABLE_RECORDS: Record<string, string> = {
   Lead: 'lead',
   Opportunity: 'opportunity',
   Task: 'task',
   Invoice: 'invoice',
   Project: 'project',
-  Estimate: 'estimate',
   Proposal: 'proposal',
 };
+
+/**
+ * Record types that are intentionally read-only. Naming one in a `set_status`
+ * action is a no-op with an explanatory log line, never a write.
+ */
+const READ_ONLY_RECORD_TYPES = new Set(['Estimate']);
 
 function codedError(message: string, statusCode: number) {
   return Object.assign(new Error(message), { statusCode });
@@ -261,6 +274,15 @@ async function runAction(
     }
 
     case 'set_status': {
+      // Read-only records are refused before the allow-list lookup so the log
+      // says *why* (retired / historical) instead of the generic "unsupported".
+      if (READ_ONLY_RECORD_TYPES.has(event.recordType)) {
+        return {
+          status: 'skipped',
+          detail: `${event.recordType} records are historical and read-only; set_status is not allowed`,
+        };
+      }
+
       const model = STATUS_WRITABLE_RECORDS[event.recordType];
       if (!model) {
         return {

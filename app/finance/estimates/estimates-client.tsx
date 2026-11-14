@@ -17,11 +17,12 @@ export function EstimatesClient({ estimates }: EstimatesClientProps) {
     return <BentoEstimatesView estimates={estimates} />;
   }
 
-  // Legacy Presentation
+  // Legacy Presentation — read-only register (no edit/delete/convert actions).
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold">Estimates</h1>
+        <p className="text-sm text-muted-foreground">Read-only historical register</p>
       </div>
 
       <div className="overflow-x-auto">
@@ -104,18 +105,10 @@ export function EstimatesClient({ estimates }: EstimatesClientProps) {
                     <td className="py-4 text-right">
                       <Link
                         href={`/finance/estimates/${estimate.id}`}
-                        className="text-sm text-accent hover:underline mr-2"
+                        className="text-sm text-accent hover:underline"
                       >
                         View
                       </Link>
-                      {estimate.status === 'draft' || estimate.status === 'sent' ? (
-                        <Link
-                          href={`/finance/estimates/${estimate.id}/edit`}
-                          className="text-sm text-muted-foreground hover:text-accent transition-colors mr-2"
-                        >
-                          Edit
-                        </Link>
-                      ) : null}
                     </td>
                   </tr>
                 );

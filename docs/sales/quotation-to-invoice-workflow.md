@@ -101,21 +101,63 @@ that enforces one active agreement per quotation (see above).
 Both migrations are additive: existing invoices and contracts keep every field
 and start with `quotationId = NULL`. No table is dropped and no data is deleted.
 
-## Retirement of estimates
+## Retirement of estimates (completed)
 
-Estimates are no longer part of the active sales workflow:
+Estimates are no longer part of the sales workflow at all: they are **historical
+records**, preserved and readable, but immutable.
 
-- no `Create Estimate` action on accepted quotations;
+### Removed from the UI
+
+- no `Create Estimate` action on accepted quotations, contacts or opportunities;
 - no Estimates item in the sidebar / navigation model;
-- no `/finance/estimates/new` page and no links to it (contact, opportunity and
-  estimate-list entry points were removed).
+- no `/finance/estimates/new` page;
+- no `/finance/estimates/[id]/edit` page (deleted);
+- no `/finance/estimates/[id]/convert` page (deleted);
+- no status/delete action bar on the estimate record (deleted);
+- the list has no `Edit` link and the record shows a read-only notice.
 
-Existing estimate records keep full read access (`/finance/estimates`,
-`/finance/estimates/[id]`, PDF/share endpoints) and can still be converted to an
-invoice through the legacy conversion route. No estimate table, row or
-permission is dropped. The legacy `POST /api/v1/finance/estimates` endpoint is
-retained only so existing integrations and records stay usable; it is not an
-entry point of the approved workflow.
+### Refused server-side
+
+Every mutation answers `403` with
+`{ error, code: "estimate_read_only", action }` from
+`lib/sales/estimate-retirement.ts`. The refusal is unconditional — no body
+parsing, no service call, no database read — so it cannot leak which ids exist
+and cannot be bypassed by a caller that skips authorization.
+
+| Action               | Endpoint / surface                                                              | Answer                              |
+| -------------------- | ------------------------------------------------------------------------------- | ----------------------------------- |
+| create               | `POST /api/v1/finance/estimates`                                                | 403 `action: "create"`              |
+| edit / send / status | `PUT`/`PATCH /api/v1/finance/estimates/[id]`                                    | 403 `action: "edit"`                |
+| duplicate            | `POST /api/v1/finance/estimates` (was a create)                                 | 403 `action: "create"`              |
+| delete               | `DELETE /api/v1/finance/estimates/[id]`                                         | 403 `action: "delete"`              |
+| convert to invoice   | `POST /api/v1/finance/estimates/[id]/convert`                                   | 403 `action: "convert"`             |
+| automation status    | `POST /api/v1/automation/events` with `set_status` and `recordType: "Estimate"` | action reported `skipped`, no write |
+
+`duplicate` and `send` never had dedicated endpoints (duplication was a
+prefilled create, "send" was the `draft → sent` transition); both are now
+impossible because the underlying create and update paths are refused.
+`RETIRED_ESTIMATE_ACTIONS` in the retirement module lists the full surface.
+
+Internal services (`lib/services/crm/estimate-service.ts`) no longer contain any
+write. The exported mutation symbols remain only as fail-closed stubs that throw
+the same coded 403, so an in-process caller cannot mutate an estimate either.
+The workflow executor's `set_status` allow-list no longer contains `Estimate`.
+
+### Preserved
+
+- full read access: `/finance/estimates`, `/finance/estimates/[id]`,
+  `GET /api/v1/finance/estimates[/:id]` (gated by `estimate.read`);
+- PDF rendering and download: `GET /api/v1/finance/estimates/[id]/pdf`;
+- public share links and document snapshots (`entityType: "estimate"`) keep
+  resolving, including already-issued links;
+- financial reports keep their historical estimate totals;
+- all estimate rows, tables and permissions (`estimate.read` is the only one
+  enforced now; the write codes are left provisioned so existing roles and audit
+  history keep resolving);
+- tenant scoping: every read resolves `id + organizationId` and answers a
+  non-disclosing 404 for another tenant's record.
+
+No migration is required: nothing is dropped and no row is rewritten.
 
 ## Tests
 
@@ -131,3 +173,17 @@ entry point of the approved workflow.
   Quotation → Estimate expectation with the two approved invoice paths.
 - `lib/__tests__/infrastructure/navigation.test.ts` — asserts the estimate
   navigation and creation route stay retired while records remain readable.
+- `lib/__tests__/sales/estimate-read-only.test.ts` — unit coverage of the
+  retirement contract: every retired mutation (create, edit, duplicate, send,
+  status change, delete, convert) is refused by the service with `403` and
+  `code: "estimate_read_only"` without touching the database, the pure
+  vocabulary matches, and historical reads keep their `id + organizationId`
+  scoping.
+- `lib/__tests__/api/estimate-mutation-routes.test.ts` — HTTP contract of the
+  retired routes (`POST` collection, `PUT`/`PATCH`/`DELETE` detail, `POST`
+  convert): `403` with the coded body and **no** service call, while `GET`
+  still returns historical records and the PDF route still renders.
+- `lib/__tests__/integration/sales.estimate-read-only.integration.test.ts` — a
+  real estimate row survives every refused mutation byte-for-byte, stays
+  listable/readable/PDF-downloadable and cross-tenant scoped, while both
+  quotation → invoice flows keep working.

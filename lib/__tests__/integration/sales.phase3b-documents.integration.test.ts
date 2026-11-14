@@ -433,6 +433,8 @@ describeIfDb('Phase 3B Sales & Documents (real PostgreSQL)', () => {
     });
     expect([400, 404]).toContain(crossTenantProposal.status);
 
+    // Estimates are historical and read-only: creation is refused outright, so a
+    // cross-tenant estimate body is refused before any client lookup happens.
     const crossTenantEstimate = await jsonFetch('/api/v1/finance/estimates', {
       method: 'POST',
       headers: authHeaders(orgAAdmin.token),
@@ -443,7 +445,8 @@ describeIfDb('Phase 3B Sales & Documents (real PostgreSQL)', () => {
         total: '500.00',
       }),
     });
-    expect([400, 404]).toContain(crossTenantEstimate.status);
+    expect(crossTenantEstimate.status).toBe(403);
+    expect(crossTenantEstimate.body).toMatchObject({ code: 'estimate_read_only' });
 
     // Read-only member in Org A can GET proposals (200) but gets 403 on POST/PUT/DELETE
     const viewerRead = await jsonFetch(`/api/v1/crm/proposals/${orgAProp.id}`, {

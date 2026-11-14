@@ -1,3 +1,29 @@
+/**
+ * Estimate service — historical, read-only.
+ *
+ * Estimates were retired when the approved Quotation → Invoice workflow
+ * (agreement optional) replaced them. Existing estimate rows are preserved for
+ * history and stay fully readable: listing, detail, PDF rendering and public
+ * share links keep working, scoped to the caller's organization and gated by
+ * `estimate.read`.
+ *
+ * There is intentionally **no write path here any more**. Create, edit,
+ * duplicate, send, status changes, delete and conversion to invoice were
+ * removed rather than merely hidden, so no internal caller, automation or
+ * integration can mutate a historical estimate:
+ *
+ *  - the mutation functions are gone (they throw
+ *    {@link estimateRetiredError} with 403 if anything still calls them);
+ *  - the retired API routes answer the same coded refusal before doing any
+ *    work;
+ *  - automation cannot write an Estimate either, because the workflow
+ *    executor's writable-record allow-list no longer contains it.
+ *
+ * New billing starts from an accepted quotation:
+ *   POST /api/v1/crm/quotations/[id]/invoice
+ *   POST /api/v1/crm/quotations/[id]/agreement
+ */
+
 'use server';
 
 import { prisma } from '@/lib/db';
@@ -5,14 +31,10 @@ import { requirePermission, requireOrganization, type AuthorizedUser } from '@/l
 import { auth } from '@/lib/auth-server';
 import { cookies } from 'next/headers';
 import {
-  EstimateCreateInput,
-  EstimateUpdateInput,
-  EstimateConvertInput,
-} from '@/lib/schemas/crm/estimate.schema';
-import {
-  allocateDocumentNumber,
-  type PrismaTransactionClient,
-} from '@/lib/services/settings/document-numbering';
+  RETIRED_ESTIMATE_ACTIONS,
+  estimateRetiredError,
+  type RetiredEstimateAction,
+} from '@/lib/sales/estimate-retirement';
 
 /** Error carrying the HTTP status the route should answer with. */
 function codedError(message: string, statusCode: number): Error & { statusCode: number } {
@@ -56,17 +78,6 @@ interface EstimateRecord {
   createdAt: Date;
   updatedAt: Date;
 }
-
-const EDITABLE_ESTIMATE_STATUSES = ['draft', 'sent'];
-
-const VALID_ESTIMATE_TRANSITIONS: Record<string, string[]> = {
-  draft: ['sent', 'accepted', 'rejected', 'expired'],
-  sent: ['accepted', 'rejected', 'expired'],
-  accepted: [], // immutable except conversion via convertEstimateToInvoice
-  rejected: [],
-  expired: [],
-  converted: [],
-};
 
 function formatMoneyValue(value: { toString: () => string } | number | string): string {
   const num = Number(
@@ -148,42 +159,6 @@ async function getAuthorizedUser(): Promise<AuthorizedUser> {
   };
 }
 
-async function createAuditLog({
-  actorId,
-  actorName,
-  action,
-  entityType,
-  entityId,
-  before,
-  after,
-  metadata,
-  organizationId,
-}: {
-  actorId: string;
-  actorName: string | null;
-  action: string;
-  entityType: string;
-  entityId: string;
-  before?: Record<string, unknown> | null;
-  after?: Record<string, unknown> | null;
-  metadata?: Record<string, unknown> | null;
-  organizationId: string;
-}) {
-  await prisma.auditLog.create({
-    data: {
-      actorId,
-      actorName,
-      action,
-      entityType,
-      entityId,
-      before: before ?? null,
-      after: after ?? null,
-      metadata: metadata ?? null,
-      organizationId,
-    },
-  });
-}
-
 export async function listEstimates(): Promise<EstimateResponse[]> {
   const { userId, organizationId } = await getAuthorizedUser();
 
@@ -219,282 +194,60 @@ export async function getEstimate(id: string): Promise<EstimateResponse> {
   return serializeEstimate(estimate, contactsMap.get(estimate.clientId) ?? null);
 }
 
-export async function createEstimate(input: EstimateCreateInput): Promise<EstimateResponse> {
-  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
-
-  await requirePermission(userId, organizationId, 'estimate.create');
-
-  // Verify client belongs to org and is not soft-deleted
-  const client = await prisma.contact.findFirst({
-    where: { id: input.clientId, organizationId },
-  });
-
-  if (!client || (client as { deletedAt?: Date | null }).deletedAt) {
-    throw codedError('Client not found', 404);
-  }
-
-  // Prevent duplicate estimate numbers inside the same organization
-  const duplicate = await prisma.estimate.findFirst({
-    where: { organizationId, number: input.number },
-  });
-  if (duplicate) {
-    throw codedError(`Estimate number ${input.number} already exists in this organization`, 409);
-  }
-
-  const validUntil = input.validUntil ? new Date(input.validUntil) : null;
-  if (validUntil && Number.isNaN(validUntil.getTime())) {
-    throw codedError('Valid until date is not valid', 400);
-  }
-
-  const estimate = (await prisma.estimate.create({
-    data: {
-      organizationId,
-      number: input.number,
-      clientId: input.clientId,
-      status: input.status,
-      total: formatMoneyValue(input.total),
-      currency: input.currency,
-      validUntil,
-      notes: input.notes ?? null,
-    },
-  })) as EstimateRecord;
-
-  await createAuditLog({
-    actorId: userId,
-    actorName: actorEmail,
-    action: 'estimate.create',
-    entityType: 'Estimate',
-    entityId: estimate.id,
-    after: {
-      id: estimate.id,
-      number: estimate.number,
-      clientId: estimate.clientId,
-      total: formatMoneyValue(estimate.total),
-      status: estimate.status,
-    },
-    organizationId,
-  });
-
-  const c = client as {
-    id: string;
-    firstName?: string | null;
-    lastName?: string;
-    email?: string | null;
-  };
-
-  return serializeEstimate(estimate, {
-    id: c.id,
-    firstName: c.firstName ?? null,
-    lastName: c.lastName ?? '',
-    email: c.email ?? null,
-  });
+/**
+ * Retired write paths.
+ *
+ * The product no longer offers any estimate mutation. These exported stubs keep
+ * a stable, typed symbol for anything (an internal caller, a server action, a
+ * script) that still references them, and fail closed with the same coded 403
+ * refusal the retired API routes return instead of silently writing a
+ * historical record.
+ *
+ * They perform **no** session lookup, permission check or database access: the
+ * refusal is unconditional, so it cannot leak record existence and cannot be
+ * side-stepped by a caller that skips authorization.
+ */
+function refuseEstimateMutation(action: RetiredEstimateAction): never {
+  throw estimateRetiredError(action);
 }
 
-export async function updateEstimate(
-  id: string,
-  input: EstimateUpdateInput
-): Promise<EstimateResponse> {
-  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
-
-  await requirePermission(userId, organizationId, 'estimate.update');
-
-  const existing = (await prisma.estimate.findFirst({
-    where: { id, organizationId },
-  })) as EstimateRecord | null;
-
-  if (!existing) {
-    throw codedError('Not found', 404);
-  }
-
-  if (!EDITABLE_ESTIMATE_STATUSES.includes(existing.status)) {
-    throw codedError(`Cannot modify an estimate in ${existing.status} status`, 400);
-  }
-
-  if (input.status !== undefined && input.status !== existing.status) {
-    const allowed = VALID_ESTIMATE_TRANSITIONS[existing.status] ?? [];
-    if (!allowed.includes(input.status)) {
-      throw codedError(
-        `Invalid estimate status transition from ${existing.status} to ${input.status}`,
-        400
-      );
-    }
-  }
-
-  // Validate cross-org clientId if changed
-  if (input.clientId !== undefined) {
-    const client = await prisma.contact.findFirst({
-      where: { id: input.clientId, organizationId },
-    });
-    if (!client || (client as { deletedAt?: Date | null }).deletedAt) {
-      throw codedError('Client not found', 404);
-    }
-  }
-
-  // Prevent duplicate estimate numbers inside the same organization
-  if (input.number !== undefined && input.number !== existing.number) {
-    const duplicate = await prisma.estimate.findFirst({
-      where: { organizationId, number: input.number },
-    });
-    if (duplicate && duplicate.id !== id) {
-      throw codedError(`Estimate number ${input.number} already exists in this organization`, 409);
-    }
-  }
-
-  let nextValidUntil = existing.validUntil;
-  if (input.validUntil !== undefined) {
-    if (input.validUntil === null || input.validUntil === '') {
-      nextValidUntil = null;
-    } else {
-      const parsedDate = new Date(input.validUntil);
-      if (Number.isNaN(parsedDate.getTime())) {
-        throw codedError('Valid until date is not valid', 400);
-      }
-      nextValidUntil = parsedDate;
-    }
-  }
-
-  const estimate = (await prisma.estimate.update({
-    where: { id },
-    data: {
-      clientId: input.clientId ?? existing.clientId,
-      number: input.number ?? existing.number,
-      status: input.status ?? existing.status,
-      total: input.total !== undefined ? formatMoneyValue(input.total) : existing.total,
-      currency: input.currency ?? existing.currency,
-      validUntil: nextValidUntil,
-      notes: input.notes !== undefined ? input.notes : existing.notes,
-    },
-  })) as EstimateRecord;
-
-  await createAuditLog({
-    actorId: userId,
-    actorName: actorEmail,
-    action: 'estimate.update',
-    entityType: 'Estimate',
-    entityId: estimate.id,
-    before: { id: existing.id, status: existing.status, total: formatMoneyValue(existing.total) },
-    after: { id: estimate.id, status: estimate.status, total: formatMoneyValue(estimate.total) },
-    organizationId,
-  });
-
-  const contactsMap = await resolveContactsById(organizationId, [estimate.clientId]);
-  return serializeEstimate(estimate, contactsMap.get(estimate.clientId) ?? null);
+/** @deprecated Estimates are read-only; create invoices from an accepted quotation. */
+export async function createEstimate(): Promise<never> {
+  return refuseEstimateMutation('create');
 }
 
-export async function deleteEstimate(id: string) {
-  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
+/** @deprecated Estimates are read-only; create invoices from an accepted quotation. */
+export async function updateEstimate(): Promise<never> {
+  return refuseEstimateMutation('edit');
+}
 
-  await requirePermission(userId, organizationId, 'estimate.delete');
+/** @deprecated Estimates are read-only; create invoices from an accepted quotation. */
+export async function duplicateEstimate(): Promise<never> {
+  return refuseEstimateMutation('duplicate');
+}
 
-  const existing = await prisma.estimate.findFirst({
-    where: { id, organizationId },
-  });
+/** @deprecated Estimates are read-only; create invoices from an accepted quotation. */
+export async function sendEstimate(): Promise<never> {
+  return refuseEstimateMutation('send');
+}
 
-  if (!existing) {
-    throw codedError('Not found', 404);
-  }
+/** @deprecated Estimates are read-only; create invoices from an accepted quotation. */
+export async function transitionEstimateStatus(): Promise<never> {
+  return refuseEstimateMutation('status_change');
+}
 
-  if (existing.status === 'accepted' || existing.status === 'converted') {
-    throw codedError(`Cannot delete an ${existing.status} estimate`, 400);
-  }
+/** @deprecated Estimates are read-only; create invoices from an accepted quotation. */
+export async function deleteEstimate(): Promise<never> {
+  return refuseEstimateMutation('delete');
+}
 
-  await prisma.estimate.delete({
-    where: { id },
-  });
-
-  await createAuditLog({
-    actorId: userId,
-    actorName: actorEmail,
-    action: 'estimate.delete',
-    entityType: 'Estimate',
-    entityId: id,
-    before: { id: existing.id, number: existing.number, status: existing.status },
-    after: null,
-    organizationId,
-  });
-
-  return { id };
+/** @deprecated Estimates are read-only; create invoices from an accepted quotation. */
+export async function convertEstimateToInvoice(): Promise<never> {
+  return refuseEstimateMutation('convert');
 }
 
 /**
- * Convert an accepted estimate into a draft invoice.
- *
- * The whole conversion runs in one transaction with the estimate row locked:
- *
- *  - the invoice number comes from the organization's allocator (`PREFIX-YYYY-NNNN`)
- *    instead of the client-supplied `invoiceNumber`, so conversions can never
- *    reuse or collide with an issued number;
- *  - the estimate's amount and currency are carried over, because an estimate has
- *    a single total and no line items in the current schema;
- *  - the estimate is marked `converted` only after the invoice exists, so a
- *    failure leaves the estimate convertible instead of stranding it.
+ * Every retired action, exported for tests and callers that want to document
+ * the full refusal surface in one place.
  */
-export async function convertEstimateToInvoice(id: string, input: EstimateConvertInput) {
-  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
-
-  await requirePermission(userId, organizationId, 'estimate.update');
-  await requirePermission(userId, organizationId, 'invoice.create');
-
-  const dueDate = input.dueDate ? new Date(input.dueDate) : null;
-  if (dueDate && Number.isNaN(dueDate.getTime())) {
-    throw codedError('Due date is not a valid date', 400);
-  }
-
-  const result = await prisma.$transaction(
-    async (tx: PrismaTransactionClient): Promise<{ invoiceId: string; invoiceNumber: string }> => {
-      // Two conversions of the same estimate must not both create an invoice.
-      await tx.$queryRawUnsafe('SELECT id FROM "Estimate" WHERE id = $1 FOR UPDATE', id);
-
-      const estimate = await tx.estimate.findFirst({ where: { id, organizationId } });
-      if (!estimate) throw codedError('Not found', 404);
-
-      if (estimate.status !== 'accepted') {
-        throw codedError('Only accepted estimates can be converted to invoices', 400);
-      }
-
-      const { number } = await allocateDocumentNumber(tx, organizationId, 'invoice');
-
-      const invoice = await tx.invoice.create({
-        data: {
-          organizationId,
-          number,
-          clientId: estimate.clientId,
-          title: input.invoiceTitle,
-          status: 'draft',
-          currency: estimate.currency,
-          subtotal: estimate.total,
-          tax: 0,
-          total: estimate.total,
-          dueDate,
-          notes: estimate.notes ?? null,
-          createdBy: userId,
-          updatedBy: userId,
-        },
-      });
-
-      await tx.estimate.update({ where: { id }, data: { status: 'converted' } });
-
-      return { invoiceId: invoice.id, invoiceNumber: invoice.number };
-    }
-  );
-
-  await createAuditLog({
-    actorId: userId,
-    actorName: actorEmail,
-    action: 'estimate.convert',
-    entityType: 'Estimate',
-    entityId: id,
-    after: {
-      estimateId: id,
-      invoiceId: result.invoiceId,
-      invoiceNumber: result.invoiceNumber,
-    },
-    organizationId,
-  });
-
-  return {
-    estimateId: id,
-    invoiceId: result.invoiceId,
-    invoiceNumber: result.invoiceNumber,
-  };
-}
+export { RETIRED_ESTIMATE_ACTIONS };

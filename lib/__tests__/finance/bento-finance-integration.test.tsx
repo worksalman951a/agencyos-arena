@@ -218,17 +218,20 @@ describe('Bento Phase 5A Integration: Estimates Directory', () => {
 });
 
 describe('Bento Phase 5A Integration: Estimate Record View', () => {
-  it('renders estimate valuation, notes, and actions bar', () => {
-    render(
-      <BentoEstimateRecordView
-        estimate={MOCK_ESTIMATES[1]}
-        clientName="Bob Jones"
-        actionsNode={<button type="button">Action</button>}
-      />
-    );
+  it('renders the historical record read-only: valuation, notes, no mutation actions', () => {
+    render(<BentoEstimateRecordView estimate={MOCK_ESTIMATES[1]} clientName="Bob Jones" />);
 
     expect(screen.getAllByText('Estimate #EST-002').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Bob Jones')).toBeDefined();
-    expect(screen.getByText('Convert to Invoice')).toBeDefined();
+    // Historical value stays visible…
+    expect(screen.getByText('Document Valuation')).toBeDefined();
+    // …while every retired mutation is absent.
+    expect(screen.queryByText('Convert to Invoice')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Edit' })).toBeNull();
+    expect(
+      screen.queryByText(/Mark as Sent|Accept Estimate|Reject Estimate|Mark Expired/)
+    ).toBeNull();
+    expect(screen.queryByText('Delete Estimate')).toBeNull();
+    expect(screen.getByText(/read-only/i)).toBeDefined();
   });
 });

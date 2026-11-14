@@ -1,14 +1,14 @@
 /**
- * AgencyOS Finance Estimates API (legacy, retained for existing records)
+ * AgencyOS Finance Estimates API (historical, read-only)
  *
- * GET    /api/v1/finance/estimates - List estimates
- * POST   /api/v1/finance/estimates - Create an estimate (legacy)
+ * GET  /api/v1/finance/estimates - List historical estimates
+ * POST /api/v1/finance/estimates - RETIRED (403, read-only)
  *
- * Estimates are retired from the active sales workflow. The UI no longer
- * navigates to estimates, quotations no longer offer "Create Estimate", and
- * there is no new-estimate page. This endpoint stays so existing records remain
- * fully readable and convertible, and so integrations that still hold estimate
- * data keep working; it is not an entry point of the approved workflow.
+ * Estimates were retired from the active sales workflow. Existing rows are
+ * preserved and stay readable, but nothing may create, edit, duplicate, send,
+ * change status of, delete or convert one. The collection endpoint therefore
+ * keeps only its read verb; `POST` answers a coded 403 and writes nothing.
+ *
  * New billing starts from an accepted quotation:
  *   POST /api/v1/crm/quotations/[id]/invoice
  *   POST /api/v1/crm/quotations/[id]/agreement
@@ -16,9 +16,9 @@
 
 import { NextResponse } from 'next/server';
 
-import { listEstimates, createEstimate } from '@/lib/services/crm/estimate-service';
-import { estimateCreateSchema } from '@/lib/schemas/crm/estimate.schema';
+import { listEstimates } from '@/lib/services/crm/estimate-service';
 import { apiErrorFrom } from '@/lib/api/route-error';
+import { estimateRetiredBody } from '@/lib/sales/estimate-retirement';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -36,18 +36,10 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    const parsed = estimateCreateSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse('Invalid request body', 400, parsed.error.issues);
-    }
-
-    const estimate = await createEstimate(parsed.data);
-    return NextResponse.json(estimate, { status: 201 });
-  } catch (err) {
-    const { status, message } = apiErrorFrom(err);
-    return errorResponse(message, status);
-  }
+/**
+ * Refuse creation. The body is not parsed and no service is called: the refusal
+ * is the whole behaviour, so a malformed body cannot change the answer.
+ */
+export async function POST() {
+  return NextResponse.json(estimateRetiredBody('create'), { status: 403 });
 }

@@ -125,9 +125,12 @@ export function FinancialReportsClient(props: FinancialReportsClientProps) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="rounded-md border bg-background p-4">
-          <h2 className="text-lg font-semibold mb-2">Estimates</h2>
+          <h2 className="text-lg font-semibold mb-2">Historical Estimates</h2>
+          <p className="text-xs text-muted-foreground mb-3">
+            Retired from the sales workflow; retained here as read-only history.
+          </p>
           {estimateTotals.size === 0 ? (
-            <p className="text-sm text-muted-foreground">No estimates recorded yet.</p>
+            <p className="text-sm text-muted-foreground">No historical estimates recorded.</p>
           ) : (
             <dl className="space-y-2 text-sm">
               {[...estimateTotals.entries()].map(([currency, bucket]) => (

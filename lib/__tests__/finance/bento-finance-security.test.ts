@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth-server';
 import { requirePermission, requireOrganization } from '@/lib/permissions';
 import { getInvoice, recordPayment, updateInvoice } from '@/lib/services/crm/invoice-service';
 import { getEstimate, updateEstimate } from '@/lib/services/crm/estimate-service';
+import { ESTIMATE_READ_ONLY_CODE } from '@/lib/sales/estimate-retirement';
 
 vi.mock('@/lib/db', () => ({
   prisma: {
@@ -175,22 +176,19 @@ describe('Bento Phase 5A Security: Finance Invoices & Estimates Tenant Isolation
     });
   });
 
-  it('prevents updating an accepted estimate directly (immutability)', async () => {
+  // Estimates are historical and read-only: the write path no longer consults
+  // the database at all, so the guard is asserted from the tenant's point of
+  // view (a caller in *its own* organization is still refused).
+  it('refuses every estimate update, including an accepted estimate, without reading the row', async () => {
     setupSession('org-tenant-a', 'usr-tenant-a');
 
-    vi.mocked(prisma.estimate.findFirst).mockResolvedValueOnce({
-      id: 'est-1',
-      organizationId: 'org-tenant-a',
-      status: 'accepted',
-    } as unknown as Awaited<ReturnType<typeof prisma.estimate.findFirst>>);
-
-    await expect(
-      updateEstimate('est-1', {
-        notes: 'Tampered note',
-      })
-    ).rejects.toMatchObject({
-      message: 'Cannot modify an estimate in accepted status',
-      statusCode: 400,
+    await expect(updateEstimate()).rejects.toMatchObject({
+      statusCode: 403,
+      code: ESTIMATE_READ_ONLY_CODE,
+      action: 'edit',
     });
+
+    expect(prisma.estimate.findFirst).not.toHaveBeenCalled();
+    expect(prisma.estimate.update).not.toHaveBeenCalled();
   });
 });

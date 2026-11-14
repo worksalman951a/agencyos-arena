@@ -12,25 +12,20 @@ import type { EstimateResponse } from '@/lib/services/crm/estimate-service';
 interface EstimateDetailClientProps {
   estimate: EstimateResponse;
   clientName: string | null;
-  actionsNode: React.ReactNode;
 }
 
-export function EstimateDetailClient({
-  estimate,
-  clientName,
-  actionsNode,
-}: EstimateDetailClientProps) {
+/**
+ * Historical estimate record: read-only in both shells.
+ *
+ * Only the two access-preserving actions remain (PDF export and share link).
+ * Edit, status changes, delete and convert-to-invoice are gone from the UI and
+ * are refused by the API, so the screen cannot even offer a dead button.
+ */
+export function EstimateDetailClient({ estimate, clientName }: EstimateDetailClientProps) {
   const isBento = useBentoShell();
-  const EDITABLE_STATUSES = ['draft', 'sent'];
 
   if (isBento) {
-    return (
-      <BentoEstimateRecordView
-        estimate={estimate}
-        clientName={clientName}
-        actionsNode={actionsNode}
-      />
-    );
+    return <BentoEstimateRecordView estimate={estimate} clientName={clientName} />;
   }
 
   // Legacy Presentation
@@ -60,24 +55,17 @@ export function EstimateDetailClient({
             notes={estimate.notes}
           />
           <ShareDocumentButton entityType="estimate" entityId={estimate.id} />
-          {EDITABLE_STATUSES.includes(estimate.status) && (
-            <Button asChild variant="outline">
-              <Link href={`/finance/estimates/${estimate.id}/edit`}>Edit</Link>
-            </Button>
-          )}
           <Button asChild variant="outline">
             <Link href="/finance/estimates">Back</Link>
           </Button>
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-card p-4 rounded-lg border border-border">
-        {actionsNode}
-        {estimate.status === 'accepted' && (
-          <Button asChild>
-            <Link href={`/finance/estimates/${estimate.id}/convert`}>Convert to Invoice</Link>
-          </Button>
-        )}
+      <div className="bg-card p-4 rounded-lg border border-border">
+        <p className="text-sm text-muted-foreground">
+          This estimate is a historical record and is read-only. New billing starts from an accepted
+          quotation, which can create an invoice (or an agreement first).
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

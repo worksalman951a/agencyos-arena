@@ -1,16 +1,22 @@
 /**
- * AgencyOS Finance Estimate API - Single Estimate
+ * AgencyOS Finance Estimate API - Single historical estimate
  *
- * GET    /api/v1/finance/estimates/[id] - Get estimate by ID
- * PUT    /api/v1/finance/estimates/[id] - Update estimate
- * DELETE /api/v1/finance/estimates/[id] - Delete estimate
+ * GET    /api/v1/finance/estimates/[id] - Get estimate by ID (read-only)
+ * PUT    /api/v1/finance/estimates/[id] - RETIRED (403, read-only)
+ * PATCH  /api/v1/finance/estimates/[id] - RETIRED (403, read-only)
+ * DELETE /api/v1/finance/estimates/[id] - RETIRED (403, read-only)
+ *
+ * Editing (including status changes such as "mark as sent", "accept", "reject",
+ * "expire", and duplication) and deletion were removed with the retirement.
+ * The 403 is unconditional and identical for every caller, so it cannot be used
+ * to probe which estimate ids exist.
  */
 
 import { NextResponse } from 'next/server';
 
-import { getEstimate, updateEstimate, deleteEstimate } from '@/lib/services/crm/estimate-service';
-import { estimateUpdateSchema } from '@/lib/schemas/crm/estimate.schema';
+import { getEstimate } from '@/lib/services/crm/estimate-service';
 import { apiErrorFrom } from '@/lib/api/route-error';
+import { estimateRetiredBody } from '@/lib/sales/estimate-retirement';
 
 function errorResponse(message: string, status: number, issues?: unknown[]) {
   const body: Record<string, unknown> = { error: message };
@@ -29,30 +35,17 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params;
-    const body = await request.json();
-    const parsed = estimateUpdateSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse('Invalid request body', 400, parsed.error.issues);
-    }
-
-    const estimate = await updateEstimate(id, parsed.data);
-    return NextResponse.json(estimate);
-  } catch (err) {
-    const { status, message } = apiErrorFrom(err);
-    return errorResponse(message, status);
-  }
+/** Refuse an edit / status change (including "send"). */
+export async function PUT() {
+  return NextResponse.json(estimateRetiredBody('edit'), { status: 403 });
 }
 
-export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params;
-    const result = await deleteEstimate(id);
-    return NextResponse.json(result);
-  } catch (err) {
-    const { status, message } = apiErrorFrom(err);
-    return errorResponse(message, status);
-  }
+/** Same refusal for PATCH, so the method cannot be used to bypass PUT. */
+export async function PATCH() {
+  return NextResponse.json(estimateRetiredBody('edit'), { status: 403 });
+}
+
+/** Refuse deletion: historical estimates are preserved. */
+export async function DELETE() {
+  return NextResponse.json(estimateRetiredBody('delete'), { status: 403 });
 }
