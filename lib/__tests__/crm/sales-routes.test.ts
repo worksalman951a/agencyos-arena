@@ -467,8 +467,6 @@ it('Sidebar navigation remains intact with all modules listed', () => {
     '/finance/reports',
     '/automation/rules',
     '/automation/notifications',
-    '/admin/users',
-    '/admin/roles',
     '/settings',
   ];
   for (const href of expected) {

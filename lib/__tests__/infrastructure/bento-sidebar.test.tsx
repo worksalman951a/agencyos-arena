@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { filterNavigation, NAV_SECTIONS } from '@/lib/navigation';
@@ -106,18 +106,65 @@ describe('Bento sidebar', () => {
     ).toBeInTheDocument();
   });
 
-  it('does not highlight a fragment panel that is not selected', () => {
+  it('renders one direct Settings link and highlights it on the Settings Center', () => {
     mockPathname = '/settings';
     renderShell();
 
-    expect(within(nav()).getByRole('link', { name: 'Agency Settings' })).toHaveAttribute(
-      'data-active',
-      'true'
+    const settingsLinks = within(nav())
+      .getAllByRole('link')
+      .filter((link) => link.textContent === 'Settings');
+    expect(settingsLinks).toHaveLength(1);
+
+    const settings = settingsLinks[0];
+    expect(settings).toHaveAttribute('href', '/settings');
+    expect(settings).toHaveAttribute('aria-current', 'page');
+    // Manage Team and Agency Settings are no longer separate rail groups.
+    expect(within(nav()).queryByRole('link', { name: 'Manage Team' })).toBeNull();
+    expect(within(nav()).queryByRole('link', { name: 'Agency Settings' })).toBeNull();
+
+    // Keyboard-focusable, like every other rail destination.
+    settings.focus();
+    expect(settings).toHaveFocus();
+  });
+
+  it('keeps Settings highlighted on linked team administration pages', () => {
+    mockPathname = '/admin/users';
+    renderShell();
+    expect(within(nav()).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'aria-current',
+      'page'
     );
-    expect(within(nav()).getByRole('link', { name: 'Workspace Branding' })).not.toHaveAttribute(
-      'aria-current'
+
+    cleanup();
+    mockPathname = '/admin/invitations';
+    renderShell();
+    expect(within(nav()).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'aria-current',
+      'page'
     );
-    expect(within(nav()).getByRole('link', { name: 'Invoice Numbering' })).not.toHaveAttribute(
+
+    cleanup();
+    mockPathname = '/admin/roles';
+    renderShell();
+    expect(within(nav()).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+
+    cleanup();
+    mockPathname = '/automation/preferences';
+    renderShell();
+    expect(within(nav()).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+  });
+
+  it('does not highlight Settings on unrelated routes', () => {
+    mockPathname = '/finance/invoices';
+    renderShell();
+
+    expect(within(nav()).getByRole('link', { name: 'Settings' })).not.toHaveAttribute(
       'aria-current'
     );
   });
@@ -170,6 +217,10 @@ describe('Bento sidebar', () => {
     expect(within(sidebar).queryByRole('button', { name: /submenu/ })).toBeNull();
     // Every destination is still reachable as an icon link with an accessible name.
     expect(within(sidebar).getByRole('link', { name: 'Billing & Invoices' })).toBeVisible();
+    expect(within(sidebar).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'title',
+      'Settings'
+    );
   });
 
   it('opens and closes the mobile drawer', async () => {
@@ -178,6 +229,7 @@ describe('Bento sidebar', () => {
 
     await user.click(screen.getByRole('button', { name: 'Toggle navigation drawer' }));
     expect(nav()).toHaveAttribute('data-mobile-open', 'true');
+    expect(within(nav()).getByRole('link', { name: 'Settings' })).toBeVisible();
 
     mockPathname = '/finance/invoices';
     // Navigating from the drawer closes it.

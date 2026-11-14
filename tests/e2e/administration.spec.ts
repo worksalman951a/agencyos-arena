@@ -533,6 +533,27 @@ test.describe('administration', () => {
     await expect(page.getByText('Audit Register')).toHaveCount(0);
     await expect(page.getByText(/^notification\./)).toHaveCount(0);
 
+    // Settings Center: a member without administration access sees only their
+    // account and workspace panels - no team administration links leak.
+    const settingsPage = await memberContext.newPage();
+    await settingsPage.goto('/settings');
+    const settingsMain = settingsPage.locator('#main-content');
+    await expect(settingsMain.getByText('My Account', { exact: true })).toBeVisible();
+    await expect(settingsMain.getByText('Team & Permissions', { exact: true })).toHaveCount(0);
+    await expect(settingsMain.getByRole('link', { name: 'Team Members' })).toHaveCount(0);
+    await expect(settingsMain.getByRole('link', { name: 'Roles & Permissions' })).toHaveCount(0);
+    const memberNav = settingsPage.getByRole('complementary', { name: 'Main navigation' });
+    await expect(memberNav.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+
+    // Direct navigation to a team page still enforces the server-side rule.
+    await settingsPage.goto('/admin/users');
+    await expect(settingsPage.locator('#main-content').getByRole('alert')).toContainText(
+      /do not have access/i
+    );
+
     await browser.close();
     await memberApi.dispose();
   });
@@ -585,10 +606,17 @@ test.describe('administration', () => {
       main.getByRole('heading', { name: 'Settings & Branding', level: 1 })
     ).toBeVisible();
     const settingsCenter = bentoPanel(page, 'Settings Center');
-    await expect(settingsCenter.getByText('Administration', { exact: true })).toBeVisible();
-    await expect(settingsCenter.getByRole('link', { name: 'Users & Invitations' })).toHaveAttribute(
+    await expect(settingsCenter.getByText('Team & Permissions', { exact: true })).toBeVisible();
+    await expect(settingsCenter.getByText('My Account', { exact: true })).toBeVisible();
+    await expect(settingsCenter.getByText('Workspace', { exact: true })).toBeVisible();
+    await expect(settingsCenter.getByText('Billing', { exact: true })).toBeVisible();
+    await expect(settingsCenter.getByRole('link', { name: 'Team Members' })).toHaveAttribute(
       'href',
       '/admin/users'
+    );
+    await expect(settingsCenter.getByRole('link', { name: 'Invitations' })).toHaveAttribute(
+      'href',
+      '/admin/invitations'
     );
     await expect(settingsCenter.getByRole('link', { name: 'Roles & Permissions' })).toHaveAttribute(
       'href',
@@ -598,11 +626,28 @@ test.describe('administration', () => {
       settingsCenter.getByRole('link', { name: 'Audit Log', exact: true })
     ).toHaveAttribute('href', '/admin/audit-logs');
 
-    // Invitations are reached through the Users directory in the Bento shell.
-    await settingsCenter.getByRole('link', { name: 'Users & Invitations' }).click();
+    // Team pages are reached from the Settings Center, and the rail keeps
+    // Settings highlighted while an administrator is on them.
+    await settingsCenter.getByRole('link', { name: 'Team Members' }).click();
     await expect(main.getByRole('heading', { name: 'Users & Members', level: 1 })).toBeVisible();
-    await main.getByRole('link', { name: 'Manage Invitations' }).click();
+    await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+
+    await page.goto('/admin/invitations');
     await expect(main.getByRole('heading', { name: 'Team Invitations', level: 1 })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+
+    await page.goto('/admin/roles');
+    await expect(main.getByRole('heading', { level: 1 })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
 
     // Workflow access remains permission-filtered in the Automations submenu.
     await nav.getByRole('button', { name: 'Expand Automations submenu' }).click();

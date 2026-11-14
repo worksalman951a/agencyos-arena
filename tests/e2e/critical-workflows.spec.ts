@@ -281,6 +281,42 @@ test.describe('settings', () => {
     await page.reload();
     await expect(main.locator('#bento-org-name')).toHaveValue(savedName);
   });
+
+  test('opens Workspace Branding and Invoice Numbering from their deep links', async ({
+    authedPage: page,
+  }) => {
+    const main = page.locator('#main-content');
+    const nav = page.getByRole('complementary', { name: 'Main navigation' });
+
+    // Direct load of the preserved deep link.
+    await page.goto('/settings#branding');
+    await expect(bentoPanel(page, 'Brand & Visual Identity')).toBeVisible();
+
+    // Refresh keeps the same panel open.
+    await page.reload();
+    await expect(bentoPanel(page, 'Brand & Visual Identity')).toBeVisible();
+
+    // The other preserved deep link.
+    await page.goto('/settings#invoice-numbering');
+    await expect(bentoPanel(page, 'Invoice Numbering & Tax Rules')).toBeVisible();
+
+    // Browser back/forward between the two fragments.
+    await page.goBack();
+    await expect(page).toHaveURL(/\/settings#branding$/);
+    await expect(bentoPanel(page, 'Brand & Visual Identity')).toBeVisible();
+    await page.goForward();
+    await expect(page).toHaveURL(/\/settings#invoice-numbering$/);
+    await expect(bentoPanel(page, 'Invoice Numbering & Tax Rules')).toBeVisible();
+
+    // The rail has exactly one Settings entry and it is active here.
+    await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+    await expect(nav.getByRole('link', { name: 'Manage Team' })).toHaveCount(0);
+    await expect(nav.getByRole('link', { name: 'Agency Settings' })).toHaveCount(0);
+    await expect(main).toBeVisible();
+  });
 });
 
 test.describe('organization isolation', () => {

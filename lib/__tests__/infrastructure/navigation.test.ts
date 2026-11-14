@@ -58,8 +58,7 @@ describe('bento sidebar hierarchy', () => {
       'Billing & Invoices',
       'Automations',
       'Reports',
-      'Manage Team',
-      'Agency Settings',
+      'Settings',
     ]);
   });
 
@@ -77,8 +76,6 @@ describe('bento sidebar hierarchy', () => {
       'Projects & Tasks': ['All Projects', 'Reviews & Handovers'],
       'Billing & Invoices': ['Invoices'],
       Automations: ['Workflow Rules', 'Reminders & Alerts'],
-      'Manage Team': ['Team Members', 'Roles & Permissions'],
-      'Agency Settings': ['Workspace Branding', 'Invoice Numbering'],
     });
   });
 
@@ -92,6 +89,27 @@ describe('bento sidebar hierarchy', () => {
     const today = PRIMARY_ITEMS[0];
     expect(today).toMatchObject({ name: 'Today', href: '/dashboard', accent: 'emerald' });
     expect(today.subItems).toBeUndefined();
+  });
+
+  it('replaces the old Manage Team and Agency Settings groups with one Settings link', () => {
+    expect(PRIMARY_NAMES).not.toContain('Manage Team');
+    expect(PRIMARY_NAMES).not.toContain('Agency Settings');
+
+    const settings = PRIMARY_ITEMS.find((item) => item.name === 'Settings');
+    expect(settings).toMatchObject({
+      name: 'Settings',
+      href: '/settings',
+      icon: 'settings',
+      activePrefixes: ['/admin', '/automation/preferences'],
+    });
+    expect(settings?.subItems).toBeUndefined();
+
+    // The retired groups must not leave stray links behind.
+    const hrefs = allNavItems(NAV_SECTIONS).map((item) => item.href);
+    expect(hrefs).not.toContain('/admin/users');
+    expect(hrefs).not.toContain('/admin/roles');
+    expect(hrefs).not.toContain('/settings#branding');
+    expect(hrefs).not.toContain('/settings#invoice-numbering');
   });
 
   it('gives groups no permission of their own so children drive visibility', () => {
@@ -151,25 +169,26 @@ describe('filterNavigation', () => {
 
     const hrefs = allNavItems(sections).map((item) => item.href);
     expect(hrefs).toContain('/finance/invoices');
+    expect(hrefs).toContain('/settings');
     expect(hrefs).not.toContain('/crm/contacts');
     expect(hrefs).not.toContain('/admin/users');
   });
 
-  it('still exposes ungated items (Today, Agency Settings) to a member with no permissions', () => {
+  it('still exposes ungated items (Today, Settings) to a member with no permissions', () => {
     const sections = filterNavigation(NAV_SECTIONS, new Set());
 
     expect(sections.map((section) => section.id)).toEqual(['workspace']);
-    expect(sections[0].items.map((item) => item.name)).toEqual(['Today', 'Agency Settings']);
+    expect(sections[0].items.map((item) => item.name)).toEqual(['Today', 'Settings']);
   });
 
   it('hides a group when every child was filtered out', () => {
     const sections = filterNavigation(NAV_SECTIONS, new Set(['contact.read']));
     const names = sections[0].items.map((item) => item.name);
 
-    expect(names).toEqual(['Today', 'Clients & Contacts', 'Agency Settings']);
+    expect(names).toEqual(['Today', 'Clients & Contacts', 'Settings']);
     expect(names).not.toContain('Sales Documents');
     expect(names).not.toContain('Automations');
-    expect(names).not.toContain('Manage Team');
+    expect(names).not.toContain('Billing & Invoices');
   });
 
   it('keeps a group whose remaining child is permitted, and links there', () => {
@@ -207,16 +226,20 @@ describe('navigation targets', () => {
     expect(missing).toEqual([]);
   });
 
-  it('resolves panel fragments to real pages', () => {
-    const fragmentHrefs = allNavItems(NAV_SECTIONS)
-      .map((item) => item.href)
-      .filter((href) => href.includes('#'));
+  it('links Settings to the Settings Center route and keeps panel deep links out of the rail', () => {
+    const settings = PRIMARY_ITEMS.find((item) => item.name === 'Settings');
+    expect(primaryNavHref(settings as NavItem)).toBe('/settings');
+    expect(routeExists('/settings')).toBe(true);
+    // Deep links are preserved as URLs, not duplicated as sidebar entries.
+    expect(allNavItems(NAV_SECTIONS).some((item) => item.href.includes('#'))).toBe(false);
+  });
 
-    expect(fragmentHrefs).toEqual(
-      expect.arrayContaining(['/settings#branding', '/settings#invoice-numbering'])
-    );
-    for (const href of fragmentHrefs) {
+  it('links every Settings Center team page that the rail marks active', () => {
+    const settings = PRIMARY_ITEMS.find((item) => item.name === 'Settings');
+    const teamPages = ['/admin/users', '/admin/invitations', '/admin/roles'];
+    for (const href of teamPages) {
       expect(routeExists(href)).toBe(true);
+      expect(settings?.activePrefixes?.some((prefix) => isHrefActive(href, prefix))).toBe(true);
     }
   });
 
@@ -325,10 +348,23 @@ describe('resolveActiveHref', () => {
     expect(resolveActiveHref('/dashboard', items)).toBeNull();
   });
 
-  it('prefers the fragment panel when the URL carries that fragment', () => {
+  it('keeps Settings active on settings panels and linked team administration pages', () => {
     const menu = allNavItems(NAV_SECTIONS);
-    expect(resolveActiveHref('/settings#branding', menu)).toBe('/settings#branding');
     expect(resolveActiveHref('/settings', menu)).toBe('/settings');
+    expect(resolveActiveHref('/settings#branding', menu)).toBe('/settings');
+    expect(resolveActiveHref('/settings#invoice-numbering', menu)).toBe('/settings');
+    expect(resolveActiveHref('/admin/users', menu)).toBe('/settings');
+    expect(resolveActiveHref('/admin/users/abc123', menu)).toBe('/settings');
+    expect(resolveActiveHref('/admin/invitations', menu)).toBe('/settings');
+    expect(resolveActiveHref('/admin/roles', menu)).toBe('/settings');
+    expect(resolveActiveHref('/automation/preferences', menu)).toBe('/settings');
+  });
+
+  it('does not claim unrelated routes for Settings', () => {
+    const menu = allNavItems(NAV_SECTIONS);
+    expect(resolveActiveHref('/finance/invoices', menu)).toBe('/finance/invoices');
+    expect(resolveActiveHref('/automation/notifications', menu)).toBe('/automation/notifications');
+    expect(resolveActiveHref('/unknown', menu)).toBeNull();
   });
 
   it('keeps a group parent expanded while one of its children is active', () => {

@@ -166,7 +166,7 @@ describe('Sidebar', () => {
 
     expect(screen.getByRole('link', { name: 'Billing & Invoices' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Reports' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Manage Team' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Clients & Contacts' })).toBeNull();
 
     cleanup();

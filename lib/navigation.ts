@@ -29,12 +29,12 @@
  *       - Workflow Rules       -> /automation/rules
  *       - Reminders & Alerts   -> /automation/notifications
  * 11. Reports                 -> /finance/reports
- * 12. Manage Team
- *       - Team Members         -> /admin/users
- *       - Roles & Permissions  -> /admin/roles
- * 13. Agency Settings
- *       - Workspace Branding   -> /settings#branding
- *       - Invoice Numbering    -> /settings#invoice-numbering
+ * 12. Settings                -> /settings (also active on linked team/admin pages)
+ *
+ * Settings absorbed the retired "Manage Team" and "Agency Settings" groups. The
+ * Settings Center (components/settings/bento-settings-view.tsx) is grouped into
+ * My Account, Workspace, Billing and Team & Permissions, and keeps the
+ * /settings#branding and /settings#invoice-numbering deep links working.
  *
  * Destinations that do not exist yet are intentionally absent from the menu and
  * tracked in `PENDING_NAV_DESTINATIONS`. Groups are hidden automatically once
@@ -108,6 +108,11 @@ export interface NavItem {
   accent?: 'emerald';
   /** Render a subtle separator above this item. */
   dividerBefore?: boolean;
+  /**
+   * Extra route prefixes that mark this item active (e.g. Settings stays active
+   * on the team administration pages it links to).
+   */
+  activePrefixes?: string[];
 }
 
 export interface NavSection {
@@ -191,22 +196,12 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         permission: 'invoice.read',
       },
       {
-        name: 'Manage Team',
-        href: '/admin/users',
-        icon: 'users',
-        subItems: [
-          { name: 'Team Members', href: '/admin/users', permission: 'user.read' },
-          { name: 'Roles & Permissions', href: '/admin/roles', permission: 'role.read' },
-        ],
-      },
-      {
-        name: 'Agency Settings',
+        name: 'Settings',
         href: '/settings',
         icon: 'settings',
-        subItems: [
-          { name: 'Workspace Branding', href: '/settings#branding' },
-          { name: 'Invoice Numbering', href: '/settings#invoice-numbering' },
-        ],
+        // Settings owns the account/workspace panels plus the team administration
+        // pages it links to, so the rail keeps highlighting it there.
+        activePrefixes: ['/admin', '/automation/preferences'],
       },
     ],
   },
@@ -297,7 +292,7 @@ export const PENDING_NAV_DESTINATIONS: readonly PendingNavDestination[] = [
   },
   {
     label: 'Integrations',
-    parent: 'Agency Settings',
+    parent: 'Settings',
     expectedHref: '/settings#integrations',
     reason:
       'The Integrations card in the Settings Center is labelled "Coming Soon"; no integration configuration exists.',
@@ -349,9 +344,13 @@ export function primaryNavHref(item: NavItem): string {
 }
 
 /** All items and subItems from a section list, flattened (used for active-link resolution). */
-export function allNavItems(
-  sections: readonly NavSection[]
-): Array<{ name: string; href: string; icon?: NavIconKey; permission?: string }> {
+export function allNavItems(sections: readonly NavSection[]): Array<{
+  name: string;
+  href: string;
+  icon?: NavIconKey;
+  permission?: string;
+  activePrefixes?: string[];
+}> {
   return sections.flatMap((section) =>
     section.items.flatMap((item) => [
       {
@@ -359,6 +358,7 @@ export function allNavItems(
         href: primaryNavHref(item),
         icon: item.icon,
         permission: item.permission,
+        activePrefixes: item.activePrefixes,
       },
       ...(item.subItems?.map((s) => ({
         name: s.name,
@@ -391,7 +391,7 @@ export function isHrefActive(pathname: string, href: string): boolean {
  */
 export function resolveActiveHref(
   pathname: string,
-  items: ReadonlyArray<{ name: string; href: string }>
+  items: ReadonlyArray<{ name: string; href: string; activePrefixes?: string[] }>
 ): string | null {
   const hash = pathname.includes('#') ? `#${pathname.split('#')[1]}` : '';
   let best: string | null = null;
@@ -402,5 +402,11 @@ export function resolveActiveHref(
     if (!isHrefActive(pathname, item.href)) continue;
     if (best === null || navPath(item.href).length > navPath(best).length) best = item.href;
   }
-  return best;
+  if (best !== null) return best;
+  // No menu route matched: fall back to an item that claims this area (Settings
+  // covers the team administration pages linked from the Settings Center).
+  for (const item of items) {
+    if (item.activePrefixes?.some((prefix) => isHrefActive(pathname, prefix))) return item.href;
+  }
+  return null;
 }

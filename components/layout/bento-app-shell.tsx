@@ -31,6 +31,12 @@ import {
   type NavSection,
   type NavItem,
 } from '@/lib/navigation';
+import {
+  HASH_NAVIGATION_EVENT,
+  hashFromEvent,
+  hashFromHref,
+  notifyHashNavigation,
+} from '@/lib/hash-navigation';
 import type { BrandContext } from '@/lib/services/settings/branding-service';
 import '@/components/ui/premium/tokens.css';
 import '@/components/ui/premium/primitives.css';
@@ -107,13 +113,22 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
   const closeButtonRef = React.useRef<HTMLButtonElement | null>(null);
 
   // Fragments select a panel inside a page (e.g. /settings#branding) and must
-  // participate in active-link resolution, so listen for hash changes.
+  // participate in active-link resolution. Native hashchange/popstate cover
+  // direct loads, reloads and back/forward; sidebar links announce themselves
+  // because Next's history.pushState does not emit hashchange.
   const [hash, setHash] = React.useState('');
   React.useEffect(() => {
     const syncHash = () => setHash(window.location.hash);
+    const syncFromNavigation = (event: Event) => setHash(hashFromEvent(event));
     syncHash();
     window.addEventListener('hashchange', syncHash);
-    return () => window.removeEventListener('hashchange', syncHash);
+    window.addEventListener('popstate', syncHash);
+    window.addEventListener(HASH_NAVIGATION_EVENT, syncFromNavigation);
+    return () => {
+      window.removeEventListener('hashchange', syncHash);
+      window.removeEventListener('popstate', syncHash);
+      window.removeEventListener(HASH_NAVIGATION_EVENT, syncFromNavigation);
+    };
   }, [pathname]);
 
   const flatItems = React.useMemo(() => allNavItems(sections), [sections]);
@@ -380,6 +395,8 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
                                   aria-current={isSubItemActive ? 'page' : undefined}
                                   onClick={() => {
                                     if (mobileOpen) closeMobileDrawer();
+                                    const fragment = hashFromHref(sub.href);
+                                    if (fragment) notifyHashNavigation(fragment);
                                   }}
                                 >
                                   <span>{sub.name}</span>
@@ -396,23 +413,8 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
             ))}
           </nav>
 
-          {/* Fixed Sidebar Footer: Settings & User Account Menu */}
+          {/* Fixed Sidebar Footer: User Account Menu */}
           <div className="ps-foot" ref={profileMenuRef}>
-            <NextLink
-              href="/settings"
-              className="ps-item"
-              aria-current={activeHref === '/settings' ? 'page' : undefined}
-              title="Settings & Preferences"
-              onClick={() => {
-                if (mobileOpen) closeMobileDrawer();
-              }}
-            >
-              <span className="ps-item__icon" aria-hidden="true">
-                <Settings className="w-4 h-4" />
-              </span>
-              {(!collapsed || mobileOpen) && <span className="ps-item__label">Settings</span>}
-            </NextLink>
-
             {/* User Profile / Account Footer */}
             {collapsed && !mobileOpen ? (
               /* Collapsed rail: Only centered avatar button triggering accessible account menu */
@@ -447,7 +449,10 @@ export function BentoAppShell({ children, user, sections, branding }: BentoAppSh
                         href="/settings#profile"
                         role="menuitem"
                         className="ps-profile-menuitem"
-                        onClick={() => setProfileMenuOpen(false)}
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          notifyHashNavigation('#profile');
+                        }}
                       >
                         <User className="w-3.5 h-3.5" />
                         <span>My Profile</span>
