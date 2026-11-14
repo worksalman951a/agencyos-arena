@@ -260,6 +260,7 @@ jobs:
           PLAYWRIGHT_SKIP_WEBSERVER: "1"
           CI: "true"
           PORT: "3001"
+          MALWARE_SCANNER_ALLOW_OFFLINE_CLEAN: "true"
       - name: Surface E2E failures
         if: failure()
         run: |
