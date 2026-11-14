@@ -314,6 +314,89 @@ describeIfDb('Approved sales workflow: quotation to invoice (real PostgreSQL)', 
     expect(body.contracts).toHaveLength(1);
   });
 
+  it('serialises simultaneous agreement requests and allows a replacement after voiding', async () => {
+    const quotation = await createQuotation(orgA, { title: 'Concurrent Agreement' });
+    await acceptQuotation(orgA, quotation.id);
+
+    // Two genuinely simultaneous requests for the same accepted quotation.
+    // Exactly one agreement must be created; both responses must point at it.
+    const [first, second] = await Promise.all([
+      createAgreementFromQuotation(orgA, quotation.id),
+      createAgreementFromQuotation(orgA, quotation.id),
+    ]);
+
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    expect(second.status, JSON.stringify(second.body)).toBe(201);
+    const firstAgreement = first.body as AgreementBody;
+    const secondAgreement = second.body as AgreementBody;
+    expect(firstAgreement.id).toBe(secondAgreement.id);
+
+    const activeBefore = await prisma.contract.count({
+      where: {
+        quotationId: quotation.id,
+        organizationId: orgA.organizationId,
+        status: { not: 'voided' },
+      },
+    });
+    expect(activeBefore).toBe(1);
+
+    const rowsBefore = await prisma.contract.findMany({
+      where: { quotationId: quotation.id, organizationId: orgA.organizationId },
+    });
+    expect(rowsBefore).toHaveLength(1);
+    expect(rowsBefore[0].id).toBe(firstAgreement.id);
+
+    // Voiding is what frees the quotation for a replacement.
+    const voided = await jsonFetch(`/api/v1/documents/contracts/${firstAgreement.id}`, {
+      method: 'PUT',
+      headers: authHeaders(orgA.token),
+      body: JSON.stringify({ status: 'voided' }),
+    });
+    expect(voided.status, JSON.stringify(voided.body)).toBe(200);
+    expect((voided.body as { status: string }).status).toBe('voided');
+
+    // The replacement is subject to the same concurrency guarantee.
+    const [third, fourth] = await Promise.all([
+      createAgreementFromQuotation(orgA, quotation.id),
+      createAgreementFromQuotation(orgA, quotation.id),
+    ]);
+    expect(third.status, JSON.stringify(third.body)).toBe(201);
+    expect(fourth.status, JSON.stringify(fourth.body)).toBe(201);
+    const replacement = third.body as AgreementBody;
+    expect((fourth.body as AgreementBody).id).toBe(replacement.id);
+    expect(replacement.id).not.toBe(firstAgreement.id);
+
+    const activeAfter = await prisma.contract.count({
+      where: {
+        quotationId: quotation.id,
+        organizationId: orgA.organizationId,
+        status: { not: 'voided' },
+      },
+    });
+    expect(activeAfter).toBe(1);
+
+    // The voided row is preserved for audit; the history holds exactly two rows.
+    const history = await prisma.contract.findMany({
+      where: { quotationId: quotation.id, organizationId: orgA.organizationId },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(history).toHaveLength(2);
+    expect(history.map((row: { status: string }) => row.status).sort()).toEqual([
+      'draft',
+      'voided',
+    ]);
+
+    // The quotation exposes both: the active one and the voided predecessor.
+    const quotationAfter = await jsonFetch(`/api/v1/crm/quotations/${quotation.id}`, {
+      headers: authHeaders(orgA.token),
+    });
+    expect(quotationAfter.status).toBe(200);
+    const quotationBody = quotationAfter.body as QuotationBody;
+    expect(quotationBody.contracts?.map((row) => row.id).sort()).toEqual(
+      [firstAgreement.id, replacement.id].sort()
+    );
+  });
+
   it('refuses to invoice or sign an agreement from a quotation that is not accepted', async () => {
     const quotation = await createQuotation(orgA, { title: 'Still Draft' });
 

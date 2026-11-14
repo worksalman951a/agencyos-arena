@@ -53,6 +53,35 @@ An agreement has a title and references only. Its title defaults to
 Creating an agreement twice for the same quotation is idempotent while a
 non-voided agreement exists; a voided agreement can be re-issued.
 
+### Concurrency: one active agreement per quotation
+
+Two simultaneous `Create Agreement` requests for the same accepted quotation
+must both return the **same** agreement, never create two. This is guaranteed
+twice over:
+
+1. **Row lock (application level).** Agreement creation runs in a transaction
+   that takes `SELECT … FROM "Quotation" WHERE id = $1 AND "organizationId" = $2
+FOR UPDATE` before looking for an existing agreement. Concurrent requests
+   serialize on that row; the second one re-reads after the first commits and
+   returns its agreement. The audit entry is written only by the request that
+   actually inserted the row.
+2. **Partial unique index (database level).** Migration
+   `0023_enforce_single_active_agreement` adds
+   `Contract_quotationId_active_key`:
+   `UNIQUE ("quotationId") WHERE "quotationId" IS NOT NULL AND "status" <> 'voided'`.
+   Exactly one non-voided agreement per quotation can exist, whoever writes it.
+   A racing writer that bypasses the lock gets a unique violation (Prisma
+   `P2002`), which the service resolves to the winning agreement.
+
+Voided agreements are excluded from the index on purpose: the historical row is
+kept for audit, and a replacement can be created afterwards (also subject to the
+same two guarantees).
+
+The migration runs a pre-flight guard first: if a database already holds
+duplicate active agreements from before this change, the migration stops with
+the offending quotation ids and changes no data — choosing which one to void is
+a business decision.
+
 A quotation may produce several invoices (for example per milestone), each with
 its own allocated `PREFIX-YYYY-NNNN` number.
 
@@ -66,8 +95,11 @@ impossible at the database level, and `NO ACTION` means a quotation that
 produced financial or legal documents cannot be hard-deleted; quotations are
 retired by soft delete, which leaves provenance intact.
 
-The migration is additive: existing invoices and contracts keep every field and
-start with `quotationId = NULL`. No table is dropped and no data is deleted.
+Migration `0023_enforce_single_active_agreement` adds the partial unique index
+that enforces one active agreement per quotation (see above).
+
+Both migrations are additive: existing invoices and contracts keep every field
+and start with `quotationId = NULL`. No table is dropped and no data is deleted.
 
 ## Retirement of estimates
 
@@ -92,7 +124,9 @@ entry point of the approved workflow.
   agreement idempotency).
 - `lib/__tests__/integration/sales.quotation-to-invoice.integration.test.ts` —
   real PostgreSQL + HTTP coverage of quotation creation without a proposal,
-  both invoice paths, correct source data, permissions and organization scoping.
+  both invoice paths, correct source data, permissions and organization scoping,
+  plus two simultaneous agreement requests (same id, exactly one active
+  agreement) and a replacement after voiding.
 - `tests/e2e/sales-documents-workflow.spec.ts` — replaces the old
   Quotation → Estimate expectation with the two approved invoice paths.
 - `lib/__tests__/infrastructure/navigation.test.ts` — asserts the estimate

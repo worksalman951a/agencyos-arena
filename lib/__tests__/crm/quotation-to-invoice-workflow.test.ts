@@ -28,6 +28,7 @@ vi.mock('@/lib/db', () => ({
     contract: { findFirst: vi.fn(), create: vi.fn() },
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(),
+    $queryRawUnsafe: vi.fn(),
   },
 }));
 
@@ -63,6 +64,7 @@ const mockContractFindFirst = prisma.contract.findFirst as unknown as ReturnType
 const mockContractCreate = prisma.contract.create as unknown as ReturnType<typeof vi.fn>;
 const mockAuditLogCreate = prisma.auditLog.create as unknown as ReturnType<typeof vi.fn>;
 const mockTransaction = prisma.$transaction as unknown as ReturnType<typeof vi.fn>;
+const mockQueryRawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 const mockRequirePermission = requirePermission as unknown as ReturnType<typeof vi.fn>;
 const mockRequireOrganization = requireOrganization as unknown as ReturnType<typeof vi.fn>;
 const mockGetSession = auth.api.getSession as unknown as ReturnType<typeof vi.fn>;
@@ -163,6 +165,7 @@ beforeEach(() => {
   mockTransaction.mockImplementation((arg: unknown) =>
     typeof arg === 'function' ? (arg as (tx: unknown) => unknown)(prisma) : Promise.all(arg as [])
   );
+  mockQueryRawUnsafe.mockResolvedValue([]);
   mockAllocateNumber.mockResolvedValue({ number: 'INV-2026-0012', sequence: 12, prefix: 'INV' });
   mockQuotationFindFirst.mockResolvedValue(acceptedQuotation);
   mockInvoiceCreate.mockResolvedValue({ id: 'invoice_1' });
@@ -337,13 +340,97 @@ describe('createAgreementFromQuotation', () => {
     expect(mockRequirePermission).toHaveBeenCalledWith(userId, orgId, 'quotation.read');
   });
 
+  it('locks the quotation row before looking for an existing agreement', async () => {
+    await createAgreementFromQuotation(quotationId);
+
+    // Row lock: every concurrent Create Agreement for this quotation serialises
+    // here, so the loser re-reads after the winner commits.
+    expect(mockQueryRawUnsafe).toHaveBeenCalledWith(
+      'SELECT id FROM "Quotation" WHERE id = $1 AND "organizationId" = $2 FOR UPDATE',
+      quotationId,
+      orgId
+    );
+  });
+
   it('returns the existing non-voided agreement instead of duplicating it', async () => {
+    mockContractFindFirst.mockResolvedValue(contractRecord);
+
+    const first = await createAgreementFromQuotation(quotationId);
+    const second = await createAgreementFromQuotation(quotationId);
+
+    expect(first.id).toBe('contract_1');
+    expect(second.id).toBe('contract_1');
+    expect(mockContractCreate).not.toHaveBeenCalled();
+    // The lookup excludes voided agreements, which is what permits a
+    // replacement after voiding.
+    expect(mockContractFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { quotationId, organizationId: orgId, status: { not: 'voided' } },
+      })
+    );
+    // An idempotent replay must not pretend a second contract was created.
+    expect(mockAuditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it('resolves a losing race on the unique index to the winning agreement', async () => {
+    // A writer that raced past the row lock trips the partial unique index.
+    mockTransaction.mockRejectedValueOnce(
+      Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+    );
     mockContractFindFirst.mockResolvedValue(contractRecord);
 
     const result = await createAgreementFromQuotation(quotationId);
 
     expect(result.id).toBe('contract_1');
     expect(mockContractCreate).not.toHaveBeenCalled();
+    expect(mockAuditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it('cannot resolve to a voided agreement', async () => {
+    const voided = { ...contractRecord, id: 'contract_voided', status: 'voided' };
+    mockTransaction.mockRejectedValueOnce(
+      Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+    );
+    // The filtered lookup finds no active agreement, so the original
+    // constraint error is surfaced instead of returning the voided row.
+    mockContractFindFirst.mockResolvedValueOnce(null);
+
+    await expect(createAgreementFromQuotation(quotationId)).rejects.toMatchObject({
+      code: 'P2002',
+    });
+    expect(voided.status).toBe('voided');
+    expect(mockContractCreate).not.toHaveBeenCalled();
+  });
+
+  it('creates a replacement after the previous agreement was voided', async () => {
+    const replacement = {
+      ...contractRecord,
+      id: 'contract_2',
+      title: 'Enterprise Brand Refresh Agreement (re-issued)',
+    };
+    // The active-agreement lookup excludes voided rows, so it finds nothing...
+    mockContractFindFirst.mockResolvedValue(null);
+    mockContractCreate.mockResolvedValue(replacement);
+
+    const result = await createAgreementFromQuotation(quotationId, {
+      title: 'Enterprise Brand Refresh Agreement (re-issued)',
+    });
+
+    expect(result.id).toBe('contract_2');
+    expect(mockContractCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        quotationId,
+        status: 'draft',
+        title: 'Enterprise Brand Refresh Agreement (re-issued)',
+      }),
+      include: expect.objectContaining({
+        quotation: { select: { id: true, number: true, title: true } },
+      }),
+    });
+    // A genuinely new agreement is audited.
+    expect(mockAuditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ entityId: 'contract_2', action: 'contract.create' }),
+    });
   });
 
   it('rejects a quotation that is not accepted', async () => {

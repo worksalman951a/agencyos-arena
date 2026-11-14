@@ -987,6 +987,12 @@ model Contract {
   signatures   Signature[]
 
   @@index([organizationId, quotationId])
+  // At most one *active* agreement per quotation is enforced by the partial
+  // unique index "Contract_quotationId_active_key" created in migration 0023.
+  // Prisma cannot express partial indexes, so the guarantee lives in SQL:
+  //   UNIQUE ("quotationId") WHERE "quotationId" IS NOT NULL
+  //     AND "status" <> 'voided'
+  // Voided rows are excluded on purpose, allowing a replacement after voiding.
 }
 
 model Document {
