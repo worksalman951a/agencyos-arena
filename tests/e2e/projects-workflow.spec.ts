@@ -170,14 +170,52 @@ test.describe('Projects end-to-end workflows', () => {
 
     // 5. Upload a project file
     await page.goto(`/projects/${projectId}/files`);
-    await expect(page.getByRole('heading', { name: 'Project Files', level: 1 })).toBeVisible();
+    // The Bento files view is titled differently from the legacy page, so assert its own
+    // heading and prove the route belongs to the project this test just created.
+    await expect(
+      page.getByRole('heading', { name: 'Project Assets & Documents', level: 1 })
+    ).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe(`/projects/${projectId}/files`);
+    await expect(page.getByRole('link', { name: 'Back to Workspace' })).toHaveAttribute(
+      'href',
+      `/projects/${projectId}`
+    );
+    await expect(
+      page.getByRole('heading', { name: 'Upload New Project Document', level: 3 })
+    ).toBeVisible();
+
     await page.locator('#project-file-input').setInputFiles({
       name: 'project-plan.txt',
       mimeType: 'text/plain',
       buffer: Buffer.from('E2E project file content'),
     });
+    // Associate the upload with the task created earlier, then confirm the association.
+    const fileTask = page.locator('#project-file-task');
+    await expect(fileTask.locator('option', { hasText: 'Build Homepage' })).toBeAttached();
+    await fileTask.selectOption({ label: 'Build Homepage' });
     await page.getByRole('button', { name: 'Upload File' }).click();
-    await expect(page.getByText('project-plan.txt').first()).toBeVisible();
+
+    // The name renders in both the register row and the inspector, so scope to the row.
+    const fileRegister = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: /Project Files Register/ }) });
+    await expect(fileRegister.getByRole('button', { name: /project-plan\.txt/ })).toHaveCount(1);
+    await expect(fileRegister.getByText('Build Homepage')).toBeVisible();
+
+    // The linked task and a working download are surfaced through the inspector.
+    const fileInspector = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'File Inspector' }) });
+    await expect(fileInspector.getByText('Linked Task')).toBeVisible();
+    await expect(fileInspector.getByText('Build Homepage')).toBeVisible();
+    const downloadLink = fileInspector.getByRole('link', { name: /Download/ });
+    await expect(downloadLink).toHaveAttribute(
+      'href',
+      /^\/api\/v1\/projects\/files\/[^/]+\/download$/
+    );
+    const download = await page.request.get((await downloadLink.getAttribute('href'))!);
+    expect(download.status(), 'the uploaded file downloads').toBe(200);
+    expect(await download.text()).toBe('E2E project file content');
 
     // 6. Record a project approval
     await page.goto(`/projects/${projectId}/approvals`);
@@ -188,36 +226,81 @@ test.describe('Projects end-to-end workflows', () => {
 
     // 7. Create a Change Order linked to the project
     await page.goto(`/projects/change-orders/new?projectId=${projectId}`);
-    await expect(page.locator(`#co-project option[value="${projectId}"]`)).toBeAttached();
+    // The project options load asynchronously; waiting on the option proves the prefill,
+    // not merely that the select exists.
+    await expect(page.locator(`#bento-co-proj option[value="${projectId}"]`)).toBeAttached();
+    await expect(page.locator('#bento-co-proj')).toHaveValue(projectId);
     await page.getByLabel('Description').fill('Add blog section');
     await page.getByLabel('Amount').fill('1250.00');
-    await page.getByRole('button', { name: 'Create Change Order' }).click();
+    // Header shortcut and the form's own submit share a name; use the native submit.
+    const changeOrderForm = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'Scope Modification Parameters' }) });
+    const submitChangeOrder = changeOrderForm.getByRole('button', {
+      name: 'Create Change Order',
+    });
+    await expect(submitChangeOrder).toHaveCount(1);
+    await submitChangeOrder.click();
     await expect(page).toHaveURL(/\/projects\/change-orders\/(?!new)[^/?]+$/);
     await expect(page.getByText('Add blog section').first()).toBeVisible();
 
     // 8. Log a Time Entry linked to the project task
     await page.goto(`/projects/time-entries/new?projectId=${projectId}`);
-    await expect(page.locator('#te-task option', { hasText: 'Build Homepage' })).toBeAttached();
-    await page.locator('#te-task').selectOption({ label: 'Build Homepage' });
-    await page.getByLabel('Hours', { exact: true }).fill('4.5');
+    await expect(page.locator(`#bento-time-proj option[value="${projectId}"]`)).toBeAttached();
+    await expect(page.locator('#bento-time-proj')).toHaveValue(projectId);
+    await expect(
+      page.locator('#bento-time-task option', { hasText: 'Build Homepage' })
+    ).toBeAttached();
+    // Team Member is required and the Bento form does not prefill it; without a
+    // selection native validation blocks submission and no request is sent.
+    const teamMember = page.locator('#bento-time-user');
+    await expect(teamMember.locator('option').nth(1)).toBeAttached();
+    await teamMember.selectOption({ index: 1 });
+    await expect(teamMember).not.toHaveValue('');
+    await page.locator('#bento-time-task').selectOption({ label: 'Build Homepage' });
+    await page.getByLabel(/^Hours/).fill('4.5');
     await page.getByLabel('Description').fill('Homepage layout implementation');
-    await page.getByRole('button', { name: 'Log Time Entry' }).click();
+    const timeEntryForm = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'Time Allocation Parameters' }) });
+    const submitTimeEntry = timeEntryForm.getByRole('button', { name: 'Log Time', exact: true });
+    await expect(submitTimeEntry).toHaveCount(1);
+    await submitTimeEntry.click();
     await expect(page).toHaveURL(/\/projects\/time-entries\/(?!new)[^/?]+$/);
 
     await page.goto(`/projects/time-entries?projectId=${projectId}`);
-    await expect(page.getByText('4.50 hrs').first()).toBeVisible();
+    // The Bento register renders the logged duration per row plus a total-hours stat.
+    const timesheet = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: /Timesheets Register/ }) });
+    const timeRow = timesheet.getByRole('button', {
+      name: new RegExp(`Homepage layout implementation.*${projectName}.*4\\.5h`),
+    });
+    await expect(timeRow).toHaveCount(1);
+    const totalHours = page.locator('section.pmx-stat').filter({ hasText: 'Total Hours Logged' });
+    await expect(totalHours).toHaveCount(1);
+    await expect(totalHours.locator('.pmx-stat__num')).toHaveText('4.5 hrs');
 
     // 9. Edit Project to attach client contact and verify persistence
     await page.goto(`/projects/${projectId}/edit`);
-    await expect(page.getByRole('heading', { name: 'Edit Project', level: 1 })).toBeVisible();
-    await page.locator('#edit-project-client').click();
+    // The Bento edit view titles the page with the project name.
+    await expect(
+      page.getByRole('heading', { name: `Edit Project: ${projectName}`, level: 1 })
+    ).toBeVisible();
+    // The client picker is a Combobox in the Bento shell, not the legacy select.
+    const clientPicker = page.locator('#bento-project-client');
+    await clientPicker.click();
     await page.getByPlaceholder('Search clients…').fill(contact.lastName);
-    await page
-      .getByRole('option', { name: new RegExp(contact.lastName) })
-      .first()
-      .click();
+    await page.getByRole('option', { name: new RegExp(contact.lastName) }).click();
+    await expect(clientPicker).toContainText(contact.lastName);
+
     await page.getByLabel('Project Name').fill(`${projectName} Updated`);
-    await page.getByRole('button', { name: 'Save Changes' }).click();
+    const editForm = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'Project Parameters & Scope' }) });
+    const saveChanges = editForm.getByRole('button', { name: 'Save Changes' });
+    await expect(saveChanges).toHaveCount(1);
+    await saveChanges.click();
     await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
     await expect(
       page.getByRole('heading', { name: `${projectName} Updated`, level: 1 })
