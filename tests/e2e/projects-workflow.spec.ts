@@ -53,9 +53,18 @@ test.describe('Projects end-to-end workflows', () => {
     const templateName = `E2E Template ${suffix}`;
     await page.getByLabel('Template Name').fill(templateName);
     await page.getByLabel('Description').fill('Template description for E2E launch');
-    await page.getByRole('button', { name: 'Create Template' }).click();
+    // Two "Create Template" controls exist: a header shortcut (type="button") and the
+    // form's own submit. Use the submit inside the Template Specifications panel — it is
+    // the same form the fields belong to, so it honours the required-field validation.
+    const templateForm = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'Template Specifications' }) });
+    const submitTemplate = templateForm.getByRole('button', { name: 'Create Template' });
+    await expect(submitTemplate).toHaveCount(1);
+    await submitTemplate.click();
 
-    await expect(page).toHaveURL(/\/projects\/templates\/[^/]+$/);
+    // Excludes the /new route, which the previous pattern also matched.
+    await expect(page).toHaveURL(/\/projects\/templates\/(?!new$)[^/]+$/);
     await expect(page.getByRole('heading', { name: templateName, level: 1 })).toBeVisible();
 
     // 2. Create Project from Template via UI
