@@ -29,6 +29,21 @@ const PUBLIC_ROUTES: Record<string, string> = {
 };
 
 /**
+ * Retired endpoints that intentionally do not reach the service layer.
+ *
+ * They are pure refusals: no session lookup, no permission check, no database
+ * read or write — the handler answers a fixed, coded `403` and returns. Because
+ * they touch neither Prisma nor a service there is nothing to delegate, and
+ * requiring a guard would make the refusal conditional (and, for a 404, would
+ * disclose whether the record exists). Each entry states the retirement it
+ * enforces.
+ */
+const REFUSAL_ONLY_ROUTES: Record<string, string> = {
+  'api/v1/finance/estimates/[id]/convert/route.ts':
+    'Retired estimate → invoice conversion: unconditional 403 estimate_read_only.',
+};
+
+/**
  * Service modules that intentionally do not authenticate: they run inside a
  * transaction opened by a guarded caller, or they are pure helpers.
  */
@@ -71,12 +86,27 @@ describe('API route authorization', () => {
   });
 
   it('delegates every guarded route to the service layer', () => {
-    const orphaned = guardedRoutes.filter((file) => {
-      const source = fs.readFileSync(path.join(APP_DIR, file), 'utf8');
-      return !source.includes('@/lib/services/') && !GUARD_PATTERN.test(source);
-    });
+    const refusalOnly = new Set(Object.keys(REFUSAL_ONLY_ROUTES));
+    const orphaned = guardedRoutes
+      .filter((file) => !refusalOnly.has(file))
+      .filter((file) => {
+        const source = fs.readFileSync(path.join(APP_DIR, file), 'utf8');
+        return !source.includes('@/lib/services/') && !GUARD_PATTERN.test(source);
+      });
 
     expect(orphaned).toEqual([]);
+  });
+
+  it('keeps every refusal-only route a genuine, documented refusal', () => {
+    for (const [route, reason] of Object.entries(REFUSAL_ONLY_ROUTES)) {
+      const source = fs.readFileSync(path.join(APP_DIR, route), 'utf8');
+      expect(reason.length, `${route} needs a reason`).toBeGreaterThan(10);
+      // It must answer 403 with the coded contract and never touch data.
+      expect(source, route).toContain('estimateRetiredBody');
+      expect(source, route).toContain('403');
+      expect(source, route).not.toContain('@/lib/db');
+      expect(source, route).not.toMatch(/json\s*\(\s*\)/);
+    }
   });
 
   it('keeps every public route justified', () => {

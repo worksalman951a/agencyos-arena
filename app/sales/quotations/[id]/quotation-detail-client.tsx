@@ -11,21 +11,21 @@ import {
   type QuotationDetailData,
 } from '@/components/sales/bento-quotation-record-view';
 import { useBentoShell } from '@/components/providers/bento-theme-provider';
-import {
-  ESTIMATE_HANDOFF_LABEL,
-  canHandoffQuotationToEstimate,
-  estimateHandoffHref,
-} from '@/lib/sales/document-handoffs';
-
 interface QuotationDetailClientProps {
   quotation: QuotationDetailData;
-  /** Server-resolved `estimate.create` capability for this actor. */
-  canCreateEstimate?: boolean;
+  /** Server-resolved `invoice.create` capability for this actor. */
+  canCreateInvoice?: boolean;
+  /** Server-resolved `contract.create` capability for this actor. */
+  canCreateAgreement?: boolean;
+  /** Server-resolved `contract.read` capability for this actor. */
+  canReadAgreement?: boolean;
 }
 
 export function QuotationDetailClient({
   quotation,
-  canCreateEstimate,
+  canCreateInvoice,
+  canCreateAgreement,
+  canReadAgreement,
 }: QuotationDetailClientProps) {
   const isBento = useBentoShell();
   const EDITABLE_STATUSES = ['draft', 'sent'];
@@ -33,15 +33,23 @@ export function QuotationDetailClient({
     ? `${quotation.contact.firstName ?? ''} ${quotation.contact.lastName ?? ''}`.trim() ||
       'Unnamed Contact'
     : null;
+  // A voided agreement does not block a re-issued one, matching the service.
+  const linkedInvoices = quotation.invoices ?? [];
+  const linkedAgreements = quotation.contracts ?? [];
+  const existingAgreement = linkedAgreements.find((contract) => contract.status !== 'voided');
+  const actions = (
+    <QuotationActions
+      quotationId={quotation.id}
+      status={quotation.status}
+      canCreateInvoice={canCreateInvoice}
+      canCreateAgreement={canCreateAgreement}
+      canReadAgreement={canReadAgreement}
+      existingAgreementId={existingAgreement?.id ?? null}
+    />
+  );
 
   if (isBento) {
-    return (
-      <BentoQuotationRecordView
-        quotation={quotation}
-        actionsNode={<QuotationActions quotationId={quotation.id} status={quotation.status} />}
-        canCreateEstimate={canCreateEstimate}
-      />
-    );
+    return <BentoQuotationRecordView quotation={quotation} actionsNode={actions} />;
   }
 
   // Legacy Presentation
@@ -92,12 +100,7 @@ export function QuotationDetailClient({
               <Link href={`/sales/quotations/builder/${quotation.id}`}>Edit</Link>
             </Button>
           )}
-          <QuotationActions quotationId={quotation.id} status={quotation.status} />
-          {canHandoffQuotationToEstimate(quotation.status, canCreateEstimate) && (
-            <Button asChild variant="outline">
-              <Link href={estimateHandoffHref(quotation)}>{ESTIMATE_HANDOFF_LABEL}</Link>
-            </Button>
-          )}
+          {actions}
           <Button asChild variant="outline">
             <Link href="/sales/quotations">Back</Link>
           </Button>
@@ -233,6 +236,58 @@ export function QuotationDetailClient({
           </table>
         </div>
       </div>
+
+      {(linkedInvoices.length > 0 || linkedAgreements.length > 0) && (
+        <div className="bg-card p-6 rounded-lg border border-border space-y-4">
+          <h2 className="text-sm font-semibold text-muted-foreground">Documents created</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            {linkedInvoices.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                  Invoices
+                </h3>
+                <ul className="space-y-1.5">
+                  {linkedInvoices.map((invoice) => (
+                    <li key={invoice.id}>
+                      <Link
+                        href={`/finance/invoices/${invoice.id}`}
+                        className="text-accent hover:underline font-medium"
+                      >
+                        {invoice.number}
+                      </Link>
+                      <span className="text-muted-foreground">
+                        {' '}
+                        &bull; {invoice.currency} {Number(invoice.total).toFixed(2)} &bull;{' '}
+                        {invoice.status}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {linkedAgreements.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                  Agreements
+                </h3>
+                <ul className="space-y-1.5">
+                  {linkedAgreements.map((contract) => (
+                    <li key={contract.id}>
+                      <Link
+                        href={`/documents/contracts/${contract.id}`}
+                        className="text-accent hover:underline font-medium"
+                      >
+                        {contract.title}
+                      </Link>
+                      <span className="text-muted-foreground"> &bull; {contract.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {quotation.notes && (
         <div className="bg-card p-6 rounded-lg border border-border space-y-2">

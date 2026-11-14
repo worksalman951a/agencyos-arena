@@ -31,6 +31,12 @@ export interface InvoiceResponse {
   clientId: string | null;
   /** Linked project id, or null when the invoice is not tied to a project. */
   projectId: string | null;
+  /**
+   * Source quotation id (approved sales workflow), or null for invoices that
+   * were not created from a quotation. Preserved even after the quotation is
+   * soft-deleted, so provenance is never lost.
+   */
+  quotationId: string | null;
   title: string;
   status: string;
   subtotal: string;
@@ -53,8 +59,20 @@ export interface InvoiceResponse {
    * more about a project than its opaque id.
    */
   project: InvoiceProjectSummary | null;
+  /**
+   * Minimal source-quotation summary. Only id, number and title are exposed;
+   * the invoice reader never inherits the quotation's full contents.
+   */
+  quotation: InvoiceQuotationSummary | null;
   items: InvoiceLineItemResponse[];
   payments: InvoicePaymentResponse[];
+}
+
+/** The only quotation fields an invoice ever carries: enough to label a link. */
+export interface InvoiceQuotationSummary {
+  id: string;
+  number: string;
+  title: string;
 }
 
 /** The only project fields an invoice ever carries: enough to label a link. */
@@ -189,6 +207,7 @@ const INVOICE_RESPONSE_INCLUDE = {
   payments: { orderBy: { paidAt: 'desc' } },
   client: { select: { id: true, firstName: true, lastName: true } },
   project: INVOICE_PROJECT_SELECT,
+  quotation: { select: { id: true, number: true, title: true } },
   creator: { select: { id: true, name: true, email: true } },
   updater: { select: { id: true, name: true, email: true } },
 } as const;
@@ -310,6 +329,8 @@ type InvoiceDbRecord = {
   clientId: string | null;
   projectId?: string | null;
   project?: { id: string; name: string; status: string; deletedAt: Date | null } | null;
+  quotationId?: string | null;
+  quotation?: { id: string; number: string; title: string } | null;
   title: string;
   status: string;
   subtotal: { toString: () => string };
@@ -355,6 +376,14 @@ function serializeInvoice(invoice: InvoiceDbRecord, includeProject = false): Inv
     number: invoice.number,
     clientId: invoice.clientId,
     projectId: invoice.projectId ?? null,
+    quotationId: invoice.quotationId ?? null,
+    quotation: invoice.quotation
+      ? {
+          id: invoice.quotation.id,
+          number: invoice.quotation.number,
+          title: invoice.quotation.title,
+        }
+      : null,
     // Redacted unless the caller was explicitly cleared to read projects.
     project:
       includeProject && invoice.project
@@ -466,6 +495,7 @@ export async function listInvoices(input: InvoiceQueryInput) {
         payments: { orderBy: { paidAt: 'desc' } },
         client: { select: { id: true, firstName: true, lastName: true } },
         project: INVOICE_PROJECT_SELECT,
+        quotation: { select: { id: true, number: true, title: true } },
       },
       orderBy: { [input.sortBy]: input.sortOrder },
       skip: (input.page - 1) * input.pageSize,
@@ -507,6 +537,34 @@ export async function getInvoice(id: string) {
   const includeProject =
     Boolean(invoice.projectId) && (await canReadProjects(userId, organizationId));
   return serializeInvoice(invoice as unknown as InvoiceDbRecord, includeProject);
+}
+
+/** Optional overrides accepted when invoicing an accepted quotation. */
+export interface InvoiceFromQuotationInput {
+  /** Defaults to `Invoice for Quotation <number>`. */
+  title?: string;
+  dueDate?: string | null;
+  /** Defaults to the quotation's notes. */
+  notes?: string | null;
+}
+
+/** The quotation columns an invoice is built from. */
+interface QuotationSourceRecord {
+  id: string;
+  number: string;
+  title: string;
+  status: string;
+  contactId: string | null;
+  currency: string;
+  notes: string | null;
+  deletedAt: Date | null;
+  items: Array<{
+    description: string;
+    quantity: { toString(): string };
+    unitPrice: { toString(): string };
+    taxRate: { toString(): string };
+    sortOrder: number;
+  }>;
 }
 
 export async function createInvoice(input: InvoiceCreateInput, lineItems: InvoiceLineItemInput[]) {
@@ -623,6 +681,150 @@ export async function createInvoice(input: InvoiceCreateInput, lineItems: Invoic
 
   // A linked project was authorized with `project.read` above.
   return serializeInvoice(invoice as unknown as InvoiceDbRecord, Boolean(projectId));
+}
+
+/**
+ * Create a draft invoice from an accepted quotation (approved sales workflow).
+ *
+ * This is the default path: Quotation -> Invoice, with no proposal or
+ * agreement required. The quotation is the single source of truth, so the
+ * invoice is built from it rather than from caller-supplied lines:
+ *
+ *  - the client comes from the quotation's contact;
+ *  - the line items, unit prices and tax rates are copied from the quotation
+ *    and the subtotal/tax/total are recalculated server-side;
+ *  - the currency and notes are carried over;
+ *  - `quotationId` records the provenance on the invoice (a quotation may
+ *    produce several invoices, for example per milestone).
+ *
+ * Permissions: `invoice.create` for the new document and `quotation.read` for
+ * the source. Both are resolved for the caller's organization, and the source
+ * is looked up with `id + organizationId`, so a quotation of another tenant
+ * answers the same non-disclosing 404 as an id that does not exist.
+ */
+export async function createInvoiceFromQuotation(
+  quotationId: string,
+  input: InvoiceFromQuotationInput = {}
+): Promise<InvoiceResponse> {
+  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'invoice.create');
+  await requirePermission(userId, organizationId, 'quotation.read');
+
+  const quotation = (await prisma.quotation.findFirst({
+    where: { id: quotationId, organizationId },
+    include: { items: { orderBy: { sortOrder: 'asc' } } },
+  })) as QuotationSourceRecord | null;
+
+  if (!quotation || quotation.deletedAt) {
+    throw codedError('Not found', 404);
+  }
+
+  // Only an accepted quotation is won work. Drafts and rejected/expired
+  // quotations are not billable through this workflow.
+  if (quotation.status !== 'accepted') {
+    throw codedError('Only accepted quotations can be invoiced', 400);
+  }
+
+  const lineItems: InvoiceLineItemInput[] = quotation.items.map((item) => ({
+    description: item.description,
+    quantity: item.quantity.toString(),
+    unitPrice: item.unitPrice.toString(),
+    taxRate: item.taxRate.toString(),
+  }));
+
+  const { subtotal, tax, total } = calculateInvoiceTotals(lineItems);
+
+  const dueDate = input.dueDate ? new Date(input.dueDate) : null;
+  if (dueDate && Number.isNaN(dueDate.getTime())) {
+    throw codedError('Due date is not a valid date', 400);
+  }
+
+  const title = input.title?.trim() || `Invoice for Quotation ${quotation.number}`;
+  const notes = input.notes ?? quotation.notes ?? null;
+
+  const createFromQuotationInTransaction = () =>
+    prisma.$transaction(async (tx: PrismaTransactionClient) => {
+      const { number } = await allocateDocumentNumber(tx, organizationId, 'invoice');
+
+      return tx.invoice.create({
+        data: {
+          organizationId,
+          number,
+          clientId: quotation.contactId,
+          projectId: null,
+          quotationId: quotation.id,
+          title,
+          status: 'draft',
+          subtotal,
+          tax,
+          total,
+          currency: quotation.currency,
+          dueDate,
+          notes,
+          createdBy: userId,
+          updatedBy: userId,
+          items: {
+            create: lineItems.map((item) => {
+              const qtyCents = toCents(item.quantity);
+              const priceCents = toCents(item.unitPrice);
+              const itemAmountCents = Math.round((qtyCents * priceCents) / 100);
+              return {
+                description: item.description,
+                quantity: Number(item.quantity),
+                unitPrice: Number(item.unitPrice),
+                taxRate: Number(item.taxRate),
+                amount: formatMoney(itemAmountCents),
+              };
+            }),
+          },
+        },
+        select: { id: true },
+      });
+    });
+
+  // Same collision policy as createInvoice: the (organizationId, number)
+  // unique index is the database guarantee, so a drifted counter is retried
+  // with a freshly allocated number instead of failing the user.
+  let created: { id: string } | undefined;
+  for (let attempt = 1; attempt <= 3 && !created; attempt += 1) {
+    try {
+      created = await createFromQuotationInTransaction();
+    } catch (error) {
+      if (!isUniqueViolation(error) || attempt === 3) throw error;
+    }
+  }
+  if (!created) {
+    throw codedError('Could not allocate a unique invoice number. Please retry.', 400);
+  }
+
+  const invoice = await prisma.invoice.findUniqueOrThrow({
+    where: { id: created.id },
+    include: INVOICE_RESPONSE_INCLUDE,
+  });
+
+  await createAuditLog({
+    actorId: userId,
+    actorName: actorEmail,
+    action: 'invoice.create',
+    entityType: 'Invoice',
+    entityId: invoice.id,
+    after: {
+      id: invoice.id,
+      number: invoice.number,
+      title: invoice.title,
+      status: invoice.status,
+      total: formatDecimalMoney(invoice.total),
+      currency: invoice.currency,
+      sourceQuotationId: quotation.id,
+      sourceQuotationNumber: quotation.number,
+    },
+    metadata: { source: 'quotation', quotationId: quotation.id },
+    organizationId,
+  });
+
+  // Invoices produced from a quotation are not linked to a project.
+  return serializeInvoice(invoice as unknown as InvoiceDbRecord, false);
 }
 
 export async function updateInvoice(

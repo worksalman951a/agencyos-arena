@@ -40,6 +40,7 @@ export function ContractDetailClient({
           <p className="text-muted-foreground">
             Contract &bull; Status: {contract.status}
             {contract.proposal ? ` · Proposal #${contract.proposal.number}` : ''}
+            {contract.quotation ? ` · Quotation #${contract.quotation.number}` : ''}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -90,6 +91,21 @@ export function ContractDetailClient({
             <div>
               <dt className="text-xs text-muted-foreground">Created</dt>
               <dd>{new Date(contract.createdAt).toLocaleDateString()}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Source Quotation</dt>
+              <dd>
+                {contract.quotation ? (
+                  <Link
+                    href={`/sales/quotations/${contract.quotation.id}`}
+                    className="text-accent hover:underline font-medium"
+                  >
+                    #{contract.quotation.number} — {contract.quotation.title}
+                  </Link>
+                ) : (
+                  <span className="text-muted-foreground">Not created from a quotation</span>
+                )}
+              </dd>
             </div>
           </dl>
         </div>

@@ -1,34 +1,26 @@
 /**
- * AgencyOS Finance Estimate Convert API
+ * AgencyOS Finance Estimate Convert API - RETIRED
  *
- * POST /api/v1/finance/estimates/[id]/convert - Convert estimate to invoice
+ * POST /api/v1/finance/estimates/[id]/convert - 403, read-only
+ *
+ * Converting an estimate into an invoice is no longer possible. The route is
+ * kept (rather than deleted) so an old client, bookmark or integration gets an
+ * explicit, coded refusal instead of a bare 404, and so the retirement is
+ * visible in one place.
+ *
+ * The refusal is unconditional: no session lookup, no permission check, no
+ * database read and no transaction. It therefore cannot leak which estimate ids
+ * exist, and it cannot create, update or audit-write anything.
+ *
+ * Replacement workflow:
+ *   POST /api/v1/crm/quotations/[id]/invoice   (default path)
+ *   POST /api/v1/crm/quotations/[id]/agreement (optional agreement first)
  */
 
 import { NextResponse } from 'next/server';
 
-import { convertEstimateToInvoice } from '@/lib/services/crm/estimate-service';
-import { estimateConvertSchema } from '@/lib/schemas/crm/estimate.schema';
-import { apiErrorFrom } from '@/lib/api/route-error';
+import { estimateRetiredBody } from '@/lib/sales/estimate-retirement';
 
-function errorResponse(message: string, status: number, issues?: unknown[]) {
-  const body: Record<string, unknown> = { error: message };
-  if (issues) body.issues = issues;
-  return NextResponse.json(body, { status });
-}
-
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params;
-    const body = await request.json();
-    const parsed = estimateConvertSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse('Invalid request body', 400, parsed.error.issues);
-    }
-
-    const result = await convertEstimateToInvoice(id, parsed.data);
-    return NextResponse.json(result, { status: 201 });
-  } catch (err) {
-    const { status, message } = apiErrorFrom(err);
-    return errorResponse(message, status);
-  }
+export async function POST() {
+  return NextResponse.json(estimateRetiredBody('convert'), { status: 403 });
 }

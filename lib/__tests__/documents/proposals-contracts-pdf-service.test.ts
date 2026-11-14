@@ -107,6 +107,8 @@ describe('Phase 11B: Proposals, Quotations & Contracts PDF Generation', () => {
         createdAt: new Date(),
       },
     ],
+    invoices: [],
+    contracts: [],
   };
 
   const mockContract: ContractResponse = {
@@ -114,6 +116,7 @@ describe('Phase 11B: Proposals, Quotations & Contracts PDF Generation', () => {
     organizationId: 'org-test-1',
     proposalId: 'prop-unit-1',
     projectId: 'proj-1',
+    quotationId: null,
     title: 'Strategic Delivery Agreement',
     status: 'signed',
     signatureReference: 'SIG-VERIFIED-AUTH-00129',
@@ -128,6 +131,7 @@ describe('Phase 11B: Proposals, Quotations & Contracts PDF Generation', () => {
       status: 'accepted',
     },
     project: { id: 'proj-1', name: 'Alpha Infra', status: 'active' },
+    quotation: null,
     signer: { id: 'user-grace', name: 'Grace Hopper', email: 'grace@navy.mil' },
   };
 

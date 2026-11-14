@@ -428,12 +428,6 @@ export default function ContactDetailPage() {
                     >
                       + New Quotation
                     </Link>
-                    <Link
-                      href={`/finance/estimates/new?clientId=${encodeURIComponent(contact.id)}`}
-                      className="px-3 py-1.5 rounded-md border border-input bg-background text-xs font-medium hover:bg-muted"
-                    >
-                      + New Estimate
-                    </Link>
                   </div>
                 </div>
               )}

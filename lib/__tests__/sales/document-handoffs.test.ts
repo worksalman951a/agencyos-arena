@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  ESTIMATE_HANDOFF_LABEL,
   PROPOSAL_HANDOFF_LABELS,
-  canHandoffQuotationToEstimate,
-  estimateHandoffHref,
   proposalHandoffHref,
   visibleProposalHandoffs,
 } from '@/lib/sales/document-handoffs';
@@ -53,13 +50,13 @@ describe('sales document handoffs', () => {
       expect(visibleProposalHandoffs('accepted', undefined)).toEqual([]);
     });
 
-    it('gates the estimate handoff on an accepted quotation and estimate.create', () => {
-      expect(canHandoffQuotationToEstimate('accepted', true)).toBe(true);
-      expect(canHandoffQuotationToEstimate('accepted', false)).toBe(false);
-      expect(canHandoffQuotationToEstimate('accepted')).toBe(false);
-      for (const status of ['draft', 'sent', 'rejected', 'expired']) {
-        expect(canHandoffQuotationToEstimate(status, true), status).toBe(false);
-      }
+    it('no longer exposes an estimate handoff from a quotation', async () => {
+      // Estimates are retired from the active sales workflow. The module must
+      // not export a handoff helper that could resurrect the creation flow.
+      const handoffs = await import('@/lib/sales/document-handoffs');
+      expect('estimateHandoffHref' in handoffs).toBe(false);
+      expect('canHandoffQuotationToEstimate' in handoffs).toBe(false);
+      expect('ESTIMATE_HANDOFF_LABEL' in handoffs).toBe(false);
     });
   });
 
@@ -106,12 +103,6 @@ describe('sales document handoffs', () => {
       expect(Object.fromEntries(url.searchParams)).toEqual({ fromProposalId: PROPOSAL.id });
     });
 
-    it('seeds the estimate from the accepted quotation', () => {
-      const url = new URL(estimateHandoffHref({ id: 'quot_789' }), 'https://agency.test');
-      expect(url.pathname).toBe('/finance/estimates/new');
-      expect(Object.fromEntries(url.searchParams)).toEqual({ fromQuotationId: 'quot_789' });
-    });
-
     it('escapes titles so a query string cannot be smuggled through', () => {
       const title = 'Retainer & Scope ?phase=2#top';
       const url = new URL(
@@ -130,7 +121,6 @@ describe('sales document handoffs', () => {
         contract: 'Create Contract',
         quotation: 'Create Quotation',
       });
-      expect(ESTIMATE_HANDOFF_LABEL).toBe('Create Estimate');
     });
   });
 });

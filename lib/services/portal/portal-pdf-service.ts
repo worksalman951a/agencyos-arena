@@ -28,6 +28,8 @@ export async function generateClientPortalInvoicePdf(invoiceId: string) {
     clientId: session.contactId,
     projectId: null,
     project: null,
+    quotationId: null,
+    quotation: null,
     number: invoice.number,
     title: invoice.title,
     status: invoice.status,
@@ -158,6 +160,8 @@ export async function generateClientPortalQuotationPdf(quotationId: string) {
     currency: quotation.currency,
     validUntil: quotation.validUntil,
     notes: null,
+    invoices: [],
+    contracts: [],
     deletedAt: null,
     createdBy: null,
     updatedBy: null,
@@ -214,6 +218,7 @@ export async function generateClientPortalContractPdf(contractId: string) {
     organizationId: session.organizationId,
     proposalId: contract.proposalId,
     projectId: contract.projectId,
+    quotationId: null,
     title: contract.title,
     status: contract.status,
     signatureReference: contract.signatureReference,
@@ -223,6 +228,7 @@ export async function generateClientPortalContractPdf(contractId: string) {
     updatedAt: contract.updatedAt,
     proposal: null,
     project: null,
+    quotation: null,
     signer: null,
     signatures: contract.signatures.map(
       (s: {

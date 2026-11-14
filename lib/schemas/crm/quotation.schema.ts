@@ -46,6 +46,30 @@ export const quotationUpdateSchema = z
     'At least one field must be provided for update'
   );
 
+/**
+ * Optional overrides for documents created from an accepted quotation.
+ *
+ * Source data (client, line items, pricing, taxes, currency) is never accepted
+ * from the client here: the service copies it from the quotation. Only the
+ * fields the target document legitimately owns are accepted.
+ */
+export const quotationInvoiceCreateSchema = z
+  .object({
+    title: z.string().min(1, 'Title is required').max(200).optional(),
+    dueDate: z.string().optional().nullable(),
+    notes: z.string().max(5000).optional().nullable(),
+  })
+  .strict();
+
+export const quotationAgreementCreateSchema = z
+  .object({
+    title: z.string().min(1, 'Title is required').max(200).optional(),
+  })
+  .strict();
+
+export type QuotationInvoiceCreateInput = z.infer<typeof quotationInvoiceCreateSchema>;
+export type QuotationAgreementCreateInput = z.infer<typeof quotationAgreementCreateSchema>;
+
 export const quotationQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
   pageSize: z.coerce.number().min(1).max(100).default(20),

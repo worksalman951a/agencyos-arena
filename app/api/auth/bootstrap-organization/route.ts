@@ -89,6 +89,9 @@ const CRM_PERMISSION_CODES = [
   'task.comment.create',
   'task.comment.update',
   'task.comment.delete',
+  // Estimates are historical and read-only: only the read capability is
+  // honoured. The write codes stay provisioned so previously-created roles and
+  // audit history keep resolving; no route or service consumes them any more.
   'estimate.create',
   'estimate.read',
   'estimate.update',

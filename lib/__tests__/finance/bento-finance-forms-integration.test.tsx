@@ -1,15 +1,14 @@
 import * as React from 'react';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 // Form and view components
 import { NewInvoiceForm } from '@/app/finance/invoices/new/NewInvoiceForm';
 import { EditInvoiceForm } from '@/app/finance/invoices/[id]/edit/EditInvoiceForm';
-import NewEstimatePage from '@/app/finance/estimates/new/page';
-import EditEstimatePage from '@/app/finance/estimates/[id]/edit/page';
 import NewExpensePage from '@/app/finance/expenses/new/page';
 import EditExpensePage from '@/app/finance/expenses/[id]/edit/page';
-import ConvertEstimatePage from '@/app/finance/estimates/[id]/convert/page';
 import { BentoInvoiceRecordView } from '@/components/finance/bento-invoice-record-view';
 import type { InvoiceResponse } from '@/lib/services/crm/invoice-service';
 
@@ -47,32 +46,6 @@ describe('Finance Forms Bento Integration and Fallback Parity', () => {
     vi.clearAllMocks();
     mockUseBento = false;
     global.fetch = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === 'string' && url.includes('/api/v1/finance/estimates/est-1')) {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            id: 'est-1',
-            number: 'EST-2026-0001',
-            status: 'draft',
-            total: '1500.00',
-            currency: 'USD',
-            validUntil: '2026-12-31',
-            notes: 'Test estimate notes',
-          }),
-        });
-      }
-      if (typeof url === 'string' && url.includes('/api/v1/finance/estimates/est-accepted')) {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            id: 'est-accepted',
-            number: 'EST-2026-0002',
-            status: 'accepted',
-            total: '2500.00',
-            currency: 'USD',
-          }),
-        });
-      }
       if (typeof url === 'string' && url.includes('/api/v1/finance/expenses/exp-1')) {
         return Promise.resolve({
           ok: true,
@@ -184,57 +157,18 @@ describe('Finance Forms Bento Integration and Fallback Parity', () => {
     });
   });
 
-  describe('Estimate Forms & Conversion', () => {
-    it('renders legacy estimate creation when Bento is disabled', () => {
-      mockUseBento = false;
-      render(<NewEstimatePage />);
-      expect(screen.getByRole('heading', { level: 1, name: 'New Estimate' })).toBeDefined();
-      expect(screen.getByRole('button', { name: 'Create Estimate' })).toBeDefined();
-    });
-
-    it('renders Bento estimate creation view when Bento is enabled', () => {
-      mockUseBento = true;
-      render(<NewEstimatePage />);
-      expect(screen.getByRole('heading', { level: 1, name: 'New Cost Estimate' })).toBeDefined();
-      expect(screen.getByText('Estimate Details & Prospect Association')).toBeDefined();
-      expect(screen.getByText('Estimate Lifecycle & Conversion')).toBeDefined();
-    });
-
-    it('renders legacy estimate edit when Bento is disabled', async () => {
-      mockUseBento = false;
-      render(<EditEstimatePage params={Promise.resolve({ id: 'est-1' })} />);
-      expect(await screen.findByRole('heading', { level: 1, name: 'Edit Estimate' })).toBeDefined();
-      expect(await screen.findByRole('button', { name: 'Save Changes' })).toBeDefined();
-    });
-
-    it('renders Bento estimate edit view when Bento is enabled', async () => {
-      mockUseBento = true;
-      render(<EditEstimatePage params={Promise.resolve({ id: 'est-1' })} />);
-      expect(
-        await screen.findByRole('heading', { level: 1, name: /Edit Estimate: EST-2026-0001/i })
-      ).toBeDefined();
-      expect(
-        (await screen.findAllByRole('button', { name: /Save Changes/i })).length
-      ).toBeGreaterThan(0);
-    });
-
-    it('renders legacy estimate conversion when Bento is disabled', async () => {
-      mockUseBento = false;
-      render(<ConvertEstimatePage params={Promise.resolve({ id: 'est-accepted' })} />);
-      expect(
-        await screen.findByRole('heading', { level: 1, name: 'Convert to Invoice' })
-      ).toBeDefined();
-      expect(await screen.findByRole('button', { name: 'Convert to Invoice' })).toBeDefined();
-    });
-
-    it('renders Bento estimate conversion view when Bento is enabled', async () => {
-      mockUseBento = true;
-      render(<ConvertEstimatePage params={Promise.resolve({ id: 'est-accepted' })} />);
-      expect(
-        await screen.findByRole('heading', { level: 1, name: 'Convert Estimate to Invoice' })
-      ).toBeDefined();
-      expect(await screen.findByText('Transaction Guarantees')).toBeDefined();
-      expect(await screen.findByRole('button', { name: /Convert to Invoice/i })).toBeDefined();
+  // Estimates are historical and read-only. The create, edit and convert pages
+  // were deleted with the retirement, so there is nothing left to render for
+  // them: only the read-only register and record views remain, and they are
+  // covered by `lib/__tests__/sales/estimate-read-only.test.ts` plus the Bento
+  // integration suite.
+  describe('Estimate forms are gone', () => {
+    it.each([
+      ['new', 'app/finance/estimates/new/page.tsx'],
+      ['edit', 'app/finance/estimates/[id]/edit/page.tsx'],
+      ['convert', 'app/finance/estimates/[id]/convert/page.tsx'],
+    ])('ships no %s page', (_label, relative) => {
+      expect(fs.existsSync(path.join(process.cwd(), relative))).toBe(false);
     });
   });
 

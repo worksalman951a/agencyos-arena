@@ -36,6 +36,29 @@ export interface QuotationResponse {
   opportunity: { id: string; title: string } | null;
   contact: { id: string; firstName: string | null; lastName: string } | null;
   items: QuotationLineItemResponse[];
+  /** Invoices produced from this quotation (approved sales workflow). */
+  invoices: QuotationInvoiceSummary[];
+  /** Agreements produced from this quotation. */
+  contracts: QuotationAgreementSummary[];
+}
+
+/** Minimal invoice fields shown on a quotation; the invoice view is authoritative. */
+export interface QuotationInvoiceSummary {
+  id: string;
+  number: string;
+  title: string;
+  status: string;
+  total: string;
+  currency: string;
+  createdAt: Date;
+}
+
+/** Agreements (contracts) carry a title and status only. */
+export interface QuotationAgreementSummary {
+  id: string;
+  title: string;
+  status: string;
+  createdAt: Date;
 }
 
 export interface QuotationLineItemResponse {
@@ -269,6 +292,16 @@ type QuotationWithRelations = {
   updater?: { id: string; name: string | null; email: string | null } | null;
   opportunity?: { id: string; title: string } | null;
   contact?: { id: string; firstName: string | null; lastName: string } | null;
+  invoices?: Array<{
+    id: string;
+    number: string;
+    title: string;
+    status: string;
+    total: number | string | { toString: () => string };
+    currency: string;
+    createdAt: Date;
+  }>;
+  contracts?: Array<{ id: string; title: string; status: string; createdAt: Date }>;
 };
 
 function serializeQuotation(quotation: QuotationWithRelations): QuotationResponse {
@@ -317,6 +350,21 @@ function serializeQuotation(quotation: QuotationWithRelations): QuotationRespons
       amount: formatMoneyValue(item.amount),
       sortOrder: item.sortOrder,
       createdAt: item.createdAt,
+    })),
+    invoices: (quotation.invoices ?? []).map((invoice) => ({
+      id: invoice.id,
+      number: invoice.number,
+      title: invoice.title,
+      status: invoice.status,
+      total: formatMoneyValue(invoice.total),
+      currency: invoice.currency,
+      createdAt: invoice.createdAt,
+    })),
+    contracts: (quotation.contracts ?? []).map((contract) => ({
+      id: contract.id,
+      title: contract.title,
+      status: contract.status,
+      createdAt: contract.createdAt,
     })),
   };
 }
@@ -387,6 +435,25 @@ export async function listQuotations(input: QuotationQueryInput) {
   };
 }
 
+/**
+ * Non-throwing permission probe, used to redact linked documents a quotation
+ * reader is not allowed to see (an invoice total is financial data, an
+ * agreement is a legal document). Unexpected failures still propagate.
+ */
+async function canRead(
+  userId: string,
+  organizationId: string,
+  permission: string
+): Promise<boolean> {
+  try {
+    await requirePermission(userId, organizationId, permission);
+    return true;
+  } catch (error) {
+    if ((error as { statusCode?: number } | null)?.statusCode === 403) return false;
+    throw error;
+  }
+}
+
 /** Get a single quotation by ID with organization isolation (non-disclosing 404 for cross-org or deleted) */
 export async function getQuotation(id: string) {
   const { userId, organizationId } = await getAuthorizedUser();
@@ -403,6 +470,23 @@ export async function getQuotation(id: string) {
       contact: { select: { id: true, firstName: true, lastName: true } },
       creator: { select: { id: true, name: true, email: true } },
       updater: { select: { id: true, name: true, email: true } },
+      // Documents produced by the approved sales workflow, newest first.
+      invoices: {
+        select: {
+          id: true,
+          number: true,
+          title: true,
+          status: true,
+          total: true,
+          currency: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      },
+      contracts: {
+        select: { id: true, title: true, status: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+      },
     },
   });
 
@@ -412,7 +496,23 @@ export async function getQuotation(id: string) {
     throw error;
   }
 
-  return serializeQuotation(quotation as QuotationWithRelations);
+  const record = quotation as QuotationWithRelations;
+
+  // Only include linked documents the caller may actually read. The quotation
+  // itself was authorized with `quotation.read`; invoices and agreements have
+  // their own read permissions.
+  const [canReadInvoices, canReadContracts] = await Promise.all([
+    (record.invoices?.length ?? 0) > 0
+      ? canRead(userId, organizationId, 'invoice.read')
+      : Promise.resolve(true),
+    (record.contracts?.length ?? 0) > 0
+      ? canRead(userId, organizationId, 'contract.read')
+      : Promise.resolve(true),
+  ]);
+  if (!canReadInvoices) record.invoices = [];
+  if (!canReadContracts) record.contracts = [];
+
+  return serializeQuotation(record);
 }
 
 /** Create a quotation with atomic document numbering, server-calculated totals, org scoping, and audit logging */

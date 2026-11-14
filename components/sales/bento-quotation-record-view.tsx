@@ -7,11 +7,6 @@ import { Panel, KeyValueRow, StatusPill, StatStrip } from '@/components/ui/premi
 import { Button } from '@/components/ui/button';
 import { ExportDocumentPdfButton } from '@/components/documents/export-document-pdf-button';
 import { ShareDocumentButton } from '@/components/documents/share-document-button';
-import {
-  ESTIMATE_HANDOFF_LABEL,
-  canHandoffQuotationToEstimate,
-  estimateHandoffHref,
-} from '@/lib/sales/document-handoffs';
 import '@/components/crm/bento-contacts.css';
 
 export interface QuotationDetailData {
@@ -49,19 +44,33 @@ export interface QuotationDetailData {
   }>;
   createdAt: Date | string;
   updatedAt: Date | string;
+  /** Invoices produced from this quotation (approved sales workflow). */
+  invoices?: Array<{
+    id: string;
+    number: string;
+    title: string;
+    status: string;
+    total: string | number;
+    currency: string;
+    createdAt: Date | string;
+  }>;
+  /** Agreements produced from this quotation. */
+  contracts?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    createdAt: Date | string;
+  }>;
 }
 
 interface BentoQuotationRecordViewProps {
   quotation: QuotationDetailData;
   actionsNode?: React.ReactNode;
-  /** Server-resolved `estimate.create` capability for this actor. */
-  canCreateEstimate?: boolean;
 }
 
 export function BentoQuotationRecordView({
   quotation,
   actionsNode,
-  canCreateEstimate,
 }: BentoQuotationRecordViewProps) {
   const getStatusTone = (status: string): 'ok' | 'warn' | 'idle' | 'neutral' => {
     switch (status.toLowerCase()) {
@@ -356,19 +365,64 @@ export function BentoQuotationRecordView({
                 <span>Generate Full Scope Proposal</span>
                 <ExternalLink size={13} className="text-muted-foreground" />
               </Link>
-              {/* Accepted quotations convert into a billing estimate, prefilled
-                  from this quotation by the estimates route. */}
-              {canHandoffQuotationToEstimate(quotation.status, canCreateEstimate) && (
-                <Link
-                  href={estimateHandoffHref(quotation)}
-                  className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition font-medium"
-                >
-                  <span>{ESTIMATE_HANDOFF_LABEL}</span>
-                  <ArrowUpRight size={13} className="text-muted-foreground" />
-                </Link>
-              )}
             </div>
           </Panel>
+
+          {(quotation.invoices?.length ?? 0) > 0 || (quotation.contracts?.length ?? 0) > 0 ? (
+            <Panel title="Documents Created">
+              <div className="space-y-3 text-xs">
+                {(quotation.invoices?.length ?? 0) > 0 && (
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                      Invoices
+                    </div>
+                    <div className="space-y-1">
+                      {quotation.invoices?.map((invoice) => (
+                        <Link
+                          key={invoice.id}
+                          href={`/finance/invoices/${invoice.id}`}
+                          className="flex items-center justify-between rounded-md border border-border px-2.5 py-2 hover:bg-muted/50 font-medium"
+                        >
+                          <span>{invoice.number}</span>
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            {invoice.currency}{' '}
+                            {Number(invoice.total).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}{' '}
+                            · {invoice.status}
+                            <ArrowUpRight size={11} />
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(quotation.contracts?.length ?? 0) > 0 && (
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                      Agreements
+                    </div>
+                    <div className="space-y-1">
+                      {quotation.contracts?.map((contract) => (
+                        <Link
+                          key={contract.id}
+                          href={`/documents/contracts/${contract.id}`}
+                          className="flex items-center justify-between rounded-md border border-border px-2.5 py-2 hover:bg-muted/50 font-medium"
+                        >
+                          <span>{contract.title}</span>
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            {contract.status}
+                            <ArrowUpRight size={11} />
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Panel>
+          ) : null}
         </div>
       </div>
     </div>

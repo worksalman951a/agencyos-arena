@@ -9,7 +9,11 @@
  * - Dashboard: /dashboard
  * - Clients & Sales: Contacts, Accounts, Leads, Pipeline (Opportunities, Stages), Proposals, Quotations
  * - Work Management: Projects (Projects, Templates), Time Tracking, Approvals, Change Orders
- * - Finance: Invoices, Estimates, Expenses, Reports
+ * - Finance: Invoices, Expenses, Reports
+ *
+ * Estimates are retired from the active sales workflow: they no longer appear
+ * in navigation and cannot be created from the UI. Existing estimate records
+ * remain readable at /finance/estimates for audit and history.
  * - Tools: Documents (Contracts, Document Templates, Shared Links), Automations (Workflow Rules)
  * - Fixed Footer: Settings (/settings) & User Account Menu
  *
@@ -28,7 +32,6 @@ export type NavIconKey =
   | 'proposals'
   | 'quotations'
   | 'invoices'
-  | 'estimates'
   | 'expenses'
   | 'reports'
   | 'projects'
@@ -152,12 +155,6 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     label: 'Finance',
     items: [
       { name: 'Invoices', href: '/finance/invoices', icon: 'invoices', permission: 'invoice.read' },
-      {
-        name: 'Estimates',
-        href: '/finance/estimates',
-        icon: 'estimates',
-        permission: 'estimate.read',
-      },
       { name: 'Expenses', href: '/finance/expenses', icon: 'expenses', permission: 'expense.read' },
       { name: 'Reports', href: '/finance/reports', icon: 'reports', permission: 'invoice.read' },
     ],

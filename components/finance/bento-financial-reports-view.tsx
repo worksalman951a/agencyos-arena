@@ -204,7 +204,7 @@ export function BentoFinancialReportsView({
       {/* ── 2-Column Split: Estimate Pipeline vs Expense Allocation ──── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {/* Estimates Pipeline */}
-        <Panel title="Commercial Estimates Pipeline">
+        <Panel title="Historical Estimates (read-only)">
           {estimateTotals.size === 0 ? (
             <div className="text-center py-8 text-xs text-muted-foreground">
               No estimates recorded in this workspace.

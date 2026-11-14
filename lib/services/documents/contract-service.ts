@@ -24,6 +24,7 @@ interface ContractRecord {
   organizationId: string;
   proposalId: string | null;
   projectId: string | null;
+  quotationId?: string | null;
   title: string;
   status: string;
   signatureReference: string | null;
@@ -33,8 +34,15 @@ interface ContractRecord {
   updatedAt: Date;
   proposal?: { id: string; number: string; title: string; status: string } | null;
   project?: { id: string; name: string; status: string } | null;
+  quotation?: { id: string; number: string; title: string } | null;
   signer?: { id: string; name: string | null; email: string | null } | null;
   signatures?: SignatureAuditEntry[];
+}
+
+/** Optional overrides accepted when creating an agreement from a quotation. */
+export interface AgreementFromQuotationInput {
+  /** Defaults to `<quotation title> Agreement`. */
+  title?: string;
 }
 
 export interface ContractResponse {
@@ -42,6 +50,8 @@ export interface ContractResponse {
   organizationId: string;
   proposalId: string | null;
   projectId: string | null;
+  /** Source quotation id when the agreement was created from one. */
+  quotationId: string | null;
   title: string;
   status: string;
   signatureReference: string | null;
@@ -51,6 +61,8 @@ export interface ContractResponse {
   updatedAt: Date;
   proposal: { id: string; number: string; title: string; status: string } | null;
   project: { id: string; name: string; status: string } | null;
+  /** Minimal source-quotation summary: enough to label the provenance link. */
+  quotation: { id: string; number: string; title: string } | null;
   signer: { id: string; name: string | null; email: string | null } | null;
   signatures?: SignatureAuditEntry[];
 }
@@ -70,12 +82,42 @@ function codedError(message: string, statusCode: number): Error & { statusCode: 
   return error;
 }
 
+/** Relations every agreement response is built from. */
+const AGREEMENT_INCLUDE = {
+  proposal: { select: { id: true, number: true, title: true, status: true } },
+  project: { select: { id: true, name: true, status: true } },
+  quotation: { select: { id: true, number: true, title: true } },
+} as const;
+
+/** Prisma's unique-violation code; here, the one-active-agreement index. */
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === 'P2002';
+}
+
+/**
+ * The agreement that currently represents this quotation, if any.
+ *
+ * A voided agreement never counts, which is what allows a replacement to be
+ * issued after the previous one was voided.
+ */
+async function findActiveAgreement(
+  client: typeof prisma,
+  quotationId: string,
+  organizationId: string
+): Promise<ContractRecord | null> {
+  return (await client.contract.findFirst({
+    where: { quotationId, organizationId, status: { not: 'voided' } },
+    include: AGREEMENT_INCLUDE,
+  })) as ContractRecord | null;
+}
+
 function serializeContract(c: ContractRecord): ContractResponse {
   return {
     id: c.id,
     organizationId: c.organizationId,
     proposalId: c.proposalId,
     projectId: c.projectId,
+    quotationId: c.quotationId ?? null,
     title: c.title,
     status: c.status,
     signatureReference: c.signatureReference,
@@ -93,6 +135,9 @@ function serializeContract(c: ContractRecord): ContractResponse {
       : null,
     project: c.project
       ? { id: c.project.id, name: c.project.name, status: c.project.status }
+      : null,
+    quotation: c.quotation
+      ? { id: c.quotation.id, number: c.quotation.number, title: c.quotation.title }
       : null,
     signer: c.signer ? { id: c.signer.id, name: c.signer.name, email: c.signer.email } : null,
     ...(c.signatures
@@ -182,6 +227,7 @@ export async function listContracts(): Promise<ContractResponse[]> {
     include: {
       proposal: { select: { id: true, number: true, title: true, status: true } },
       project: { select: { id: true, name: true, status: true } },
+      quotation: { select: { id: true, number: true, title: true } },
       signer: { select: { id: true, name: true, email: true } },
     },
     orderBy: { updatedAt: 'desc' },
@@ -200,6 +246,7 @@ export async function getContract(id: string): Promise<ContractResponse> {
     include: {
       proposal: { select: { id: true, number: true, title: true, status: true } },
       project: { select: { id: true, name: true, status: true } },
+      quotation: { select: { id: true, number: true, title: true } },
       signer: { select: { id: true, name: true, email: true } },
       signatures: {
         orderBy: { signedAt: 'desc' },
@@ -262,6 +309,7 @@ export async function createContract(input: ContractCreateInput): Promise<Contra
     include: {
       proposal: { select: { id: true, number: true, title: true, status: true } },
       project: { select: { id: true, name: true, status: true } },
+      quotation: { select: { id: true, number: true, title: true } },
     },
   })) as ContractRecord;
 
@@ -280,6 +328,131 @@ export async function createContract(input: ContractCreateInput): Promise<Contra
     },
     organizationId,
   });
+
+  return serializeContract(contract);
+}
+
+/**
+ * Create an agreement (contract) from an accepted quotation.
+ *
+ * Optional second step of the approved workflow: Quotation -> Agreement ->
+ * Invoice. An agreement carries a title and references, not line items, so the
+ * quotation's title is used to prefill the agreement title; the client, line
+ * items, pricing and taxes stay on the quotation and are copied to the invoice
+ * when one is created.
+ *
+ * `quotationId` records the provenance. Agreement creation is idempotent and
+ * concurrency-safe:
+ *
+ *  - the source quotation row is locked `FOR UPDATE` inside the transaction, so
+ *    two simultaneous requests for the same quotation serialise; the second one
+ *    re-reads after the first commits and returns its agreement, not a new one;
+ *  - the partial unique index `Contract_quotationId_active_key` is the database
+ *    guarantee: at most one non-voided agreement per quotation, whoever writes
+ *    it. A racing writer that dodges the lock trips P2002 and is resolved to the
+ *    winning agreement instead of surfacing an error.
+ *
+ * A voided agreement does not count, so a replacement can be created after
+ * voiding (and that replacement is itself governed by the same guarantees).
+ *
+ * Permissions: `contract.create` for the agreement and `quotation.read` for the
+ * source. The quotation is resolved with `id + organizationId`, so another
+ * tenant's quotation answers the same non-disclosing 404 as a missing id.
+ */
+export async function createAgreementFromQuotation(
+  quotationId: string,
+  input: AgreementFromQuotationInput = {}
+): Promise<ContractResponse> {
+  const { userId, organizationId, email: actorEmail } = await getAuthorizedUser();
+
+  await requirePermission(userId, organizationId, 'contract.create');
+  await requirePermission(userId, organizationId, 'quotation.read');
+
+  const quotation = (await prisma.quotation.findFirst({
+    where: { id: quotationId, organizationId },
+    select: { id: true, number: true, title: true, status: true, deletedAt: true },
+  })) as {
+    id: string;
+    number: string;
+    title: string;
+    status: string;
+    deletedAt: Date | null;
+  } | null;
+
+  if (!quotation || quotation.deletedAt) {
+    throw codedError('Not found', 404);
+  }
+
+  if (quotation.status !== 'accepted') {
+    throw codedError('Only accepted quotations can produce an agreement', 400);
+  }
+
+  const title = input.title?.trim() || `${quotation.title} Agreement`;
+
+  let outcome: { contract: ContractRecord; created: boolean };
+  try {
+    outcome = await prisma.$transaction(async (tx: typeof prisma) => {
+      // Serialise agreement creation for this quotation until commit. The lock
+      // is a real row lock, so it works across processes/instances; the second
+      // request blocks here and then observes the first one's agreement.
+      await tx.$queryRawUnsafe(
+        'SELECT id FROM "Quotation" WHERE id = $1 AND "organizationId" = $2 FOR UPDATE',
+        quotation.id,
+        organizationId
+      );
+
+      // Re-read inside the lock: a double click (or a retry after a timeout)
+      // must not create a second active agreement. A voided agreement is
+      // deliberately excluded, so a replacement is still possible.
+      const existing = await findActiveAgreement(tx, quotation.id, organizationId);
+      if (existing) return { contract: existing, created: false };
+
+      const contract = (await tx.contract.create({
+        data: {
+          organizationId,
+          proposalId: null,
+          projectId: null,
+          quotationId: quotation.id,
+          title,
+          status: 'draft',
+        },
+        include: AGREEMENT_INCLUDE,
+      })) as ContractRecord;
+
+      return { contract, created: true };
+    });
+  } catch (error) {
+    // Safety net for a writer that raced past the lock (or any future path that
+    // skips it): the partial unique index admits exactly one active agreement
+    // per quotation, so losing the race means returning the winner.
+    if (!isUniqueViolation(error)) throw error;
+    const winner = await findActiveAgreement(prisma, quotation.id, organizationId);
+    if (!winner) throw error;
+    outcome = { contract: winner, created: false };
+  }
+
+  const { contract, created } = outcome;
+
+  // Idempotent replays return the existing agreement and do not pretend a
+  // second contract was created.
+  if (created) {
+    await createAuditLog({
+      actorId: userId,
+      actorName: actorEmail,
+      action: 'contract.create',
+      entityType: 'Contract',
+      entityId: contract.id,
+      after: {
+        id: contract.id,
+        title: contract.title,
+        status: contract.status,
+        quotationId: quotation.id,
+        quotationNumber: quotation.number,
+      },
+      metadata: { source: 'quotation', quotationId: quotation.id },
+      organizationId,
+    });
+  }
 
   return serializeContract(contract);
 }
@@ -351,6 +524,7 @@ export async function updateContract(
     include: {
       proposal: { select: { id: true, number: true, title: true, status: true } },
       project: { select: { id: true, name: true, status: true } },
+      quotation: { select: { id: true, number: true, title: true } },
       signer: { select: { id: true, name: true, email: true } },
     },
   })) as ContractRecord;

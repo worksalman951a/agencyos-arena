@@ -1,8 +1,7 @@
 'use client';
 
-import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Lock, ArrowRight } from 'lucide-react';
+import { ArrowLeft, Archive, FileText } from 'lucide-react';
 import { Panel, KeyValueRow, StatusPill, StatStrip } from '@/components/ui/premium/primitives';
 import { Button } from '@/components/ui/button';
 import { ExportDocumentPdfButton } from '@/components/documents/export-document-pdf-button';
@@ -14,16 +13,17 @@ import '@/components/crm/bento-contacts.css';
 interface BentoEstimateRecordViewProps {
   estimate: EstimateResponse;
   clientName: string | null;
-  actionsNode: React.ReactNode;
 }
 
-export function BentoEstimateRecordView({
-  estimate,
-  clientName,
-  actionsNode,
-}: BentoEstimateRecordViewProps) {
-  const isEditable = estimate.status === 'draft' || estimate.status === 'sent';
-
+/**
+ * Historical estimate record (Bento shell), read-only.
+ *
+ * The record keeps its read-only value — valuation, notes, client and the two
+ * authorized access actions (PDF export, share link). Every mutation the view
+ * used to offer (edit, accept/reject/expire, delete, convert to invoice) is
+ * removed; the API refuses those verbs regardless of what any client renders.
+ */
+export function BentoEstimateRecordView({ estimate, clientName }: BentoEstimateRecordViewProps) {
   const getStatusTone = (status: string): 'ok' | 'warn' | 'danger' | undefined => {
     switch (status.toLowerCase()) {
       case 'accepted':
@@ -78,11 +78,6 @@ export function BentoEstimateRecordView({
             notes={estimate.notes}
           />
           <ShareDocumentButton entityType="estimate" entityId={estimate.id} />
-          {isEditable && (
-            <Button asChild variant="outline" size="sm" className="h-9 text-xs">
-              <Link href={`/finance/estimates/${estimate.id}/edit`}>Edit</Link>
-            </Button>
-          )}
           <Button asChild variant="outline" size="sm" className="h-9 text-xs">
             <Link href="/finance/estimates">Back</Link>
           </Button>
@@ -117,30 +112,24 @@ export function BentoEstimateRecordView({
         ]}
       />
 
-      {/* ── Status & Conversion Bar ──────────────────────────────────── */}
+      {/* ── Historical Record Notice ─────────────────────────────────── */}
       <div className="bg-card p-4 rounded-lg border border-border flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-2">
-            Status Actions:
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Archive size={14} className="opacity-70 shrink-0" />
+          <span>
+            Historical record — read-only. Estimates were replaced by the approved Quotation →
+            Invoice workflow.
           </span>
-          {actionsNode}
         </div>
-        <div>
-          {estimate.status === 'accepted' ? (
-            <Button asChild className="bg-accent text-accent-foreground shadow-sm" size="sm">
-              <Link
-                href={`/finance/estimates/${estimate.id}/convert`}
-                className="flex items-center gap-1.5"
-              >
-                Convert to Invoice <ArrowRight size={13} />
-              </Link>
-            </Button>
-          ) : (
-            <div className="text-xs text-muted-foreground flex items-center gap-1">
-              <Lock size={12} className="opacity-60" />
-              <span>Accept estimate to unlock invoice conversion.</span>
-            </div>
-          )}
+        <div className="text-xs text-muted-foreground flex items-center gap-1">
+          <FileText size={12} className="opacity-60" />
+          <span>
+            Create invoices from an{' '}
+            <Link href="/sales/quotations" className="text-accent hover:underline font-medium">
+              accepted quotation
+            </Link>
+            .
+          </span>
         </div>
       </div>
 
@@ -165,9 +154,9 @@ export function BentoEstimateRecordView({
               </div>
 
               <p className="text-xs text-muted-foreground leading-relaxed">
-                This estimate represents a binding commercial quote when accepted. Once marked
-                accepted, it can be converted directly into an active billing invoice with identical
-                terms and line-item integrity.
+                This estimate preserves the commercial price that was quoted at the time it was
+                issued. It is retained for history and reference only; it no longer creates billing
+                documents and its figures are never mutated.
               </p>
             </div>
           </Panel>

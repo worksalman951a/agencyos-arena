@@ -174,7 +174,7 @@ describe('Bento Phase 5B Integration: Finance Expenses & Financial Reports', () 
     expect(screen.getByText('Open Attachment')).toBeInTheDocument();
   });
 
-  it('renders BentoFinancialReportsView with multi-currency matrix and estimates pipeline', () => {
+  it('renders BentoFinancialReportsView with multi-currency matrix and historical estimates', () => {
     render(
       <BentoFinancialReportsView
         metrics={mockMetrics}
@@ -189,7 +189,9 @@ describe('Bento Phase 5B Integration: Finance Expenses & Financial Reports', () 
 
     expect(screen.getByText('Financial Reports')).toBeInTheDocument();
     expect(screen.getByText('Multi-Currency Revenue Matrix')).toBeInTheDocument();
-    expect(screen.getByText('Commercial Estimates Pipeline')).toBeInTheDocument();
+    // Estimates are historical: the report keeps their totals as read-only
+    // history and no longer presents them as an active pipeline.
+    expect(screen.getByText('Historical Estimates (read-only)')).toBeInTheDocument();
     expect(screen.getByText('Expense Allocation & Operating Costs')).toBeInTheDocument();
   });
 });

@@ -21,9 +21,12 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
 
   const quotation = result.data;
 
-  // The estimate handoff is offered only to actors the create API would accept.
+  // Workflow actions are offered only to actors the create APIs would accept.
+  // The services re-check these permissions server-side.
   const permissions = await getCurrentPermissions();
-  const canCreateEstimate = permissions.has('estimate.create');
+  const canCreateInvoice = permissions.has('invoice.create');
+  const canCreateAgreement = permissions.has('contract.create');
+  const canReadAgreement = permissions.has('contract.read');
 
   const formattedQuotation = {
     id: quotation.id,
@@ -54,12 +57,19 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
     })),
     createdAt: quotation.createdAt,
     updatedAt: quotation.updatedAt,
+    invoices: quotation.invoices,
+    contracts: quotation.contracts,
   };
 
   return (
     <div className="space-y-6 p-6">
       <DocumentBrandHeader />
-      <QuotationDetailClient quotation={formattedQuotation} canCreateEstimate={canCreateEstimate} />
+      <QuotationDetailClient
+        quotation={formattedQuotation}
+        canCreateInvoice={canCreateInvoice}
+        canCreateAgreement={canCreateAgreement}
+        canReadAgreement={canReadAgreement}
+      />
     </div>
   );
 }

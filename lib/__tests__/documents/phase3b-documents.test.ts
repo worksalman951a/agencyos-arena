@@ -12,7 +12,6 @@ import {
   quotationLineItemSchema,
   quotationUpdateSchema,
 } from '@/lib/schemas/crm/quotation.schema';
-import { estimateCreateSchema, estimateUpdateSchema } from '@/lib/schemas/crm/estimate.schema';
 import {
   contractCreateSchema,
   contractSignSchema,
@@ -75,34 +74,20 @@ describe('Phase 3B — Sales & Document Schemas and Permissions', () => {
     ).toBe(true);
   });
 
-  it('enforces estimate status enum, blocks direct converted mutation, and rejects spoofed fields', () => {
-    expect(
-      estimateCreateSchema.safeParse({
-        clientId: SAMPLE_CUID,
-        number: 'EST-2026-0001',
-        status: 'draft',
-        total: '1250.00',
-      }).success
-    ).toBe(true);
+  it('no longer ships estimate mutation schemas (historical records are read-only)', async () => {
+    // The create/update/convert schemas were deleted with the retirement: no
+    // estimate write payload can be validated back into existence.
+    expect(fs.existsSync(path.join(process.cwd(), 'lib/schemas/crm/estimate.schema.ts'))).toBe(
+      false
+    );
 
-    expect(
-      estimateCreateSchema.safeParse({
-        clientId: SAMPLE_CUID,
-        number: 'EST-2026-0001',
-        status: 'invalid_status',
-        total: '1250.00',
-      }).success
-    ).toBe(false);
-
-    // Direct PUT to status='converted' is blocked; conversion must go through /convert
-    expect(estimateUpdateSchema.safeParse({ status: 'converted' }).success).toBe(false);
-    expect(estimateUpdateSchema.safeParse({ status: 'accepted' }).success).toBe(true);
-    expect(
-      estimateUpdateSchema.safeParse({
-        status: 'sent',
-        organizationId: 'org-spoof',
-      }).success
-    ).toBe(false);
+    // The refusal contract replaces them and names every retired action.
+    const { RETIRED_ESTIMATE_ACTIONS, ESTIMATE_READ_ONLY_CODE } =
+      await import('@/lib/sales/estimate-retirement');
+    expect(ESTIMATE_READ_ONLY_CODE).toBe('estimate_read_only');
+    for (const action of ['create', 'edit', 'duplicate', 'send', 'delete', 'convert']) {
+      expect(RETIRED_ESTIMATE_ACTIONS).toContain(action);
+    }
   });
 
   it('requires signerName and valid signerEmail when signing contracts', () => {

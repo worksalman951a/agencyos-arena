@@ -133,6 +133,8 @@ describe('Phase 11B: Proposal, Quotation & Contract PDF Endpoints', () => {
         opportunity: null,
         contact: { id: 'contact-2', firstName: 'Bruce', lastName: 'Wayne' },
         items: [],
+        invoices: [],
+        contracts: [],
       });
 
       const req = new Request('http://localhost/api/v1/crm/quotations/quot-202/pdf');
@@ -159,6 +161,7 @@ describe('Phase 11B: Proposal, Quotation & Contract PDF Endpoints', () => {
         organizationId: 'org-1',
         proposalId: 'prop-101',
         projectId: 'proj-1',
+        quotationId: null,
         title: 'Master Consulting Agreement',
         status: 'signed',
         signatureReference: 'SIG-VERIFY-998877',
@@ -173,6 +176,7 @@ describe('Phase 11B: Proposal, Quotation & Contract PDF Endpoints', () => {
           status: 'accepted',
         },
         project: { id: 'proj-1', name: 'Alpha Delivery', status: 'active' },
+        quotation: null,
         signer: { id: 'user-3', name: 'Clark Kent', email: 'clark@kent.test' },
       });
 

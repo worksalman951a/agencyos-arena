@@ -907,6 +907,7 @@ export function generateSharedDocumentPdf(
       signatureReference: snapshot.signatureReference || null,
       proposalId: null,
       projectId: null,
+      quotationId: null,
       organizationId: 'shared',
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -915,6 +916,7 @@ export function generateSharedDocumentPdf(
         ? { id: 'prop', number: snapshot.number, title: snapshot.title, status: 'linked' }
         : null,
       project: null,
+      quotation: null,
     };
     return generateContractPdf(pseudoContract, resolvedBranding);
   }

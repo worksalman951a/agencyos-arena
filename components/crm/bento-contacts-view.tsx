@@ -397,13 +397,6 @@ export function BentoContactsView({
                     <span>Create Quotation</span>
                     <ArrowUpRight size={13} className="text-muted-foreground" />
                   </Link>
-                  <Link
-                    href={`/finance/estimates/new?clientId=${encodeURIComponent(activeContact.id)}`}
-                    className="flex items-center justify-between p-2.5 rounded-lg border border-border hover:bg-muted/50 text-xs font-medium transition"
-                  >
-                    <span>Create Estimate</span>
-                    <ArrowUpRight size={13} className="text-muted-foreground" />
-                  </Link>
                 </div>
               </Panel>
 
