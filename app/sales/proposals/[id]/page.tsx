@@ -3,6 +3,7 @@ import {
   listProposalVersions,
   type ProposalVersionResponse,
 } from '@/lib/services/documents/version-service';
+import { getCurrentPermissions } from '@/lib/current-user';
 import { loadPageData } from '@/lib/page-data';
 import { PageStateNotice } from '@/components/server/page-state-notice';
 import { DocumentBrandHeader } from '@/components/documents/document-brand-header';
@@ -24,6 +25,15 @@ export default async function ProposalDetailPage({ params }: { params: Promise<{
 
   const proposal = result.data;
   const versions: ProposalVersionResponse[] = await listProposalVersions(id).catch(() => []);
+
+  // Handoff actions are permission-aware: the create APIs enforce the same
+  // codes, so the UI never offers an action the service would refuse.
+  const permissions = await getCurrentPermissions();
+  const handoffs = {
+    project: permissions.has('project.create'),
+    contract: permissions.has('contract.create'),
+    quotation: permissions.has('quotation.create'),
+  };
 
   const formattedProposal = {
     id: proposal.id,
@@ -59,7 +69,7 @@ export default async function ProposalDetailPage({ params }: { params: Promise<{
   return (
     <div className="space-y-6 p-6">
       <DocumentBrandHeader />
-      <ProposalDetailClient proposal={formattedProposal} versions={versions} />
+      <ProposalDetailClient proposal={formattedProposal} versions={versions} handoffs={handoffs} />
     </div>
   );
 }

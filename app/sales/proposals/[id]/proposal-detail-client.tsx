@@ -12,13 +12,21 @@ import {
 } from '@/components/sales/bento-proposal-record-view';
 import type { ProposalVersionResponse } from '@/lib/services/documents/version-service';
 import { useBentoShell } from '@/components/providers/bento-theme-provider';
+import {
+  PROPOSAL_HANDOFF_LABELS,
+  proposalHandoffHref,
+  visibleProposalHandoffs,
+  type ProposalHandoffPermissions,
+} from '@/lib/sales/document-handoffs';
 
 interface ProposalDetailClientProps {
   proposal: ProposalDetailData;
   versions: ProposalVersionResponse[];
+  /** Create capabilities resolved on the server for this actor. */
+  handoffs?: ProposalHandoffPermissions;
 }
 
-export function ProposalDetailClient({ proposal, versions }: ProposalDetailClientProps) {
+export function ProposalDetailClient({ proposal, versions, handoffs }: ProposalDetailClientProps) {
   const isBento = useBentoShell();
   const EDITABLE_STATUSES = ['draft', 'sent'];
   const contactName = proposal.contact
@@ -26,12 +34,16 @@ export function ProposalDetailClient({ proposal, versions }: ProposalDetailClien
       'Unnamed Contact'
     : null;
 
+  // Accepted work can seed a project, a contract or a quotation.
+  const handoffKinds = visibleProposalHandoffs(proposal.status, handoffs);
+
   if (isBento) {
     return (
       <BentoProposalRecordView
         proposal={proposal}
         versions={versions}
         actionsNode={<ProposalActions proposalId={proposal.id} status={proposal.status} />}
+        handoffs={handoffs}
       />
     );
   }
@@ -83,6 +95,13 @@ export function ProposalDetailClient({ proposal, versions }: ProposalDetailClien
             </Button>
           )}
           <ProposalActions proposalId={proposal.id} status={proposal.status} />
+          {handoffKinds.map((kind) => (
+            <Button key={kind} asChild variant="outline">
+              <Link href={proposalHandoffHref(kind, proposal)}>
+                {PROPOSAL_HANDOFF_LABELS[kind]}
+              </Link>
+            </Button>
+          ))}
           <Button asChild variant="outline">
             <Link href="/sales/proposals">Back</Link>
           </Button>

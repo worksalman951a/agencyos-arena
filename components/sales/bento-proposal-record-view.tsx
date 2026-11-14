@@ -22,6 +22,12 @@ import { Button } from '@/components/ui/button';
 import { ExportDocumentPdfButton } from '@/components/documents/export-document-pdf-button';
 import { ShareDocumentButton } from '@/components/documents/share-document-button';
 import type { ProposalVersionResponse } from '@/lib/services/documents/version-service';
+import {
+  PROPOSAL_HANDOFF_LABELS,
+  proposalHandoffHref,
+  visibleProposalHandoffs,
+  type ProposalHandoffPermissions,
+} from '@/lib/sales/document-handoffs';
 import '@/components/crm/bento-contacts.css';
 
 export interface ProposalDetailData {
@@ -65,12 +71,15 @@ interface BentoProposalRecordViewProps {
   proposal: ProposalDetailData;
   versions: ProposalVersionResponse[];
   actionsNode?: React.ReactNode;
+  /** Create capabilities resolved on the server for this actor. */
+  handoffs?: ProposalHandoffPermissions;
 }
 
 export function BentoProposalRecordView({
   proposal,
   versions,
   actionsNode,
+  handoffs,
 }: BentoProposalRecordViewProps) {
   const getStatusTone = (status: string): 'ok' | 'warn' | 'idle' | 'neutral' => {
     switch (status.toLowerCase()) {
@@ -94,6 +103,10 @@ export function BentoProposalRecordView({
       proposal.contact.email ||
       'Unnamed Contact'
     : null;
+
+  // Won work moves forward. The list is empty unless the proposal is accepted
+  // and the actor holds the matching create permission.
+  const handoffKinds = visibleProposalHandoffs(proposal.status, handoffs);
 
   return (
     <div className="bento-crm space-y-6">
@@ -399,13 +412,27 @@ export function BentoProposalRecordView({
                 <span>Edit Document in Builder</span>
                 <Sparkles size={13} className="text-muted-foreground" />
               </Link>
-              <Link
-                href="/sales/quotations/builder"
-                className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition font-medium"
-              >
-                <span>Generate Parallel Quotation</span>
-                <ExternalLink size={13} className="text-muted-foreground" />
-              </Link>
+              {handoffKinds.map((kind) => (
+                <Link
+                  key={kind}
+                  href={proposalHandoffHref(kind, proposal)}
+                  className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition font-medium"
+                >
+                  <span>{PROPOSAL_HANDOFF_LABELS[kind]}</span>
+                  <ArrowUpRight size={13} className="text-muted-foreground" />
+                </Link>
+              ))}
+              {/* The blank builder stays available until the prefilled
+                  quotation handoff replaces it for accepted work. */}
+              {!handoffKinds.includes('quotation') && (
+                <Link
+                  href="/sales/quotations/builder"
+                  className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition font-medium"
+                >
+                  <span>Generate Parallel Quotation</span>
+                  <ExternalLink size={13} className="text-muted-foreground" />
+                </Link>
+              )}
             </div>
           </Panel>
         </div>
